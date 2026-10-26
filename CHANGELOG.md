@@ -4449,6 +4449,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Default workflow streams continue across terminal IPython cells.** Ordinary
   cells and cells with top-level `await` continue the configured stream.
   Setting or clearing the default in an `await` cell applies to later cells.
+  Kernel shells running in an application thread continue their stream too.
 
 - **Copied contexts keep default-scope changes local.** Setting or
   clearing a default in a copied context leaves later cells on the notebook's

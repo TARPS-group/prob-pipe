@@ -10,19 +10,21 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from contextvars import Context
+    from types import FrameType
 
     from ._context import _DefaultWorkflowState, _WorkflowOwner
 
 
-def _cell_on_stack(shell: Any) -> bool:
-    """Whether this shell's cell coroutine is on the current Python stack."""
+def _cell_on_stack(shell: Any, frame: FrameType | None = None) -> bool:
+    """Whether this shell's cell execution is on the supplied or current stack."""
     from IPython.core.interactiveshell import InteractiveShell
 
-    code = InteractiveShell.run_cell_async.__code__
-    frame = inspect.currentframe()
+    codes = (InteractiveShell.run_cell_async.__code__, InteractiveShell._run_cell.__code__)
+    if frame is None:
+        frame = inspect.currentframe()
     try:
         while frame is not None:
-            if frame.f_code is code and frame.f_locals["self"] is shell:
+            if frame.f_code in codes and frame.f_locals["self"] is shell:
                 return True
             frame = frame.f_back
         return False
@@ -107,9 +109,18 @@ def _remember_notebook_default() -> None:
         return
     adapter = getattr(shell, "_probpipe_default_scope", None)
     if adapter is None:
-        if threading.current_thread() is not threading.main_thread():
-            return
         if not _cell_on_stack(shell):
+            return
+        kernel_loop = getattr(getattr(shell, "kernel", None), "io_loop", None)
+        if kernel_loop is not None:
+            if kernel_loop.asyncio_loop._thread_id != threading.get_ident():
+                return
+        # In-process and terminal shells can run without a kernel event loop.
+        # A worker's nested cell leaves installation to the outer shell thread.
+        elif threading.current_thread() is not threading.main_thread() and any(
+            thread_id != threading.get_ident() and _cell_on_stack(shell, frame)
+            for thread_id, frame in sys._current_frames().items()
+        ):
             return
         adapter = _NotebookDefaultScope(shell)
         shell._probpipe_default_scope = adapter

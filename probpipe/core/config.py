@@ -408,8 +408,9 @@ class PrefectConfig(_Section):
 class ProvenanceMode(Enum):
     """Choose the data retained by new provenance records.
 
-    Each call uses the mode in effect when it starts. Existing records retain
-    their original contents.
+    A bare call fixes its mode when it starts. The outermost ``workflow_run``
+    fixes the mode for its block when entered. Changing the mode inside that
+    block raises ``RuntimeError``. Existing records retain their original contents.
 
     Members
     -------

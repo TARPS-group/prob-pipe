@@ -264,7 +264,7 @@ def kernel_client():
         yield client
     finally:
         client.stop_channels()
-        manager.shutdown_kernel(now=True)
+        manager.shutdown_kernel()
 
 
 def _execute_cell(client, code, expected_error=None, *, silent=False):
@@ -331,6 +331,16 @@ assert errors == [None]
         ),
         pytest.param(
             """
+result = await asyncio.to_thread(
+    get_ipython().run_cell, 'workflow_run.set_default(seed=99)'
+)
+assert result.error_before_exec is None
+assert result.error_in_exec is None
+""",
+            id="async-background-thread",
+        ),
+        pytest.param(
+            """
 from types import MethodType
 shell = get_ipython()
 original_run_cell_async = shell.run_cell_async
@@ -374,6 +384,61 @@ for index, (name, code, expected_error) in enumerate(_CELLS):
 """
     result = subprocess.run(
         [sys.executable, "-c", script, first_cell],
+        cwd=Path(__file__).resolve().parents[2],
+        env=os.environ | {"IPYTHONDIR": str(tmp_path)},
+        capture_output=True,
+        text=True,
+        timeout=90,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.parametrize("first_default", ["shell", "worker", "async-worker"])
+def test_default_stream_in_application_thread(first_default, tmp_path):
+    pytest.importorskip("ipykernel")
+    script = """
+import sys
+from concurrent.futures import ThreadPoolExecutor
+from ipykernel.inprocess.manager import InProcessKernelManager
+from tests.functions.test_notebook_scope import _CELLS
+
+def run_cells():
+    manager = InProcessKernelManager()
+    manager.start_kernel()
+    try:
+        for index, (name, code, expected_error) in enumerate(_CELLS):
+            if index == 0:
+                code = 'import asyncio\\nawait asyncio.sleep(0)\\n' + code
+                if sys.argv[1] != 'shell':
+                    code = code.replace(
+                        'workflow_run.set_default(seed=17)',
+                        "import threading\\n"
+                        "worker_errors = []\\n"
+                        "def configure_worker():\\n"
+                        "    result = get_ipython().run_cell('workflow_run.set_default(seed=99)')\\n"
+                        "    worker_errors.append(result.error_before_exec or result.error_in_exec)\\n"
+                        "worker = threading.Thread(target=configure_worker)\\n"
+                        "worker.start()\\nworker.join()\\n"
+                        "assert worker_errors == [None]\\n"
+                        "workflow_run.set_default(seed=17)",
+                        1,
+                    )
+                    if sys.argv[1] == 'async-worker':
+                        code = code.replace(
+                            'worker.start()\\nworker.join()',
+                            'await asyncio.to_thread(configure_worker)',
+                        )
+            result = manager.kernel.shell.run_cell(code, silent=name == 'silent-cell')
+            error = result.error_before_exec or result.error_in_exec
+            assert (None if error is None else type(error).__name__) == expected_error, (name, error)
+    finally:
+        manager.shutdown_kernel()
+
+with ThreadPoolExecutor(max_workers=1) as executor:
+    executor.submit(run_cells).result(timeout=90)
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", script, first_default],
         cwd=Path(__file__).resolve().parents[2],
         env=os.environ | {"IPYTHONDIR": str(tmp_path)},
         capture_output=True,
