@@ -8,21 +8,13 @@ If you already have a data analysis pipeline, it is first reproduced in ProbPipe
 Additional capabilities and checks are then added to it one at a time.
 The result is a design document and a runnable pipeline script or notebook in a project directory.
 
-The design assistant works in any agent that can run shell commands, read and write files, and clone a repository from GitHub, such as Claude Code, Codex, or Cursor.
-The agent sends its model provider what it reads and the output of each command it runs.
-Only point it at data that you are OK sharing with that provider.
-The agent will also record any issues with ProbPipe that it runs into along the way.
-If you approve, it can post them to ProbPipe's GitHub issue tracker.
-
 Note that a web-based chat interface that cannot run commands won't be able to run the design assistant.
 If you don't want to run code locally, you can try out the [quickstart](quickstart.ipynb), which opens in Google Colab.
 
-## Before the workshop
+## Getting set up
 
-If you can, set up ProbPipe before the workshop, so that you can start working with code right away.
-Paste the prompt below into your coding agent, such as Claude Code, Codex, or Cursor.
+You can follow the [installation](installation.md) instructions, paste the prompt below into your coding agent, such as Claude Code, Codex, or Cursor, or follow the prompt's steps yourself.
 The setup takes about fifteen minutes.
-To set up by hand instead, follow the same steps in a terminal.
 
 ```text
 Set up ProbPipe on this computer for the ProbPipe design assistant.
@@ -59,7 +51,7 @@ ProbPipe branch: main
 
 1. Set up ProbPipe. If ~/probpipe does not exist, clone
    https://github.com/TARPS-group/prob-pipe.git at the branch above into it.
-   Then follow the setup prompt in the section "Before the workshop" of
+   Then follow the setup prompt in the section "Getting set up" of
    ~/probpipe/docs/get_started/design_assistant.md, and skip the steps that
    are already done. If the install is needed, reply to me first and install
    while I answer. When I resume a project, leave ~/probpipe at its commit
@@ -83,6 +75,14 @@ My first message: <describe your problem, or "resume <project>">
 When ProbPipe is set up before the session, this step takes about a minute.
 An agent that runs in a sandbox, such as Codex, asks for network access and for writes outside its working directory. Approve those requests for step 1, for the build of the assistant's reading list in `~/.cache/probpipe-design`, and for the memory directories `~/.probpipe-design` and the project's directory.
 To resume a project in a later session, paste the same prompt with `resume <project>` as the last line, and type `status` at any time to see where the project stands.
+
+## About the design assistant
+
+The design assistant works in any agent that can run shell commands, read and write files, and clone a repository from GitHub, such as Claude Code, Codex, or Cursor.
+The agent sends its model provider what it reads and the output of each command it runs.
+Only point it at data that you are OK sharing with that provider.
+The agent will also record any issues with ProbPipe that it runs into along the way.
+If you approve, it can post them to ProbPipe's GitHub issue tracker.
 
 ## Example data
 
