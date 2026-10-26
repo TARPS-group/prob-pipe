@@ -79,7 +79,7 @@ _LAWS: dict[str, Callable[[], object]] = {
     "KDEDistribution": lambda: KDEDistribution(
         jnp.array([[0.0, 1.0], [1.0, 0.0], [2.0, 2.0]]),
         bandwidth=jnp.array([0.4, 0.6]),
-        component="k",
+        output_name="k",
     ),
     "FactoredMultivariateGaussian": lambda: FactoredMultivariateGaussian(
         [F.Normal("a", 0.0, 1.0), F.Normal("g", 2.0, 1.0)],

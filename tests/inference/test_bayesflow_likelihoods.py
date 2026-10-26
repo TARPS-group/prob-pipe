@@ -1,7 +1,7 @@
 """Tests for the jax-native NLE / NRE kernels (BayesFlow backend).
 
 Requires the ``[bayesflow]`` extra (Python 3.12-3.13); skipped otherwise. The
-learned kernels are exercised end to end through ``condition_on(learned * prior,
+learned kernels are exercised end to end through ``condition_on(learned & prior,
 {"observation": y})`` (BlackJAX NUTS), judged against analytic conjugate
 posteriors and, for the constrained-prior case, against NUTS run with the exact
 likelihood on the same model.
@@ -12,6 +12,8 @@ from __future__ import annotations
 import os
 
 import pytest
+
+from probpipe.core._specs import _has_record_outputs
 
 os.environ.setdefault("KERAS_BACKEND", "jax")
 pytest.importorskip("bayesflow")
@@ -61,12 +63,14 @@ def _rows(params, num_observations, key):
 def _sim(prior):
     """The conjugate simulator over *prior*'s fields: one row per draw."""
     return SimulatorKernel(
-        prior, (prior.event_spec.spec.vector_size,), lambda params, key: _rows(params, 1, key)[0]
+        prior,
+        (prior.event_spec.term_spec.vector_size,),
+        lambda params, key: _rows(params, 1, key)[0],
     )
 
 
 def _prior():
-    return Normal("a", loc=0.0, scale=1.0) * Normal("b", loc=0.0, scale=1.0)
+    return Normal("a", loc=0.0, scale=1.0) & Normal("b", loc=0.0, scale=1.0)
 
 
 _SIM = _sim(_prior())
@@ -76,10 +80,10 @@ def _nested_prior():
     """Nested conjugate prior: a sub-record ``outer={a, b}`` plus a
     top-level ``m`` -- leaves ``outer/a``, ``outer/b``, ``m``, all ``N(0, 1)`` so
     ``_analytic_posterior`` applies per leaf (``flatten`` order ``[a, b, m]``)."""
-    outer = (Normal("a", loc=0.0, scale=1.0) * Normal("b", loc=0.0, scale=1.0)).with_path_names(
+    outer = (Normal("a", loc=0.0, scale=1.0) & Normal("b", loc=0.0, scale=1.0)).rename(
         {"a": "outer/a", "b": "outer/b"}
     )
-    return (outer * Normal("m", loc=0.0, scale=1.0)).with_label("joint")
+    return (outer & Normal("m", loc=0.0, scale=1.0)).with_label("joint")
 
 
 def _analytic_posterior(y_rows: np.ndarray) -> tuple[np.ndarray, float]:
@@ -94,19 +98,19 @@ def _score(lik, theta, rows):
     """The learned kernel's score of the dataset *rows* at the flat parameters *theta*."""
     declaration = lik.prior.event_spec
     theta = jnp.asarray(theta)
-    if declaration.exposes_record:
-        given = NumericRecord.from_vector(declaration.spec, theta, label="theta")
+    if _has_record_outputs(declaration):
+        given = NumericRecord.from_vector(declaration.term_spec, theta, label="theta")
     else:
-        (component,) = declaration.components
-        given = {component: jnp.reshape(theta, declaration.spec.shape)}
+        (output_name,) = declaration.outputs
+        given = {output_name: jnp.reshape(theta, declaration.term_spec.shape)}
     return lik._conditional_unnormalized_log_prob(given, rows)
 
 
 def _posterior(lik, prior, y):
-    """The posterior of ``lik * prior`` at the observation rows *y*, by the registry's method."""
+    """The posterior of ``lik & prior`` at the observation rows *y*, by the registry's method."""
     view = condition_on_operation.using(method_options={"num_results": 1500, "num_warmup": 500})
     with workflow_run(seed=0):
-        return view(lik * prior, {"observation": jnp.asarray(y)})
+        return view((lik & prior), {"observation": jnp.asarray(y)})
 
 
 @pytest.fixture(scope="module")
@@ -197,13 +201,13 @@ class TestSurrogateContract:
         v, gj = jax.jit(jax.value_and_grad(f))(th0)
         assert jnp.isfinite(v) and jnp.isfinite(gj).all()
 
-    def test_the_kernels_run_from_the_priors_components_to_the_rows(self, nle, nre):
-        """A learned kernel's given slots are the prior's components and its event
+    def test_the_kernels_run_from_the_priors_outputs_to_the_rows(self, nle, nre):
+        """A learned kernel's inputs are the prior's outputs and its event
         the observation rows; NLE has the network's density and NRE one known up to
         a constant."""
         for lik in (nle, nre):
             assert list(lik.given_spec) == ["a", "b"]
-            assert tuple(lik.event_spec.components) == ("observation",)
+            assert tuple(lik.event_spec.outputs) == ("observation",)
         assert isinstance(nle, SupportsConditionalLogProb)
         assert isinstance(nre, SupportsConditionalUnnormalizedLogProb)
         assert not isinstance(nre, SupportsConditionalLogProb)
@@ -222,7 +226,7 @@ class TestSurrogateContract:
     def test_a_record_and_a_mapping_given_score_alike(self, nle):
         """A record of the parameters and a mapping of them give identical scores."""
         record = NumericRecord.from_vector(
-            _prior().event_spec.spec, jnp.array([0.4, -0.3]), label="nr"
+            _prior().event_spec.term_spec, jnp.array([0.4, -0.3]), label="nr"
         )
         y_row = jnp.array([0.6, -0.1])
         np.testing.assert_allclose(
@@ -318,7 +322,7 @@ class TestTheLabel:
 
 
 class TestConditioning:
-    """End-to-end: condition_on(learned * prior, observation) -> NUTS, against
+    """End-to-end: condition_on(learned & prior, observation) -> NUTS, against
     the analytic conjugate posterior (mean AND spread).
 
     Bounds are measured: each test's config was run across four workflow seeds
@@ -343,7 +347,7 @@ class TestConditioning:
         self._check_posterior(nle, _prior(), y, mean_tol=0.3, ratio_band=(0.85, 1.25))
 
     def test_a_learned_likelihood_times_a_prior_runs_a_registered_method(self, nle):
-        report = condition_on_operation.check(nle * _prior(), {"observation": jnp.zeros((1, 2))})
+        report = condition_on_operation.check((nle & _prior()), {"observation": jnp.zeros((1, 2))})
         assert (report.route, report.method, report.exact) == (
             "inference_methods",
             "blackjax_nuts",
@@ -424,12 +428,12 @@ class TestConditioning:
     def test_nle_constrained_prior_matches_true_likelihood(self):
         """A constrained (Gamma) prior end to end, judged against NUTS run with
         the TRUE (analytic Gaussian) likelihood on the same model -- isolating
-        the learned component's error from MCMC and prior effects. NUTS walks
+        the learned likelihood's error from MCMC and prior effects. NUTS walks
         the natural space; the learned likelihood conditions on raw positive
         theta."""
 
         def _gamma_prior():
-            return pp.Gamma("lam", 5.0, 1.0) * Normal("m", loc=0.0, scale=1.0)
+            return pp.Gamma("lam", 5.0, 1.0) & Normal("m", loc=0.0, scale=1.0)
 
         y = np.asarray(_rows(jnp.array([5.0, 0.5]), 4, jax.random.PRNGKey(5)))
 
@@ -437,7 +441,7 @@ class TestConditioning:
         prior = _gamma_prior()
         true_likelihood = ObservationKernel(
             "observation",
-            dict(prior.event_spec.components),
+            dict(prior.event_spec.outputs),
             NumericArraySpec(y.shape),
             lambda lam, m: tfd.Independent(
                 tfd.Normal(jnp.broadcast_to(jnp.stack([lam, m]), y.shape), _SIGMA), 2
@@ -445,7 +449,7 @@ class TestConditioning:
         )
         with workflow_run(seed=0):
             ref_post = condition_on.using(method_options={"num_results": 1500, "num_warmup": 500})(
-                true_likelihood * prior, {"observation": jnp.asarray(y)}
+                (true_likelihood & prior), {"observation": jnp.asarray(y)}
             )
         ref = np.asarray(flat_draws(ref_post)["lam"]).reshape(-1)
         with workflow_run(seed=0):

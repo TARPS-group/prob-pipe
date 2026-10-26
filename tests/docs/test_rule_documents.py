@@ -70,11 +70,13 @@ EXTERNAL_NAMES = frozenset(
         "Warns",
         "Yields",
         "Agent",
+        "AskUserQuestion",
         "Bash",
         "Edit",
         "Glob",
         "Grep",
         "Read",
+        "WebFetch",
         "Write",
     }
 )

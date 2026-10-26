@@ -260,7 +260,7 @@ jobs:
             # packaging lockstep.
             for f in $CHANGED_ALL; do
               case "$f" in
-                design/*|scripts/design/*)
+                design/*|scripts/design/*|tests/_design_conformance.py)
                   TEST_TARGETS="$TEST_TARGETS $(git ls-files 'tests/*/test_design_conformance.py' | xargs) tests/docs tests/ci" ;;
                 scripts/docs/*|docs/*|README.md|mkdocs.yml|mkdocs_hooks.py)
                   TEST_TARGETS="$TEST_TARGETS tests/docs" ;;
@@ -758,11 +758,11 @@ jobs:
 
   notebooks:
     # Execute the docs notebooks to keep the reference set honest against the
-    # current codebase. Two parallel legs: `user_guide` (lean — dev+nutpie) and
-    # `tutorials` (the SBI backends — bayesflow+pymc+pyabc). Splitting roughly halves
-    # the wall-clock vs one serial pass (~8 min each, on par with the test
-    # matrix) and spares the User Guide the ~200 MB pymc/bayesflow install.
-    # User Guide notebooks do not import those backends in code. Separate from
+    # current codebase. Two parallel legs: `user_guide` (dev+nutpie+pymc+pyabc,
+    # for the conditioning chapter) and `tutorials` (also bayesflow). Splitting
+    # roughly halves the wall-clock vs one serial pass (~8 min each, on par with
+    # the test matrix) and spares the User Guide the bayesflow install, which no
+    # User Guide notebook imports. Separate from
     # the unit-test matrix either way. Skipped per-leg when no notebook in its
     # dir or probpipe source changes.
     name: notebooks (${{ matrix.group }})
@@ -775,10 +775,14 @@ jobs:
             extras: --extra dev
           - group: user_guide
             dir: docs/user_guide
-            extras: --extra dev --extra nutpie
+            extras: --extra dev --extra nutpie --extra pymc --extra pyabc
+          # Advisory while the contracts push changes the API and the
+          # tutorials are rewritten separately (plans/README.md, directive 6).
+          # Remove `advisory` when the rewritten tutorials merge.
           - group: tutorials
             dir: docs/tutorials
             extras: --extra dev --extra nutpie --extra bayesflow --extra pymc --extra pyabc
+            advisory: true
     runs-on: ubuntu-latest
     env:
       KERAS_BACKEND: jax   # bayesflow tutorials run keras on the JAX backend
@@ -872,12 +876,13 @@ jobs:
         # Dependency versions are pinned in uv.lock. --frozen fails if the
         # lockfile is out of sync, so CI never silently drifts. --python pins
         # the interpreter (setup-uv's python-version input was ignored on @v3).
-        # Per-leg extras (matrix.extras): the User Guide leg needs only
-        # dev+nutpie; the tutorials leg adds the SBI backends bayesflow+pymc+pyabc.
+        # Per-leg extras (matrix.extras): the User Guide leg needs
+        # dev+nutpie+pymc+pyabc; the tutorials leg adds bayesflow.
         run: uv sync --frozen --python 3.12 ${{ matrix.extras }}
 
       - name: Execute affected notebooks
         if: steps.nb_check.outputs.skip != 'true'
+        continue-on-error: ${{ matrix.advisory == true }}
         # Read the list via an env var (not spliced into the script) and iterate
         # with read, so notebook paths are never word-split or shell-injected.
         env:

@@ -61,7 +61,7 @@ class _SimulatedLaw(Distribution, SupportsSampling):
 class SimulatorKernel(ConditionalDistribution, SupportsConditionalSampling):
     """The kernel of one observation that ``simulate(params, key)`` draws.
 
-    Its given slots are the components of *prior*, and its event is one
+    Its inputs are the outputs of *prior*, and its event is one
     observation of *shape*. The learners pass the given values as the record of
     the prior's fields, so *simulate* may read them by field, by leaf path, or as
     one flat vector through :func:`theta_vec`.
@@ -76,7 +76,7 @@ class SimulatorKernel(ConditionalDistribution, SupportsConditionalSampling):
         label: str = "observation",
     ) -> None:
         super().__init__(
-            dict(prior.event_spec.components),
+            dict(prior.event_spec.outputs),
             OutputSpec(**{label: NumericArraySpec(shape)}),
             label=label,
         )

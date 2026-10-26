@@ -56,7 +56,9 @@ A few conventions keep PRs consistent; the PR template
   stale description is a review blocker. The PR text follows the writing
   rules of `STYLE_GUIDE.md` §10, whose rules 9 and 10 keep it free of plan
   labels and self-contained. Scratch planning artifacts, such as `*_plan.md`
-  files, stay off the branch.
+  files, stay off the branch. The one exception is `plans/`, which holds the shared
+  plans of a multi-PR push while it runs and is deleted once its sections
+  have moved into `design/` (`plans/README.md`).
 - **CHANGELOG** — a PR with a user-visible change adds its entry to
   `CHANGELOG.md` in the same PR, under `## [Unreleased]` and the one heading
   of its change type, such as `### Added` or `### Changed (breaking)`.
@@ -145,7 +147,7 @@ and check the tests a change needs.
 - Correctness tests use the **tightest tolerances that pass reliably** —
   a loose tolerance is a review flag, not a convenience.
 - Cover structured cases (multi-field Records, mixed scalar/vector
-  parameters), error paths, and **equivalence across dispatch paths**
+  parameters), error paths, and **equivalence across executors**
   (jax vs sequential) — path divergence has produced real
   silently-wrong-results bugs.
 - Inference code gets a statistical sanity check (parameter estimates and
@@ -160,7 +162,7 @@ must check correctness against an **independent baseline** (an analytic
 result, an exact reference computation, a known invariant, or finite
 differences for gradients) — and where the claim is distributional,
 check both location and spread. Tolerances on stochastic or trained
-components are **measured, not guessed**: run the test's configuration
+estimators are **measured, not guessed**: run the test's configuration
 across a few seeds, bound the observed spread with modest margin, and
 document the measured range in a comment next to the assertion. Full
 conventions in [STYLE_GUIDE.md § 8.6](STYLE_GUIDE.md#86-numerical-correctness-and-tolerances).
@@ -314,7 +316,7 @@ ways to opt in:
 ```python
 # Per-process (notebook, REPL, script):
 import probpipe
-probpipe.prefect_config.workflow_kind = probpipe.WorkflowKind.TASK
+probpipe.config.prefect.workflow_kind = probpipe.WorkflowKind.TASK
 ```
 
 ```bash
@@ -385,9 +387,11 @@ GitHub Actions (`.github/workflows/ci.yml`):
   notebooks that transitively import it. Edit that committed helper, not inline
   workflow scripts.
 - The `test` job also selects the tests that read files rather than import the
-  changed modules. A change to `design/` runs the four `test_design_conformance.py`
-  files and `tests/docs/`, and a change to `probpipe/`, a rule document, an agent
-  file, or the CHANGELOG runs `tests/docs/`.
+  changed modules. A change to `design/`, to `scripts/design/`, or to the
+  conformance helper `tests/_design_conformance.py` runs the five
+  `test_design_conformance.py` files, `tests/docs/`, and `tests/ci/`, and a
+  change to `probpipe/`, a rule document, an agent file, or the CHANGELOG runs
+  `tests/docs/`.
 - The `test` job runs the full suite on a push, on the nightly run, and for a
   pull request that changes a dependency file (`pyproject.toml`, `uv.lock`, or
   `setup.py`), `tests/conftest.py`, or `probpipe/__init__.py`. A change to
@@ -448,6 +452,7 @@ probpipe/
 ├── inference/      # Inference methods (BlackJAX, TFP, nutpie, CmdStan, PyMC, pyabc, BayesFlow)
 ├── validation/     # Predictive checks, calibration, and model comparison
 ├── diagnostics/    # Posterior diagnostics, ArviZ interop, and diagnostic views
+├── testing/        # check_executor, the conformance check of a user's executor
 ├── custom_types.py # Array, PRNGKey, ArrayLike type aliases
 └── _array_utils.py, _dtype.py, _weights.py  # Internal helpers
 ```
@@ -479,6 +484,64 @@ the core version, which `tests/test_version.py` checks. Build each with:
 uv build                      # probpipe-core (repository root)
 uv build packaging/probpipe   # probpipe (metapackage)
 ```
+
+---
+
+## Releasing
+
+The workflow `.github/workflows/release.yml` publishes both distributions to
+PyPI when a tag `vX.Y.Z` is pushed. It runs these steps:
+
+1. It builds the sdist and the wheel of each distribution.
+2. It checks that the tag matches both versions.
+3. It runs `twine check` on the four files.
+4. It installs both wheels into a fresh environment and imports `probpipe`.
+5. It uploads `probpipe-core` and then `probpipe` through PyPI Trusted Publishing.
+
+### One-time setup
+
+A trusted publisher on PyPI has these fields:
+
+| Field | Value |
+|---|---|
+| Owner | `TARPS-group` |
+| Repository name | `prob-pipe` |
+| Workflow name | `release.yml` |
+| Environment name | `pypi` |
+
+1. On PyPI, add this trusted publisher to each of the projects `probpipe-core`
+   and `probpipe`. Before a project's first upload, add it as a pending publisher
+   under **Publishing** in the account settings.
+2. In the repository's settings on GitHub, create the environment `pypi` under
+   **Environments**. A required reviewer on it makes each upload wait for approval.
+3. To test the workflow on TestPyPI, repeat both steps with TestPyPI and the
+   environment `testpypi`, and then run the workflow by hand with its `testpypi`
+   input checked.
+
+### Each release
+
+1. On a branch, set `version` in both `pyproject.toml` files and the
+   metapackage's `probpipe-core==` pins to the new version, as
+   *Distributions: `probpipe-core` and `probpipe`* describes.
+2. In `CHANGELOG.md`, move the entries under `## [Unreleased]` to a heading
+   `## [X.Y.Z] - YYYY-MM-DD` with the release date.
+3. In `CITATION.cff`, set `version` and `date-released`.
+4. Open a PR into `main` and merge it once CI passes.
+5. Tag the merge commit and push the tag, which starts the release workflow:
+
+   ```bash
+   git checkout main && git pull
+   git tag vX.Y.Z
+   git push origin vX.Y.Z
+   ```
+
+6. Approve the `pypi` deployment if the environment requires a reviewer.
+7. Check the release in a fresh environment:
+
+   ```bash
+   python -m venv /tmp/check && /tmp/check/bin/pip install probpipe==X.Y.Z
+   /tmp/check/bin/python -c "import probpipe; print(probpipe.__version__)"
+   ```
 
 ---
 

@@ -106,13 +106,13 @@ def condition_on_nutpie(model, data=None, *, num_results=1000, num_warmup=500, .
 
 Treat a public `Function` as an immutable, first-class `TrackedTerm` / `Annotated`
 computation term. Its construction-time `inspect.Signature` is the Python
-calling contract; optional `input_spec: InputSpec` and `output_spec: OutputSpec` declarations
-are authoritative schemas but never derive or replace that signature. Use
+calling contract; an optional input spec, `input_spec: InputSpec`, and output spec,
+`output_spec: OutputSpec`, are authoritative schemas but never derive or replace that signature. Use
 `apply(*args, **kwargs)` for one raw evaluation with binding and schema checks.
 Use `__call__` for distribution lifting, array sweeps, orchestration, result
 wrapping, and Function-first provenance. Results derive an application expression;
-explicit `output_label` supplies a display alias. Declare whole-term output
-components with `OutputSpec`, independently of labels. A raw implementation's
+explicit `output_label` supplies a display alias. Declare a function's outputs
+with `OutputSpec`, independently of labels. A raw implementation's
 own label survives `apply`, while a normal call describes its independent result.
 
 If an implementation returns an existing `Record`, `RecordBatch`, or
@@ -120,13 +120,14 @@ If an implementation returns an existing `Record`, `RecordBatch`, or
 shallow result copy that shares value data and specs, owns a separate
 annotations container, and receives only the current call's provenance. Do not
 restore identity-through behavior at the workflow boundary. Variadic Functions
-without an input declaration are supported: the planner treats every `*args`
-element and `**kwargs` entry as an independent slot while reconstructing the
+without an input spec are supported: the planner treats every `*args`
+element and `**kwargs` entry as an independent input while reconstructing the
 original `BoundArguments` before invoking user code.
 
 Exception: the learned-likelihood factories `learn_amortized_likelihood` and
-`learn_amortized_ratio`, and the samplers `rwmh` and `elliptical_slice`, are
-plain functions. A plain public function states its reason in a comment at its
+`learn_amortized_ratio`, the samplers `rwmh` and `elliptical_slice`, and
+`summarize`, which returns the terms the operations return, are plain
+functions. A plain public function states its reason in a comment at its
 definition site.
 
 ### 1.5 Classes
@@ -135,8 +136,7 @@ definition site.
   `EmpiricalDistribution`, `BootstrapReplicateDistribution`.
 - **Base / mixin classes:** `Distribution`, `NumericDistribution`,
   `TFPDistribution`, `RandomFunction`.
-- **View classes:** end in "View" — `FieldView` (the field view `d[path]`),
-  `DiagnosticsView` (the accessor `Distribution.diagnostics`).
+- **View classes:** end in "View" — `DiagnosticsView` (the accessor `Distribution.diagnostics`).
 - **Private helper classes:** Leading underscore — `_LinearMapGRF`, `_ShiftedGRF`.
 
 ### 1.6 Modules
@@ -167,13 +167,14 @@ Method classes are CamelCase: ``TFPNutsMethod``, ``CmdStanNutsMethod``,
 
 `Function` keeps ProbPipe controls separate from wrapped-function
 kwargs. Use `@function(...)` for definition-time controls
-such as `dispatch` and `n_broadcast_samples`, and use
+such as `executor` and `max_evaluations`, and use
 `workflow.using(...)` for a copy with revised controls, such as
-`n_broadcast_samples` and `include_inputs`, which every call of the copy reads.
+`max_evaluations`, `num_samples`, and `include_inputs`, which every call of
+the copy reads.
 
 Ordinary workflow calls should treat keyword arguments as user-function
 inputs. Wrapped functions may use names such as `seed`,
-`n_broadcast_samples`, and `include_inputs` when those names are part of
+`num_samples`, and `include_inputs` when those names are part of
 their own domain API.
 
 `seed` is not a `Function` or `using` control. Put reproducible lifted
@@ -209,30 +210,38 @@ or a whole resampled replicate (use `replicate_size`).
 
 ### 1.10 Record field iteration and path access
 
-The mapping protocol on `Record` and `RecordSpec` (`keys` / `values`
-/ `items` / `__iter__` / `__len__` / `__contains__` / `__getitem__`) is
-**leaf-keyed**: it enumerates every leaf by its full `/`-path, never
-interior nodes. The
-order is **canonical first-appearance order** — the order each field
-was first introduced (keyword-argument or input-dict order at
-construction). Code must not rely on an alphabetical or sorted order;
-the constructor preserves what the caller wrote.
+The enumeration on `Record` and `RecordSpec` (`keys` / `values` /
+`items` / `__iter__` / `__len__`) is **leaf-keyed**: it lists every
+field by its full `/`-path, never a group. The order is **canonical
+first-appearance order** — the order each field was first introduced
+(keyword-argument or input-dict order at construction). Code must not
+rely on an alphabetical or sorted order; the constructor preserves what
+the caller wrote.
 
-The `/` character is reserved as a nested-path separator. Field
-names may not contain `/` (raises `ValueError` at construction).
-Slash-delimited strings are accepted everywhere a field name is
-accepted, as a short form of the tuple form:
+The `/` character is reserved as the path separator, and
+`named_tree._PATH_SEP` is the one definition of it: code that splits or
+joins a path imports it. Field names may not contain `/` (raises
+`ValueError` at construction). A path is always a `str`, and a tuple is
+a list of paths; a nested path is written with `/`. `[]` takes a path or
+a list or tuple of paths, and one reader,
+`_as_paths` in `probpipe/core/_shapes.py`, parses it and owns every
+error message:
 
 ```python
-record["params/intercept"]   # same as record["params", "intercept"]
-"params/intercept" in record # same as record["params", "intercept"] not raising
+record["params"]                 # the group: a Record
+record["params"]["intercept"]    # the same node as record["params/intercept"]
+record["obs", "params/slope"]    # a Record cut down to those nodes, in the record's order
+record[["params"]]               # a Record that holds the group under its name
+"params" in record               # True: in agrees with [], groups included
 ```
 
-Because `[]` reaches only leaves, navigate to a leaf **or** an interior
-subtree with `at_path` instead — `record.at_path("params")` returns the
-sub-Record, whereas `record["params"]` raises when `params` is not a
-leaf. `keys()` lists every leaf's path using the same `/` separator, so
-those paths round-trip with `__getitem__`.
+`keys()` lists fields only, so `"params" in record` holds while
+`"params"` is not in `record.keys()`. `at_path(*segments)` joins
+separate segments with `/`, and an argument that takes one path per
+argument, such as `without(*paths)` or `select(*paths)`, reads each
+through the same reader, so a tuple there raises `TypeError`.
+`select` keys each positional path by its last name, so its result
+splats into a call.
 
 **Mappings are never leaves.** A `Mapping` value denotes tree
 structure: a dict field value is always materialised into a nested
@@ -241,7 +250,7 @@ into every `Mapping`, whether passed as a keyword value or nested inside
 a positional mapping). There is no way to carry an opaque payload dict
 inside a `Record`; use a non-mapping container if you need one leaf.
 
-**Renaming fields.** `with_path_names(old=new, ...)` returns a
+**Renaming fields.** `rename(old=new, ...)` returns a
 same-family tree with the given nodes (leaves or whole subtrees)
 renamed. Each key is the exact path of a node, so a single name
 addresses a top-level node and a nested node takes its full path. It
@@ -250,8 +259,9 @@ renames fields *within* the tree; relabeling the object itself is
 
 When adding new Record-based containers, follow these conventions:
 preserve first-appearance order, reject `/` in field names, materialize
-a mapping value into a nested subtree (never a leaf), key the mapping by
-leaf path, and accept the slash-delimited form in any string-keyed lookup.
+a mapping value into a nested subtree (never a leaf), key the enumeration
+by leaf path, and read every path argument through `_as_paths` or its
+one-path counterparts in `probpipe/core/_shapes.py`.
 
 ### 1.11 Distribution iteration
 
@@ -376,7 +386,7 @@ example when helpful:
 ```python
 """The sample operation: one draw, or a batch of draws, of a distribution.
 
-``sample(d)`` returns one draw at the kind the law's event declaration names,
+``sample(d)`` returns one draw at the kind the law's event spec names,
 and a non-empty ``sample_shape`` prepends batch axes on a level named
 ``sample``, returning the batch form of that kind.
 
@@ -398,8 +408,8 @@ class Normal(TFPDistribution):
 
     Parameters
     ----------
-    component : str
-        The component of the law's event.
+    output_name : str
+        The name of the law's one output, which names its draws.
     loc : array-like
         Mean of the distribution.
     scale : array-like
@@ -432,7 +442,7 @@ def sample(d: Distribution, sample_shape: tuple[int, ...] = ()):
     Returns
     -------
     TrackedTerm
-        One draw at the kind the event declaration names; or, for a non-empty
+        One draw at the kind the event spec names; or, for a non-empty
         *sample_shape*, the batch form of that kind.
 
     Raises
@@ -598,7 +608,8 @@ record/        (core/)
      ↑
 inference/     (core/, values/, distributions/, functions/, operations/, families/)
 validation/    (core/, distributions/, functions/, operations/)
-diagnostics/   (distributions/, functions/, validation/)
+diagnostics/   (distributions/, functions/, operations/, validation/)
+testing/       (core/; its checks import probpipe's public names inside each function)
 ```
 
 The private helper modules (`_array_utils.py`, `_dtype.py`, `_weights.py`)
@@ -621,9 +632,12 @@ works without the engine. `functions/__init__.py` resolves its exports lazily.
 >   `design/package-structure.md`.
 > - `core/` → `families/`: the function of `core/_fingerprint.py` that
 >   fingerprints a `KDEDistribution` imports the class lazily.
+> - `core/_table.py` → `functions/_recipe.py`: the line below a table of
+>   summaries counts a call's Monte Carlo draws with `monte_carlo_draws`, which
+>   sits beside the code that records them in the call's replay anchor.
 > - `distributions/` → `diagnostics.views` (lazy import inside
 >   `Distribution.diagnostics` to construct the read-only diagnostics accessor)
-> - `diagnostics/` → `inference/`: four diagnostics modules import private
+> - `diagnostics/` → `inference/`: five diagnostics modules import private
 >   helpers of `inference/` lazily, such as the chain helpers of
 >   `inference/_approximate_distribution.py`.
 >
@@ -729,7 +743,7 @@ baseline** — never the code path under test:
 - an exact reference computation run through the same pipeline (e.g.,
   judging a learned likelihood by comparing its NUTS posterior against
   NUTS run with the *true* likelihood on the same model — this isolates
-  the component's error from sampler and prior effects);
+  the learned likelihood's error from sampler and prior effects);
 - a known invariant (support membership, symmetry, positive
   definiteness, simplex sums, `log_prob`/`prob` consistency);
 - central finite differences for gradients.
@@ -740,7 +754,7 @@ location and spread** (e.g., posterior mean *and* std against the
 analytic values), not just point recovery.
 
 **Tolerances are measured, not guessed.** For stochastic or trained
-components, run the test's exact configuration across several seeds
+estimators, run the test's exact configuration across several seeds
 (3–4 is typically enough), then set the bound to cover the observed
 spread with roughly 2–3× margin. Seed everything that can be seeded —
 training, simulation, sampling — so a given environment is exactly
@@ -813,7 +827,7 @@ glossary vocabulary explains the design to a reader who needs a fix.
    the caller passed. A term is fine when the public API or the user
    guide uses it, such as `ConditionalDistribution` or `sample_shape`. Describe
    any other term in plain words, which includes design terms of
-   `design/glossary.md` such as packaging, whole term, and kernel.
+   `design/glossary.md` such as value type, factor inputs, and kernel.
 4. **Show no private names.** A message names nothing with a leading
    underscore and no type the caller never sees, such as the class of a JAX
    array. A `NotImplementedError` says what is unsupported in public
@@ -842,8 +856,8 @@ Each pair below shows a message that breaks these rules and its rewrite.
 
 ```text
 # Explains the design (rules 1-3)
-with_path_names() keeps the packaging, so the whole term's component 'mu' is renamed in place, not moved to 'population/mu'
-cannot rename 'mu' to 'population/mu': with_path_names() can rename a single-component output but cannot move it into a group. Choose a name without '/'.
+rename() keeps the form, so the value type's root output 'mu' is renamed in place, not moved to 'population/mu'
+cannot rename 'mu' to 'population/mu': rename() can rename the output of the keyword form but cannot move it into a group. Choose a name without '/'.
 
 # Inverted lookup with no fix (rules 1 and 5)
 not levels of this batch: ['test']; have ['quantile']
@@ -862,8 +876,8 @@ _ensure_matrix: Required 3 columns. Got 2.
 A must have 3 columns, got shape (3, 2)
 
 # Repeated route name (rule 9)
-bind_given_slots (exact methods): route 'bind_given_slots' declined: the conditioned object is not a kernel
-bind_given_slots (exact methods): Normal is not a ConditionalDistribution
+bind_inputs (exact methods): route 'bind_inputs' declined: the conditioned object is not a kernel
+bind_inputs (exact methods): Normal is not a ConditionalDistribution
 ```
 
 A protocol check that fails raises `TypeError` and names the missing
@@ -940,3 +954,61 @@ judge.
    tier, a wave, or a stage letter.
 10. **Keep PR and issue text self-contained.** Motivate each change from the
     repository's code, merged PRs, `design/`, and open issues.
+11. **Give every sentence content.** Each sentence states a definition, a
+    fact, a rule, or a reason. A sentence that only announces, summarizes, or
+    points to what follows or precedes is cut, and so is a fragment: "Three
+    requirements decide which.", "Here is how it works.", "This matters
+    because", "In short". Write the content in its place.
+12. **Prefer precision to brevity.** Two clear sentences are better than one
+    compressed sentence that can be misread. A colon or an appositive never
+    stands for "has", "holds", or "is described by", since "a law type: its
+    event type" reads as an identity. An informal verb never stands for a
+    defined notion, as "a value nests" or "offers" would, and a relative word
+    names its reference, so "named from outside" says outside what.
+13. **Make definitions useful.** A definition says what a concept is and what
+    it is for. A true statement that leaves both open, such as "outputs are
+    fixed by the produced object", defines nothing. Define a concept from
+    structure that every case has, and state what holds only in some cases as
+    a consequence: a law's paths come from its event type, because not every
+    law can be sampled, and indexing commutes with sampling for each law that
+    can.
+
+### 10.1 Explanatory documents
+
+An explanatory document teaches a design or a concept: a section of `design/`,
+a guide page of the documentation, or a plan. It reads like a textbook, in
+which each idea is introduced because an earlier one needs it. Docstrings
+state contracts instead, as `CONTRACTS.md` directive 2 requires.
+
+1. **Present each concept in three layers.** First the motivation: what the
+   concept is for and the intuition behind it. Then the general definition.
+   Then the precise statement, case by case, such as one rule for each kind of
+   object.
+2. **Order from general to specific.** No term, symbol, or code name is used
+   before it is defined. A pointer to a later section is allowed, but a term
+   that section defines is not used before it.
+3. **Separate definitions from consequences.** Each definition stands in its
+   own definition box, and its consequences follow it and name the
+   definitions they follow from. Several short properties form one numbered
+   list in one box, never a run of one-sentence boxes.
+4. **Introduce a term only when the text needs it.** A term the text can do
+   without is cut.
+5. **Describe the concept before the code.** The conceptual model is stated
+   without code names. Each code object is then introduced by its API, and its
+   docstring addresses a user in the words of the public API, never in the
+   document's internal vocabulary.
+6. **Give small standalone examples.** Each example builds what it uses,
+   follows the idea it illustrates, and uses generic names, such as `a`, `x`,
+   `mu`, and `data`. A document never defines a set of examples up front for
+   the reader to remember.
+7. **Keep special cases out of the main line.** A precise recursive or
+   case-by-case statement, and each special case, goes in a collapsible
+   technical note after the plain statement.
+8. **Keep the body to the target design.** History, comparisons with the
+   current code, sequencing, and rejected alternatives go in appendices. An
+   ambiguity found while writing goes in an appendix list, with the reading
+   the text adopts.
+9. **Name each section by its content.** "How an output of one object
+   supplies an input of another" informs a reader; "Feeds" does not.
+10. **Draw diagrams in one visual language.** One legend states the
+    conventions, and every diagram of the document follows them.

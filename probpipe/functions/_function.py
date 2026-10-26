@@ -6,18 +6,18 @@ The engine runs the call stack of design Part V on every call of a Function:
 2. bind: the arguments bind to the signature (:mod:`._call`);
 3. normalize: distribution arguments are converted where their parameter names
    another class (:mod:`._normalization`) and each argument is admitted by its
-   role or its declaration (:func:`._call.admit_arguments`);
+   role or its input spec (:func:`._call.admit_arguments`);
 4. classify the lift: the lifted arguments are found and grouped
    (:func:`._plan.build_broadcast_plan`, :func:`._plan.build_stochastic_plan`);
-5. plan: the input declarations unify and the output declaration binds the
-   shared dimensions (:func:`._contract._bind_planned_function_inputs`), or, for
+5. plan: the input specs unify and the output spec binds the shared
+   dimensions (:func:`._contract._bind_planned_function_inputs`), or, for
    a Function realized by routes, each point's result rule runs
-   (``Function._plan_point``);
+   (``Function._plan_route_inputs``);
 6. resolve: a lifted call resolves through the evaluation-rule registry
    (:mod:`._rules`), and each point runs the body or the route selected among
    the Function's routes (:mod:`._resolution`);
-7. execute: the points run under the dispatch mode with structural keys
-   (:mod:`._broadcast`, :mod:`._sweep`, :mod:`._execution`);
+7. execute: the evaluation points run on the executor the call chooses, with
+   structural keys (:mod:`._broadcast`, :mod:`._sweep`, :mod:`._execution`);
 8. return: the result is validated, wrapped, labeled, and given provenance
    recording the selected route, or detached under ``raw=True``
    (:mod:`._result`).
@@ -28,16 +28,17 @@ from __future__ import annotations
 import logging
 import math
 import warnings
-from collections.abc import Callable, Generator, Mapping
+from collections.abc import Callable, Generator, Hashable, Mapping
 from contextlib import AbstractContextManager, contextmanager
 from dataclasses import dataclass, field, replace
 from functools import partial
 from types import MappingProxyType
-from typing import Any, overload
+from typing import Any, cast, overload
 
 import jax
-import jax.numpy as jnp
+import numpy as np
 
+from ..core._specs import _has_record_outputs, _output_record
 from ..values import _binding
 
 try:
@@ -46,7 +47,16 @@ except ImportError:
     task = flow = None
 
 from ..core._batch import Batch, BatchSpec, _flat_batch_spec
+from ..core._call_context import (
+    _jax_tracing_active,
+    _jax_transformation_active,
+    _NumSamplesUsed,
+    current_call_context,
+)
 from ..core._dispatch import MethodInfo, ResolutionError
+from ..core._evaluation_points import _DescribedEvaluationPoints, _requested_evaluation_points
+from ..core._execution_claims import ProbeResult, probe
+from ..core._executors import ExecutionReport, _evaluation_report
 from ..core._expression import (
     Applied,
     AppliedValue,
@@ -59,14 +69,14 @@ from ..core._expression import (
 from ..core._numeric_record_batch import NumericRecordBatch
 from ..core._spec_base import NumericArraySpec, NumericSpec, TermSpec
 from ..core._specs import InputSpec, NumericRecordSpec, OutputSpec
-from ..core.config import ProvenanceMode, WorkflowKind, prefect_config
-from ..core.named_tree import _unflatten_paths
-from ..core.provenance import Provenance
+from ..core.config import ProvenanceMode, WorkflowKind, config
+from ..core.named_tree import _PATH_SEP, _unflatten_paths
+from ..core.provenance import _ROUTE_RESULTS, Provenance
 from ..core.record import Record
 from ..core.tracked import TrackedTerm
 from ..distributions._empirical import EmpiricalDistribution
 from ..distributions._factored import _labeled_product
-from ..distributions._views import FieldView
+from ..distributions._views import CoupledMarginal
 from ..values._function_base import (
     _WARNING_SKIP_PREFIXES,
     Function,
@@ -78,13 +88,13 @@ from ..values._function_base import (
     install_call_engine,
 )
 from . import (
+    _boundary,
     _broadcast,
-    _broker,
     _call,
     _callable,
     _context,
+    _evaluation_keys,
     _execution,
-    _execution_contract,
     _normalization,
     _plan,
     _recipe,
@@ -121,6 +131,8 @@ def function(
     input_spec: InputSpec | Mapping[str, TermSpec] | None = None,
     output_spec: OutputSpec | TermSpec | None = None,
     output_label: str | None = None,
+    traceable: bool | None = None,
+    vectorized: bool = False,
     differentiable: NumericSpec | None = None,
     bind: Mapping[str, Any] | None = None,
     **controls: Any,
@@ -135,7 +147,7 @@ def function(
 
     Pass keyword arguments to configure ProbPipe controls at definition time::
 
-        @function(n_broadcast_samples=100, dispatch="sequential")
+        @function(max_evaluations=100, executor="thread")
         def my_func(x, y):
             return x + y
 
@@ -164,12 +176,17 @@ def function(
         The function label, defaulting to the callable's name, or ``𝒻`` for a lambda.
         A callable with none, such as a ``functools.partial``, needs it.
     input_spec : InputSpec or Mapping[str, TermSpec] or None
-        The authoritative input slots, as :class:`Function` takes them.
+        The authoritative inputs, as :class:`Function` takes them.
     output_spec : OutputSpec or TermSpec or None
         The authoritative result declaration, as :class:`Function` takes it.
     output_label : str or None
         Optional result alias. Without one, a value result describes the
         application, and a returned law or kernel takes the function's label.
+    traceable : bool or None
+        Whether JAX can trace the function, as :class:`Function` takes it.
+    vectorized : bool
+        Whether the function takes a stack of evaluation points at once, as
+        :class:`Function` takes it.
     differentiable : NumericSpec or None
         The differentiability claim, as :class:`Function` takes it.
     bind : Mapping or None
@@ -187,8 +204,9 @@ def function(
     Raises
     ------
     TypeError
-        If a keyword is no control, before any callable is wrapped; or if
-        *label* is omitted for a callable that has no ``__name__``, such as a
+        If a keyword is no control, before any callable is wrapped; if
+        *traceable* or *vectorized* is not a bool; or if *label* is omitted
+        for a callable that has no ``__name__``, such as a
         ``functools.partial`` or a callable instance.
     """
     _refuse_unknown_controls(controls)
@@ -199,6 +217,8 @@ def function(
             input_spec=input_spec,
             output_spec=output_spec,
             output_label=output_label,
+            traceable=traceable,
+            vectorized=vectorized,
             differentiable=differentiable,
             bind=bind,
             **controls,
@@ -218,9 +238,23 @@ def effective_workflow_kind(function: Function) -> WorkflowKind:
     orchestration is ``OFF``. A requested ``TASK`` or ``FLOW`` falls back to
     ``OFF``, with a warning, when Prefect is not installed.
     """
-    raw = function.options["workflow_kind"]
+    return _orchestration_mode(function.options["workflow_kind"])
 
-    kind = raw if raw is not WorkflowKind.DEFAULT else prefect_config.workflow_kind
+
+def _orchestration_mode(workflow_kind_control: WorkflowKind) -> WorkflowKind:
+    """The orchestration mode that the ``workflow_kind`` control *workflow_kind_control* selects.
+
+    ``DEFAULT`` defers to ``config.prefect.workflow_kind``; when both are
+    ``DEFAULT``, orchestration is ``OFF``. A requested ``TASK`` or ``FLOW``
+    falls back to ``OFF``, with a warning, when Prefect is not installed.
+    """
+    if _jax_tracing_active():
+        return WorkflowKind.OFF
+    kind = (
+        workflow_kind_control
+        if workflow_kind_control is not WorkflowKind.DEFAULT
+        else config.prefect.workflow_kind
+    )
 
     if kind is WorkflowKind.DEFAULT:
         kind = WorkflowKind.OFF
@@ -239,63 +273,101 @@ def effective_workflow_kind(function: Function) -> WorkflowKind:
     return kind
 
 
-def _make_execution_config(
-    function: Function,
-    *,
-    mode: _execution.WorkflowExecutionMode | None = None,
-) -> _execution.WorkflowExecutionConfig:
-    """Build resolved execution metadata for row-wise call dispatch."""
-    if mode is None:
-        match function.effective_workflow_kind:
-            case WorkflowKind.TASK:
-                mode = "prefect_task"
-            case WorkflowKind.FLOW:
-                mode = "prefect_flow"
-            case _ if function.options["dispatch"] == "thread":
-                mode = "thread"
-            case _:
-                mode = "sequential"
-
-    is_prefect = mode in ("prefect_task", "prefect_flow")
-
-    if is_prefect and (
-        function.options["dispatch"] == "thread" or function.options["max_workers"] is not None
-    ):
-        warnings.warn(
-            "dispatch='thread' and max_workers configure only local "
-            "ThreadPoolExecutor dispatch; they do not control Prefect "
-            "scheduling",
-            stacklevel=2,
-        )
-
-    return _execution.WorkflowExecutionConfig(
-        mode=mode,
-        max_workers=function.options["max_workers"] if mode == "thread" else None,
-        name=function._label,
-        prefect_task_runner=(prefect_config.resolve_task_runner() if is_prefect else None),
-    )
-
-
 def _call_function(
     function: Function,
     args: tuple[Any, ...],
     call_inputs: dict[str, Any],
 ) -> Any:
+    """Call *function* on *args* and *call_inputs*, returning a raw form inside a JAX transformation.
+
+    Outside every JAX transformation the call runs in its workflow. Inside one, a
+    plain call returns its result's raw form (II.4): inside a staging trace it
+    is staged as an embedded call or runs inline, and under an eager
+    transformation it runs in its workflow. An operation and a sweep return
+    their terms.
+    """
+    if _jax_transformation_active():
+        argument_values = _call.resolve_function_call(
+            function._signature_info,
+            args,
+            call_inputs,
+            bind=function._bind,
+            function_name=function.label,
+        )
+        inline_plan = _plan.build_broadcast_plan(
+            values=argument_values, signature_info=function._signature_info, roles=function._roles
+        )
+        staged, staged_result = (
+            _boundary.maybe_stage(function, argument_values)
+            if inline_plan.regime == "none"
+            else (False, None)
+        )
+        if staged:
+            return staged_result
+        if _jax_tracing_active() and inline_plan.regime == "none":
+            resolved_controls = current_call_context().resolved_controls
+            route_candidates = function._route_candidates(resolved_controls, argument_values)
+            if route_candidates is not None:
+                _call.admit_arguments(
+                    function._signature_info,
+                    argument_values,
+                    function_name=function.label,
+                    roles=function._roles,
+                    lifts=False,
+                )
+                # A law keeps its ProbPipe capabilities here. Its raw backend
+                # object can have weaker guards than the law it represents.
+                return _realized_point(
+                    function, argument_values, resolved_controls, route_candidates
+                )
+            _, bindings = _bind_function_inputs(
+                function_name=function.label, input_spec=function.input_spec, values=argument_values
+            )
+            body_result = function._invoke_resolved(
+                argument_values, context=_FunctionInvocationContext(bindings)
+            )
+            _validate_function_output(
+                function_name=function.label,
+                output_spec=function.output_spec,
+                result=body_result,
+                bindings=bindings,
+            )
+            return _result.raw_form(body_result)
+        if (
+            inline_plan.regime == "none"
+            and function._route_candidates(
+                current_call_context().resolved_controls, argument_values
+            )
+            is None
+        ):
+            # Under an eager transformation a plain call runs as it does
+            # outside one, and its result presents as its raw form (II.4), as
+            # the inline call above returns it inside a staging trace.
+            return _result.raw_form(_call_in_workflow(function, args, call_inputs))
+    return _call_in_workflow(function, args, call_inputs)
+
+
+def _call_in_workflow(
+    function: Function, args: tuple[Any, ...], call_inputs: dict[str, Any]
+) -> Any:
+    """The call of *function* inside its workflow scope, replay scope, and key broker."""
     _context._assert_workflow_admission()
     with _replay._function_replay_scope() as replay_call:
         occurrence_path = None if replay_call is None else replay_call.occurrence_path
         with (
             _context._ephemeral_workflow_run(),
-            _broker._function_stochastic_scope(occurrence_path=occurrence_path) as broker,
+            _evaluation_keys._function_stochastic_scope(
+                occurrence_path=occurrence_path
+            ) as key_broker,
         ):
             if (
                 replay_call is not None
                 or _context._active_provenance_mode() is not ProvenanceMode.OFF
             ):
-                anchor = _callable.capture_function_anchor(function)
-                broker.set_callable_anchor(anchor)
+                callable_anchor = _callable.capture_function_anchor(function)
+                key_broker.set_callable_anchor(callable_anchor)
                 if replay_call is not None:
-                    replay_call.validate_callable(anchor)
+                    replay_call.validate_callable(callable_anchor)
             return _call_function_in_context(function, args, call_inputs)
 
 
@@ -304,17 +376,22 @@ def _call_function_in_context(
     args: tuple[Any, ...],
     call_inputs: dict[str, Any],
 ) -> Any:
+    """Run the call of *function* in its open call context, then warn if an executor it named ran nothing."""
     # A call made while a check probes, as a probe that runs an operation makes
     # one, selects and runs its routes as any call does.
-    token = _call._CHECKING.set(False)
+    checking_flag_reset = _call._CHECKING.set(False)
     try:
-        return _run_call(function, args, call_inputs)
+        call_result = _run_call(function, args, call_inputs)
     finally:
-        _call._CHECKING.reset(token)
+        _call._CHECKING.reset(checking_flag_reset)
+    _execution.warn_if_named_executor_ran_nothing()
+    return call_result
 
 
 def _result_expression(
-    function: Function, values: Mapping[str, Any], passed: frozenset[str] | None = None
+    function: Function,
+    values: Mapping[str, Any],
+    explicit_parameter_names: frozenset[str] | None = None,
 ) -> Expression | None:
     """The expression of the result of a call of *function* on the arguments *values* (II.4).
 
@@ -331,23 +408,27 @@ def _result_expression(
         return Named(function.output_label)
     return AppliedValue(
         function.label,
-        _value_arguments(function, values, frozenset(values) if passed is None else passed),
+        _value_arguments(
+            function,
+            values,
+            frozenset(values) if explicit_parameter_names is None else explicit_parameter_names,
+        ),
     )
 
 
 def _value_arguments(
-    function: Function, values: Mapping[str, Any], passed: frozenset[str]
+    function: Function, values: Mapping[str, Any], explicit_parameter_names: frozenset[str]
 ) -> tuple[Expression, ...]:
-    """Arguments in parameter order, using declared slot names for unnamed arrays."""
+    """Arguments in parameter order, using declared input names for unnamed arrays."""
     arguments = (
-        _argument_expression(_binding.input_ref_value(values, ref), ref, passed)
+        _argument_expression(_binding.input_ref_value(values, ref), ref, explicit_parameter_names)
         for ref in _binding.iter_input_refs(function._signature_info, values)
     )
     return tuple(argument for argument in arguments if argument is not None)
 
 
 def _argument_expression(
-    value: Any, ref: _binding.FunctionInputRef, passed: frozenset[str]
+    value: Any, ref: _binding.FunctionInputRef, explicit_parameter_names: frozenset[str]
 ) -> Expression | None:
     """How a call's expression shows the argument *value* at *ref*, or ``None`` to omit it.
 
@@ -358,16 +439,18 @@ def _argument_expression(
     """
     if isinstance(value, TrackedTerm):
         return value._embedded_expression()
-    if ref.subscript is not None or ref.parameter_name in passed:
+    if ref.subscript is not None or ref.parameter_name in explicit_parameter_names:
         return constant(value) if _is_scalar(value) else Named(ref.label)
     return None
 
 
 def _result_identity(
-    function: Function, values: Mapping[str, Any], passed: frozenset[str] | None = None
+    function: Function,
+    values: Mapping[str, Any],
+    explicit_parameter_names: frozenset[str] | None = None,
 ) -> tuple[str, Expression | None]:
     """Build the result expression once and derive its presentation label."""
-    expression = _result_expression(function, values, passed)
+    expression = _result_expression(function, values, explicit_parameter_names)
     if hasattr(function, "_result_label"):
         return function._result_label(values, expression), expression
     return expression.render_label(), expression
@@ -379,7 +462,7 @@ def _lifted_expression(
     plan: _plan.StochasticPlan,
     call_values: Mapping[str, Any] | None = None,
     *,
-    passed: frozenset[str],
+    explicit_parameter_names: frozenset[str],
 ) -> Applied:
     """The expression of the law of *function* lifted over the laws among *values* (II.4).
 
@@ -406,7 +489,7 @@ def _lifted_expression(
     call_values : Mapping of str to Any or None, optional
         The arguments of the sweep *values* is a row of. An argument whose row
         value is not the call's is a row of a swept batch.
-    passed : frozenset of str
+    explicit_parameter_names : frozenset of str
         The parameters the caller's arguments bind, together with those the
         Function's construction ``bind`` values bind.
 
@@ -420,30 +503,30 @@ def _lifted_expression(
         for group in plan.source_groups
         for consumer in group.consumers
     }
-    drawn: set[int] = set()
+    drawn_argument_indices: set[int] = set()
     arguments: list[Expression] = []
     for ref in _binding.iter_input_refs(function._signature_info, values):
         value = _binding.input_ref_value(values, ref)
         index = group_of.get(ref)
         if index is not None:
-            if index in drawn:
+            if index in drawn_argument_indices:
                 continue
-            drawn.add(index)
+            drawn_argument_indices.add(index)
             consumers = plan.source_groups[index].consumers
             if len(consumers) == 1:
                 arguments.append(draw_of(value))
                 continue
             laws = [_binding.input_ref_value(values, consumer.arg_ref) for consumer in consumers]
-            components = dict.fromkeys(name for law in laws for name in law.event_spec.components)
+            outputs = dict.fromkeys(name for law in laws for name in law.event_spec.outputs)
             arguments.append(
                 Draw(
-                    tuple(components),
+                    tuple(outputs),
                     _drawn_together_from(laws, plan, index)._embedded_expression(),
                 )
             )
         elif _is_swept_scalar(value, ref, call_values):
-            arguments.append(constant(value.raw() if isinstance(value, TrackedTerm) else value))
-        elif (argument := _argument_expression(value, ref, passed)) is not None:
+            arguments.append(constant(value.raw if isinstance(value, TrackedTerm) else value))
+        elif (argument := _argument_expression(value, ref, explicit_parameter_names)) is not None:
             arguments.append(argument)
     return Applied(function.output_label, tuple(arguments))
 
@@ -453,17 +536,19 @@ def _swept_expression(
     values: Mapping[str, Any],
     expression: Expression | None,
     plan: _plan.StochasticPlan | None,
-    passed: frozenset[str],
+    explicit_parameter_names: frozenset[str],
 ) -> Any:
     """The expression of a sweep's batch: the lifted call for a sweep of broadcasts, as ``f(mu ~ d, tau)``.
 
     A sweep without a law keeps the call's *expression*, and ``None`` keeps
-    the expression of the aggregate. *passed* names the parameters the
+    the expression of the aggregate. *explicit_parameter_names* names the parameters the
     caller's arguments and the construction ``bind`` values bind, which the
     lifted call shows.
     """
     if plan is not None:
-        return _lifted_expression(function, values, plan, passed=passed)
+        return _lifted_expression(
+            function, values, plan, explicit_parameter_names=explicit_parameter_names
+        )
     return _result.KEEP_EXPRESSION if expression is None else expression
 
 
@@ -497,8 +582,8 @@ def _drawn_together_from(laws: list[Any], plan: _plan.StochasticPlan, index: int
     ``model["a"]`` and ``model["b"]``, and the root of the plan's source group
     *index* otherwise.
     """
-    parents = {id(law.parent): law.parent for law in laws if isinstance(law, FieldView)}
-    if len(parents) == 1 and all(isinstance(law, FieldView) for law in laws):
+    parents = {id(law.parent): law.parent for law in laws if isinstance(law, CoupledMarginal)}
+    if len(parents) == 1 and all(isinstance(law, CoupledMarginal) for law in laws):
         return next(iter(parents.values()))
     return plan.runtime_bindings[index].root
 
@@ -523,46 +608,46 @@ def _expressed(term: Any, expression: Expression | None) -> Any:
     return clone
 
 
-def _recorded_route_result(term: Any, value: TrackedTerm) -> TrackedTerm:
-    """The route's result *value* as the call's record names it among its parents.
+def _route_result_as_provenance_parent(term: Any, route_value: TrackedTerm) -> TrackedTerm:
+    """The route's result *route_value* as the call's provenance names it among its parents.
 
-    *term* is *value* after the result boundary gave it the call's expression,
-    on a copy that keeps *value*'s record, so the parent reads under the
-    result's label, as ``model`` for a posterior of ``model``, where it read
-    under the label the route chose, such as an inference method's
-    ``posterior``. A *term* that carries another record, or none, leaves
-    *value* as the parent.
+    *term* is *route_value* after the result boundary gave it the call's
+    expression, on a copy that keeps *route_value*'s provenance, so the parent
+    reads under the result's label, as ``model`` for a posterior of ``model``,
+    where it read under the label the route chose, such as an inference
+    method's ``posterior``. A *term* that carries another provenance, or none,
+    leaves *route_value* as the parent.
     """
-    if isinstance(term, TrackedTerm) and term.provenance is value.provenance:
+    if isinstance(term, TrackedTerm) and term.provenance is route_value.provenance:
         return term
-    return value
+    return route_value
 
 
-def _keeping_route_record(term: Any, value: Any) -> Any:
-    """*term*, the declared form of a route's result *value*, with the record *value* carries.
+def _keeping_route_provenance(term: Any, route_value: Any) -> Any:
+    """*term*, the declared form of a route's result *route_value*, with the provenance *route_value* carries.
 
     A route whose result records how it was produced, as an inference
-    method's posterior names the method, passes that record on to the term,
-    so each point of a lifted call keeps it.
+    method's posterior names the method, passes that provenance on to the
+    term, so each point of a lifted call keeps it.
     """
     if (
         isinstance(term, TrackedTerm)
-        and isinstance(value, TrackedTerm)
-        and term is not value
+        and isinstance(route_value, TrackedTerm)
+        and term is not route_value
         and term.provenance is None
-        and value.provenance is not None
+        and route_value.provenance is not None
     ):
-        term.with_provenance(value.provenance)
+        term.with_provenance(route_value.provenance)
     return term
 
 
 def _realized_point(
     function: Function,
-    values: Mapping[str, Any],
+    argument_values: Mapping[str, Any],
     controls: Mapping[str, Any],
     candidates: tuple[Any, ...],
     *,
-    passed: frozenset[str] | None = None,
+    explicit_parameter_names: frozenset[str] | None = None,
     kind_error: type[Exception] = _result.ResultKindError,
 ) -> Any:
     """One point of a call realized by the route selected among *candidates*, as a term.
@@ -576,16 +661,16 @@ def _realized_point(
     ----------
     function : Function
         The Function realized by routes, which plans the point.
-    values : Mapping of str to Any
+    argument_values : Mapping of str to Any
         The point's arguments, by parameter name.
     controls : Mapping of str to Any
         The call's resolved controls, which planning and selection read.
     candidates : tuple
         The Function's routes, in selection order.
-    passed : frozenset of str or None
+    explicit_parameter_names : frozenset of str or None
         The parameters the call's arguments and the Function's construction
         ``bind`` values bind, which the result's expression shows; ``None``
-        shows every argument in *values*.
+        shows every argument in *argument_values*.
     kind_error : type of Exception
         The error for a wrong overall return kind, passed to ``declared_term``.
 
@@ -598,18 +683,20 @@ def _realized_point(
     Raises
     ------
     ApplicabilityError
-        If an applicability condition fails.
+        If an applicability check fails.
     ResolutionError
         If no candidate is feasible, or the first one that is not is unresolved.
     ResultKindError, ResultSchemaError
         If the result violates the declaration, using *kind_error* for its kind.
     """
-    point, result, _ = function._plan_point(values, controls)
-    candidate, report = _resolution.selected(function.label, controls, candidates, point, result)
-    value, _ = _resolution.settled(candidate.run(point, result, report))
-    label, expression = _result_identity(function, values, passed)
-    term = _result.declared_term(value, result, label, kind_error=kind_error)
-    return _expressed(_keeping_route_record(term, value), expression)
+    route_inputs, result_declaration, _ = function._plan_route_inputs(argument_values, controls)
+    candidate, report = _resolution.selected(
+        function.label, controls, candidates, route_inputs, result_declaration
+    )
+    route_value, _ = _resolution.settled(candidate.run(route_inputs, result_declaration, report))
+    label, expression = _result_identity(function, argument_values, explicit_parameter_names)
+    term = _result.declared_term(route_value, result_declaration, label, kind_error=kind_error)
+    return _expressed(_keeping_route_provenance(term, route_value), expression)
 
 
 def _run_call(
@@ -617,7 +704,10 @@ def _run_call(
     args: tuple[Any, ...],
     call_inputs: dict[str, Any],
 ) -> Any:
-    values = _call.resolve_function_call(
+    call_context = current_call_context()
+    resolved_controls = call_context.resolved_controls
+    num_samples_used = cast(_NumSamplesUsed, call_context.num_samples_used)
+    argument_values = _call.resolve_function_call(
         function._signature_info,
         args,
         call_inputs,
@@ -625,59 +715,60 @@ def _run_call(
         function_name=function._label,
     )
 
-    values = _normalization.normalize_distribution_values(
-        values=values,
+    argument_values = _normalization.normalize_distribution_values(
+        values=argument_values,
         signature_info=function._signature_info,
-        conversions=function.options["conversions"],
+        conversions=resolved_controls["conversions"],
     )
     _call.admit_arguments(
         function._signature_info,
-        values,
+        argument_values,
         input_spec=function.input_spec,
         function_name=function._label,
         roles=function._roles,
     )
     broadcast_plan = _plan.build_broadcast_plan(
-        values=values,
+        values=argument_values,
         signature_info=function._signature_info,
         roles=function._roles,
     )
-    passed = frozenset(function.signature.bind_partial(*args, **call_inputs).arguments) | frozenset(
-        function._bind
-    )
-    label, expression = _result_identity(function, values, passed)
-    controls = function.options
-    candidates = function._route_candidates(controls, values)
+    explicit_parameter_names = frozenset(
+        function.signature.bind_partial(*args, **call_inputs).arguments
+    ) | frozenset(function._bind)
+    label, expression = _result_identity(function, argument_values, explicit_parameter_names)
+    candidates = function._route_candidates(resolved_controls, argument_values)
     selection: tuple[Any, OutputSpec | None, Any, Any] | None = None
     if candidates is not None and broadcast_plan.regime == "none":
         # The routes realize the one point, so the selection is the call's route.
-        point, result, _ = function._plan_point(values, controls)
-        candidate, report = _resolution.selected(
-            function.label, controls, candidates, point, result
+        route_inputs, result_declaration, _ = function._plan_route_inputs(
+            argument_values, resolved_controls
         )
-        selection = (point, result, candidate, report)
+        candidate, report = _resolution.selected(
+            function.label, resolved_controls, candidates, route_inputs, result_declaration
+        )
+        selection = (route_inputs, result_declaration, candidate, report)
         route = _Route(
             candidate.route_name,
             candidate.exactness(report),
             method=candidate.method_of(report),
         )
+        num_samples_used.collects_calls = candidate.collects_calls
     else:
         # A Function's routes take the method control, so a lifted call selects
         # its evaluation rule by rank.
-        rule_method = None if candidates is not None else controls["method"]
-        route = _resolve_route(function, values, broadcast_plan, rule_method)
-    stochastic_plan = _plan.build_stochastic_plan(
-        values,
-        broadcast_plan,
-        function.options["n_broadcast_samples"],
-        enumerate_every_group=route.name != "sampling_lift",
+        rule_method = None if candidates is not None else resolved_controls["method"]
+        route = _resolve_route(
+            function, argument_values, broadcast_plan, rule_method, resolved_controls
+        )
+    stochastic_plan = _lifted_call_stochastic_plan(
+        argument_values, broadcast_plan, resolved_controls, route.name
     )
     stochastic_sample_shape = None if stochastic_plan is None else stochastic_plan.sample_shape
 
     def get_key(event: _plan.PlannedRandomEvent):
-        return _broker._resolve_automatic_key(
+        return _evaluation_keys._resolve_automatic_key(
             None,
-            _broker.StochasticEffectPlan(
+            _evaluation_keys.StochasticEffectPlan(
                 operation_kind="function_lifting",
                 execution_mode="sampled",
                 event=event,
@@ -687,20 +778,9 @@ def _run_call(
             ),
         )
 
-    workflow_kind = function.effective_workflow_kind
-    _broker._record_active_requested_execution(
-        function.options["dispatch"],
-        workflow_kind.value,
-    )
+    workflow_kind = _orchestration_mode(resolved_controls["workflow_kind"])
     _replay._validate_active_plan(_recipe.serialize_stochastic_plan(stochastic_plan))
-    _, invocation_bindings = _bind_planned_function_inputs(
-        function_name=function._label,
-        input_spec=function.input_spec,
-        values=values,
-        lifted_names={
-            ref.parameter_name for ref in (*broadcast_plan.dist_args, *broadcast_plan.array_args)
-        },
-    )
+    invocation_bindings = _lifted_call_bindings(function, argument_values, broadcast_plan)
     concrete_output_spec = (
         function.output_spec.with_dim_sizes(**invocation_bindings)
         if function.output_spec is not None
@@ -710,7 +790,7 @@ def _run_call(
         # A Function realized by routes declares its result at each point, so the
         # lifted call declares what one point declares.
         concrete_output_spec = _resolution.lifted_declaration(
-            function, values, controls, broadcast_plan
+            function, argument_values, resolved_controls, broadcast_plan
         )
     _plan.require_empty_sweep_output(broadcast_plan, concrete_output_spec)
     concrete_output_template = (
@@ -719,184 +799,103 @@ def _run_call(
     provenance_parents: list[TrackedTerm] = [function]
     provenance_inputs: dict[str, Any] = {}
     seen_parent_ids = {id(function)}
-    for ref in _binding.iter_input_refs(function._signature_info, values):
-        value = _binding.input_ref_value(values, ref)
-        if isinstance(value, TrackedTerm) and id(value) not in seen_parent_ids:
-            seen_parent_ids.add(id(value))
-            provenance_parents.append(value)
-        elif not isinstance(value, TrackedTerm):
-            provenance_inputs[ref.label] = value
+    for ref in _binding.iter_input_refs(function._signature_info, argument_values):
+        argument_value = _binding.input_ref_value(argument_values, ref)
+        if isinstance(argument_value, TrackedTerm) and id(argument_value) not in seen_parent_ids:
+            seen_parent_ids.add(id(argument_value))
+            provenance_parents.append(argument_value)
+        elif not isinstance(argument_value, TrackedTerm):
+            provenance_inputs[ref.label] = argument_value
 
-    # The selected route's result, when it carries a record of its own, which the
-    # call's record keeps as a parent under the call's expression.
-    route_records: list[TrackedTerm] = []
-    # The exactness the selected route settled when it ran, which the record
-    # takes in place of the one its check reported.
+    # The selected route's result, when it carries a provenance of its own, which
+    # the call's provenance keeps as a parent under the call's expression.
+    route_provenance_parents: list[TrackedTerm] = []
+    # The exactness the selected route settled when it ran, which the call's
+    # provenance takes in place of the one its check reported.
     settled_exactness: list[bool | None] = []
 
     def invoke_point(**point_values: Any) -> Any:
         if selection is not None:
-            point, result, candidate, report = selection
-            value, exact = _resolution.settled(candidate.run(point, result, report))
+            route_inputs, result_declaration, candidate, report = selection
+            route_value, exact = _resolution.settled(
+                candidate.run(route_inputs, result_declaration, report)
+            )
             if exact is not None:
                 settled_exactness.append(exact)
-            term = _expressed(_result.declared_term(value, result, label), expression)
+            term = _expressed(
+                _result.declared_term(route_value, result_declaration, label), expression
+            )
             if (
-                isinstance(value, TrackedTerm)
-                and value.provenance is not None
-                and id(value) not in seen_parent_ids
+                isinstance(route_value, TrackedTerm)
+                and route_value.provenance is not None
+                and id(route_value) not in seen_parent_ids
             ):
-                route_records.append(_recorded_route_result(term, value))
+                route_provenance_parents.append(
+                    _route_result_as_provenance_parent(term, route_value)
+                )
             return term
-        if candidates is not None:
-            return _realized_point(function, point_values, controls, candidates, passed=passed)
-        try:
-            _, point_bindings = _bind_function_inputs(
-                function_name=function._label,
-                input_spec=function.input_spec,
-                values=point_values,
-                bindings=invocation_bindings,
-            )
-        except ValueError as error:
-            raise _call.ApplicabilityError(str(error)) from error
-        context = _FunctionInvocationContext(point_bindings)
-        result = _result._batch_from_declared_sequence(
-            function._invoke_resolved(point_values, context=context),
-            function_name=function.output_label,
-            output_spec=function.output_spec,
-        )
-        try:
-            point_output_spec = _validate_function_output(
-                function_name=function._label,
-                output_spec=function.output_spec,
-                result=result,
-                bindings=context.dimension_bindings,
-            )
-        except _ResultKindMismatch as error:
-            raise _result.ResultKindError(str(error)) from error
-        except ValueError as error:
-            raise _result.ResultSchemaError(str(error)) from error
-        if point_output_spec is not None:
-            result = _wrap_declared_function_output(
-                result,
-                function_name=function.output_label,
-                output_spec=point_output_spec,
-            )
-        # A product the function returns takes its output label as a label (IV.2).
-        return _labeled_product(result)
+        return evaluate_lifted_point(**point_values)
 
-    resolved_dispatch: str | None = None
-    traceability_checked = False
-    # A numeric batch has one shape and dtype per column across every cell.
-    # Probe its rows as dynamic inputs so a check can be shared across cells.
-    dynamic_refs = tuple(
-        ref
-        for ref in broadcast_plan.array_args
-        if isinstance(_binding.input_ref_value(values, ref).element_spec, NumericSpec)
-    )
-    cache_traceability = broadcast_plan.regime != "nested" or len(dynamic_refs) == len(
-        broadcast_plan.array_args
+    evaluate_lifted_point = _lifted_point_evaluator(
+        function,
+        resolved_controls=resolved_controls,
+        candidates=candidates,
+        invocation_bindings=invocation_bindings,
+        explicit_parameter_names=explicit_parameter_names,
     )
 
-    general_probe_pending = broadcast_plan.regime == "nested" and cache_traceability
-    general_probe_failed = False
+    route_cache_key = _route_cache_key(function, resolved_controls, candidates)
 
-    def prepare_shared_probe(
-        dispatch_values: dict[str, Any],
-        broadcast_args: list[_binding.FunctionInputRef],
-    ) -> None:
-        nonlocal general_probe_pending, general_probe_failed
-        nonlocal traceability_checked, resolved_dispatch
-        if not general_probe_pending:
-            return
-        general_probe_pending = False
-        error = _jax_traceability_error(
+    def probe_point(
+        point_values: dict[str, Any], lifted_refs: list[_binding.FunctionInputRef]
+    ) -> ProbeResult:
+        return _probe_lifted_point(
             function,
-            dispatch_values,
-            broadcast_args,
-            func=invoke_point,
+            point_values,
+            lifted_refs,
+            point_body=invoke_point,
             stochastic_plan=stochastic_plan,
-            dynamic_refs=dynamic_refs,
+            route_cache_key=route_cache_key,
         )
-        if error is None:
-            traceability_checked = True
-            resolved_dispatch = "jax"
-        else:
-            # A cell can trace with its swept values fixed although they cannot
-            # trace as dynamic inputs, as with a Python branch on a swept value.
-            # So the first cell's fixed-value check decides whether the cells
-            # share a check. A failure applies to every cell, so dispatch="auto"
-            # runs them all sequentially. A success leaves each later cell to its
-            # own check.
-            general_probe_failed = True
 
-    def resolve_dispatch(
-        dispatch_values: dict[str, Any],
-        broadcast_args: list[_binding.FunctionInputRef],
-        *,
-        jax_supported: bool = True,
-    ) -> str:
-        nonlocal resolved_dispatch, cache_traceability
-        if function.options["dispatch"] == "auto" and jax_supported:
-            prepare_shared_probe(dispatch_values, broadcast_args)
-        if function.options["dispatch"] != "auto" or not jax_supported or not cache_traceability:
-            return _resolve_dispatch(
-                function,
-                dispatch_values,
-                broadcast_args,
-                jax_supported=jax_supported,
-                func=invoke_point,
-                stochastic_plan=stochastic_plan,
-            )
-        if resolved_dispatch is None:
-            dispatch = _resolve_dispatch(
-                function,
-                dispatch_values,
-                broadcast_args,
-                jax_supported=True,
-                func=invoke_point,
-                stochastic_plan=stochastic_plan,
-            )
-            if dispatch == "jax" and general_probe_failed:
-                cache_traceability = False
-                return dispatch
-            resolved_dispatch = dispatch
-        return resolved_dispatch
+    # Whether the call has logged that its function does not trace, which it
+    # logs once, however many cells of a sweep read the stored probe result.
+    untraceable_logged = False
 
-    def require_jax_traceable(
-        dispatch_values: dict[str, Any],
-        broadcast_args: list[_binding.FunctionInputRef],
-    ) -> None:
-        nonlocal traceability_checked, cache_traceability
-        prepare_shared_probe(dispatch_values, broadcast_args)
-        if traceability_checked and cache_traceability:
-            return
-        _require_jax_traceable(
-            function,
-            dispatch_values,
-            broadcast_args,
-            func=invoke_point,
-            stochastic_plan=stochastic_plan,
+    def lifted_point_traceability(
+        point_values: dict[str, Any], lifted_refs: list[_binding.FunctionInputRef]
+    ) -> tuple[bool, str | None]:
+        nonlocal untraceable_logged
+        traceable, untraceable_reason = _lifted_point_traceability(
+            function, partial(probe_point, point_values, lifted_refs)
         )
-        traceability_checked = True
-        if general_probe_failed:
-            cache_traceability = False
+        if (
+            not traceable
+            and function._execution_claims.traceable is None
+            and not untraceable_logged
+        ):
+            untraceable_logged = True
+            logger.info(
+                "Function '%s' is not JAX-traceable; its evaluation points run one at a time.",
+                function._label,
+            )
+        return traceable, untraceable_reason
 
     def execute_distribution_broadcast(
         *,
         row_values: dict[str, Any],
         plan: _plan.StochasticPlan,
         logical_unit: _plan.LogicalUnit,
-        include_inputs: bool = function.options["include_inputs"],
+        include_inputs: bool = resolved_controls["include_inputs"],
         record_recipe: bool = True,
         route_metadata: Mapping[str, Any] = route.metadata,
     ):
         output_spec, output_template = concrete_output_spec, concrete_output_template
-        if output_spec is None and candidates is not None and row_values is not values:
+        if output_spec is None and candidates is not None and row_values is not argument_values:
             # A row of a sweep binds its element itself, which may declare what the
-            # element's declaration alone left open.
+            # element's spec alone left open.
             output_spec = _resolution.lifted_declaration(
-                function, row_values, controls, broadcast_plan
+                function, row_values, resolved_controls, broadcast_plan
             )
             output_template = None if output_spec is None else _output_record_spec(output_spec)
         return _broadcast.execute_distribution_broadcast(
@@ -906,14 +905,17 @@ def _run_call(
             logical_unit=logical_unit,
             include_inputs=include_inputs,
             get_key=get_key,
-            make_execution_config=partial(_make_execution_config, function),
-            requested_dispatch=function.options["dispatch"],
-            resolve_dispatch=resolve_dispatch,
-            require_jax_traceable=require_jax_traceable,
+            lifted_point_traceability=lifted_point_traceability,
             function_name=function._label,
             output_label=function.output_label,
-            output_component=function._output_component,
-            output_expression=_lifted_expression(function, row_values, plan, values, passed=passed),
+            output_name=function._output_name,
+            output_expression=_lifted_expression(
+                function,
+                row_values,
+                plan,
+                argument_values,
+                explicit_parameter_names=explicit_parameter_names,
+            ),
             output_spec=output_spec,
             workflow_kind=workflow_kind,
             output_template=output_template,
@@ -927,7 +929,12 @@ def _run_call(
         lifted = (
             expression
             if stochastic_plan is None
-            else _lifted_expression(function, values, stochastic_plan, passed=passed)
+            else _lifted_expression(
+                function,
+                argument_values,
+                stochastic_plan,
+                explicit_parameter_names=explicit_parameter_names,
+            )
         )
         return _run_registered_rule(
             function, route, provenance_parents, provenance_inputs, label, lifted
@@ -936,7 +943,7 @@ def _run_call(
         if stochastic_plan is None:  # pragma: no cover - planner contract guard
             raise RuntimeError("distribution broadcast is missing its stochastic plan")
         return execute_distribution_broadcast(
-            row_values=values,
+            row_values=argument_values,
             plan=stochastic_plan,
             logical_unit=stochastic_plan.logical_units[0],
         )
@@ -964,21 +971,18 @@ def _run_call(
 
         return _sweep.execute_sweep(
             func=invoke_point,
-            values=values,
+            values=argument_values,
             plan=broadcast_plan,
             stochastic_plan=stochastic_plan,
-            make_execution_config=partial(_make_execution_config, function),
-            requested_dispatch=function.options["dispatch"],
-            resolve_dispatch=resolve_dispatch,
-            require_jax_traceable=require_jax_traceable,
+            swept_point_traceability=lifted_point_traceability,
             distribution_broadcast=distribution_broadcast,
             function_name=function._label,
             output_label=label,
             output_expression=_swept_expression(
-                function, values, expression, stochastic_plan, passed
+                function, argument_values, expression, stochastic_plan, explicit_parameter_names
             ),
             output_spec=concrete_output_spec,
-            include_inputs=function.options["include_inputs"],
+            include_inputs=resolved_controls["include_inputs"],
             output_template=concrete_output_template,
             provenance_parents=provenance_parents,
             provenance_inputs=provenance_inputs,
@@ -986,36 +990,54 @@ def _run_call(
             route=route.metadata,
         )
 
-    # Non-broadcast call — one function invocation, then wrap. TrackedTerm
-    # values form lineage parents; every other resolved parameter remains
-    # separately fingerprinted in Provenance.inputs.
-    # Known harmless duplication: the distribution-broadcast module builds
-    # the same request shape. A later execution cleanup can centralize this
-    # without reintroducing private facade wrappers.
-    execution = _make_execution_config(function)
-    request = _execution.WorkflowExecutionRequest(
-        func=invoke_point,
-        work_items=_execution.make_managed_work_items(
-            [values],
-            unit_segments=(_execution.point_unit_segment(),),
-        ),
-        execution=execution,
-        contract=_execution_contract.make_execution_contract(
-            evaluator="rowwise",
-            transport=_execution_contract.transport_for_execution_mode(execution.mode),
-            stochastic_plan=None,
-        ),
-    )
-    result = _execution.execute_many(request)[0]
+    if selection is not None:
+        # A route coordinates the work requested by the operation. Preserve
+        # its logical context so embedded points inherit its executor without
+        # occupying a worker needed by those same points.
+        broker = _evaluation_keys._capture_active_broker()
+        if broker is None:
+            raise RuntimeError("an operation route has no active call broker")
+        if not _context._workflow_side_effects_forbidden():
+            _execution._record_execution_contract(None)
+        with _execution.in_place_evaluation_point_scope(broker):
+            result = invoke_point(**argument_values)
+    else:
+        # A plain call is one evaluation point, which varies only in being the
+        # call's own: its arguments are one row of a set of one. TrackedTerm
+        # values form lineage parents; every other resolved parameter remains
+        # separately fingerprinted in Provenance.inputs.
+        call_arguments = np.empty(1, dtype=object)
+        call_arguments[0] = argument_values
+        result = _execution.evaluate_plain_call(
+            _requested_evaluation_points(
+                lambda call_arguments: invoke_point(**call_arguments),
+                varying={"call_arguments": call_arguments},
+                origin=function._label,
+                traceable=False,
+                untraceable_reason=None,
+                point_noun="evaluation point",
+                point_segment=lambda point_index: _execution.plain_call_point_segment(),
+            ),
+            workflow_kind=workflow_kind,
+            function_label=function._label,
+        )
     if settled_exactness:
         exact = False if False in settled_exactness else (True if all(settled_exactness) else None)
         route = replace(route, exact=exact)
+    if num_samples_used.provenance_num_samples is not None:
+        route = replace(route, num_samples=num_samples_used.provenance_num_samples)
     name = function._label
     controls, diagnostics = _recipe.provenance_recipe_fields(None)
+    metadata = {"func": name, **route.metadata}
+    if route_provenance_parents:
+        # The positions of the route's results among the parents, so the
+        # printed lineage shows the route's own steps as part of this call.
+        first = len(provenance_parents)
+        metadata[_ROUTE_RESULTS] = list(range(first, first + len(route_provenance_parents)))
     provenance = Provenance.create(
         f"workflow.{name}",
-        parents=[*provenance_parents, *route_records],
-        metadata={"func": name, **route.metadata},
+        parents=[*provenance_parents, *route_provenance_parents],
+        metadata=metadata,
         inputs=provenance_inputs,
         controls=controls,
         diagnostics=diagnostics,
@@ -1029,192 +1051,579 @@ def _run_call(
     )
 
 
-def _jax_traceability_error(
-    function: Function,
-    values: dict[str, Any],
-    broadcast_args: list[_binding.FunctionInputRef],
-    *,
-    func: Callable[..., Any],
-    stochastic_plan: _plan.StochasticPlan | None,
-    dynamic_refs: tuple[_binding.FunctionInputRef, ...] = (),
-) -> Exception | None:
-    """Return the JAX trace-probe error for the current call, if any.
+def _evaluated_body_point(
+    function: Function, point_values: Mapping[str, Any], invocation_bindings: Mapping[str, int]
+) -> Any:
+    """The body of *function* at one point, validated against its output spec and wrapped as a term.
 
-    The probe traces the operation the dispatch is choosing, not merely the
-    body: a body can trace cleanly bare yet be impossible under the
-    transform its executor applies, as one that returns a record holding a
-    batch is. So every executor that maps is probed under a map, each
-    argument fed the way its own executor will feed it: a swept batch over its
-    first row, a distribution over one draw, a batch-valued draw in its raw
-    form, which a parameter annotated with a batch class receives rebuilt as
-    the batch, and any other argument as the call passed it. A law whose record
-    event stores a batch for each draw in an object column has no stand-in, and
-    the probe reports it. A probe failure
-    means sequential dispatch, which is always able to run the call — the two
-    paths agree on results by contract, so falling back costs speed, never
-    correctness.
+    Parameters
+    ----------
+    function : Function
+        The function whose body runs.
+    point_values : Mapping of str to Any
+        The point's arguments, by parameter name.
+    invocation_bindings : Mapping of str to int
+        The dimension sizes the call's arguments bound.
 
-    *dynamic_refs* names numeric swept inputs to trace as additional dynamic
-    arguments. Success then applies across their values at the same shapes and
-    dtypes. After a failed generalized probe, the caller checks rows at their
-    fixed values.
+    Returns
+    -------
+    Any
+        The result at the kind the output spec names.
+
+    Raises
+    ------
+    ApplicabilityError
+        If the point's arguments violate the input spec.
+    ResultKindError, ResultSchemaError
+        If the result violates the output spec.
     """
     try:
-        dummy_kw = dict(values)
-        broadcast_refs = set(broadcast_args)
-        batched_sources: dict[_binding.FunctionInputRef, Any] = {}
-        drawn_refs: list[_binding.FunctionInputRef] = []
-        array_like_refs: list[_binding.FunctionInputRef] = []
-        for ref in _binding.iter_input_refs(function._signature_info, values):
-            v = _binding.input_ref_value(values, ref)
-            if ref in broadcast_refs:
-                if isinstance(v, Batch):
-                    # A swept batch stays at its reference, where the mapped
-                    # body reads the kind of its elements.
-                    batched_sources[ref] = v
-                else:
-                    # Nothing to synthesize: the draw itself supplies the
-                    # structure and dtype below, which is what lets a
-                    # multi-field law be probed at all — it has no single
-                    # event shape to stand in for one.
-                    drawn_refs.append(ref)
-            elif hasattr(v, "__array__") and not isinstance(v, jnp.ndarray):
-                array_like_refs.append(ref)
-        with _context._workflow_probe():
-            if batched_sources:
-                refs = list(batched_sources)
-                # The executor's own body, not a copy maintained in the
-                # probe. ``dummy_kw`` carries the swept batches at their
-                # references and the other inputs as the call passed them.
-                _row_call = _sweep.mapped_row_body(
-                    func=func,
-                    values=dummy_kw,
-                    array_args=refs,
+        _, point_bindings = _bind_function_inputs(
+            function_name=function._label,
+            input_spec=function.input_spec,
+            values=point_values,
+            bindings=invocation_bindings,
+        )
+    except ValueError as error:
+        raise _call.ApplicabilityError(str(error)) from error
+    context = _FunctionInvocationContext(point_bindings)
+    with _boundary.realizing_point(function):
+        result = _result._batch_from_declared_sequence(
+            function._invoke_resolved(point_values, context=context),
+            function_name=function.output_label,
+            output_spec=function.output_spec,
+        )
+    try:
+        point_output_spec = _validate_function_output(
+            function_name=function._label,
+            output_spec=function.output_spec,
+            result=result,
+            bindings=context.dimension_bindings,
+        )
+    except _ResultKindMismatch as error:
+        raise _result.ResultKindError(str(error)) from error
+    except ValueError as error:
+        raise _result.ResultSchemaError(str(error)) from error
+    if point_output_spec is not None:
+        result = _wrap_declared_function_output(
+            result,
+            function_name=function.output_label,
+            output_spec=point_output_spec,
+        )
+    # A product the function returns takes its output label as a label (IV.2).
+    return _labeled_product(result)
+
+
+def _lifted_execution_report(
+    function: Function,
+    argument_values: Mapping[str, Any],
+    broadcast_plan: _plan.BroadcastPlan,
+    candidates: tuple[Any, ...] | None,
+    resolved_controls: Mapping[str, Any],
+    route_name: str | None,
+) -> ExecutionReport:
+    """How the lifted call or sweep that ``check`` checks would run its function's evaluation points.
+
+    The call asks for one evaluation point per draw, combination, or grid
+    point when the engine's evaluation rule realizes it. A plain call, a call
+    that another evaluation rule realizes, and a sweep over no cells ask for
+    none. The call
+    probes a function that states nothing when its route maps the body,
+    whatever executor it names, since a function JAX can trace is always
+    mapped by ``jax``. So ``check`` probes under the same conditions, with the
+    same stand-ins, and stores the outcome where the call reads it. A probe of
+    a nested sweep reads its first cell. A probe that fails stores its outcome
+    and raises nothing, as the call's would.
+
+    Parameters
+    ----------
+    function : Function
+        The checked function.
+    argument_values : Mapping of str to Any
+        The call's normalized arguments.
+    broadcast_plan : BroadcastPlan
+        The call's lifting regime.
+    candidates : tuple or None
+        The routes of a Function realized by routes, which realize each
+        evaluation point; ``None`` for a Function whose body does.
+    resolved_controls : Mapping of str to Any
+        The checked call's resolved controls.
+    route_name : str or None
+        The evaluation rule selected for the lifted call.
+
+    Returns
+    -------
+    ExecutionReport
+        The report of the function's evaluation points, or an empty report
+        when the call asks for none.
+
+    Raises
+    ------
+    ResolutionError
+        If the executor the call names is not registered.
+    ValueError
+        If the selected executor does not take one of its options.
+    """
+    if broadcast_plan.regime == "none" or route_name not in _rules._ENGINE_RULES:
+        return ExecutionReport()
+    stochastic_plan = _lifted_call_stochastic_plan(
+        argument_values, broadcast_plan, resolved_controls, route_name
+    )
+    if stochastic_plan is None:
+        num_evaluation_points, point_noun = broadcast_plan.n_sweep, "grid point"
+    else:
+        num_evaluation_points = stochastic_plan.n_evaluations * (
+            len(stochastic_plan.logical_units) if broadcast_plan.regime == "nested" else 1
+        )
+        point_noun = "draw" if stochastic_plan.evaluation_mode == "sampled" else "combination"
+    if num_evaluation_points == 0:
+        return ExecutionReport()
+    invocation_bindings = _lifted_call_bindings(function, argument_values, broadcast_plan)
+    evaluate_lifted_point = _lifted_point_evaluator(
+        function,
+        resolved_controls=resolved_controls,
+        candidates=candidates,
+        invocation_bindings=invocation_bindings,
+    )
+    if broadcast_plan.regime == "nested":
+        probe_values = _sweep.slice_sweep_values(
+            values=argument_values, index=0, array_groups=broadcast_plan.array_groups
+        )
+        lifted_refs = list(broadcast_plan.dist_args)
+    elif broadcast_plan.regime == "sweep":
+        probe_values, lifted_refs = dict(argument_values), list(broadcast_plan.array_args)
+    else:
+        probe_values, lifted_refs = dict(argument_values), list(broadcast_plan.dist_args)
+    untraceable_reason = (
+        _sweep.untraceable_sweep_reason(
+            argument_values, list(broadcast_plan.array_args), broadcast_plan
+        )
+        if broadcast_plan.regime == "sweep"
+        else None
+    )
+    if untraceable_reason is not None:
+        traceable = False
+    else:
+        traceable, untraceable_reason = _lifted_point_traceability(
+            function,
+            partial(
+                _probe_lifted_point,
+                function,
+                probe_values,
+                lifted_refs,
+                point_body=evaluate_lifted_point,
+                stochastic_plan=stochastic_plan,
+                route_cache_key=_route_cache_key(function, resolved_controls, candidates),
+            ),
+        )
+    described_points = _DescribedEvaluationPoints(
+        function,
+        num_evaluation_points=num_evaluation_points,
+        shared=argument_values,
+        origin=function._label,
+        traceable=traceable,
+        untraceable_reason=untraceable_reason,
+        point_noun=point_noun,
+    )
+    return ExecutionReport(
+        (
+            _evaluation_report(
+                described_points,
+                current_call_context().execution_choice,
+                traceability_source=(
+                    "claimed" if function._execution_claims.traceable is not None else "probed"
+                ),
+            ),
+        )
+    )
+
+
+def _lifted_call_bindings(
+    function: Function, argument_values: Mapping[str, Any], broadcast_plan: _plan.BroadcastPlan
+) -> Mapping[str, int]:
+    """The dimension sizes the arguments of a call of *function* bind, its lifted arguments left out."""
+    _, invocation_bindings = _bind_planned_function_inputs(
+        function_name=function._label,
+        input_spec=function.input_spec,
+        values=argument_values,
+        lifted_names={
+            ref.parameter_name for ref in (*broadcast_plan.dist_args, *broadcast_plan.array_args)
+        },
+    )
+    return invocation_bindings
+
+
+def _lifted_call_stochastic_plan(
+    argument_values: Mapping[str, Any],
+    broadcast_plan: _plan.BroadcastPlan,
+    resolved_controls: Mapping[str, Any],
+    route_name: str | None,
+) -> _plan.StochasticPlan | None:
+    """The plan of the laws a lifted call draws from, which enumerates every group unless *route_name* samples."""
+    return _plan.build_stochastic_plan(
+        argument_values,
+        broadcast_plan,
+        resolved_controls["max_evaluations"],
+        enumerate_every_group=route_name != "sampling_lift",
+    )
+
+
+def _lifted_point_evaluator(
+    function: Function,
+    *,
+    resolved_controls: Mapping[str, Any],
+    candidates: tuple[Any, ...] | None,
+    invocation_bindings: Mapping[str, int],
+    explicit_parameter_names: frozenset[str] | None = None,
+) -> Callable[..., Any]:
+    """The evaluation of one point of a lifted call of *function*, a function of the point's arguments by name.
+
+    A Function realized by routes realizes each point by the route it selects
+    there, and any other Function runs its body. The call and ``check`` map and
+    probe this one evaluation, so the two agree.
+
+    Parameters
+    ----------
+    function : Function
+        The function whose call is lifted.
+    resolved_controls : Mapping of str to Any
+        The call's resolved controls.
+    candidates : tuple or None
+        The routes of a Function realized by routes, and ``None`` otherwise.
+    invocation_bindings : Mapping of str to int
+        The dimension sizes the call's arguments bound.
+    explicit_parameter_names : frozenset of str or None
+        The parameters a result's expression shows, as :func:`_realized_point`
+        takes them.
+
+    Returns
+    -------
+    Callable
+        ``evaluate(**point_values)``, the point's result as a term.
+    """
+    if candidates is not None:
+
+        def realize_point(**point_values: Any) -> Any:
+            return _realized_point(
+                function,
+                point_values,
+                resolved_controls,
+                candidates,
+                explicit_parameter_names=explicit_parameter_names,
+            )
+
+        return realize_point
+
+    def evaluate_body(**point_values: Any) -> Any:
+        return _evaluated_body_point(function, point_values, invocation_bindings)
+
+    return evaluate_body
+
+
+def _probe_lifted_point(
+    function: Function,
+    argument_values: dict[str, Any],
+    lifted_refs: list[_binding.FunctionInputRef],
+    *,
+    point_body: Callable[..., Any],
+    stochastic_plan: _plan.StochasticPlan | None,
+    route_cache_key: Hashable,
+) -> ProbeResult:
+    """Whether one evaluation point of a lifted call traces, read from the function's probe results.
+
+    The probe traces the operation ``jax`` maps, not merely the body: a
+    body can trace on its own yet fail under the map, as one that returns a
+    record holding a batch does. So the probe maps the body over stand-ins of
+    its lifted arguments, each fed the way the map will feed it: a swept batch
+    over its first row, a law over one draw, and a batch-valued draw in its
+    raw form, which a parameter annotated with a batch class receives rebuilt
+    as the batch. Every other argument is taken as data when it is numeric,
+    so the result holds for any value of its shape and dtype, and as it is
+    otherwise (V.13, probe rule 1).
+
+    The result is stored in the function's probe results under the input
+    structure of one evaluation point and *route_cache_key*, so every call and
+    ``check`` with inputs of that structure, and every ``using`` copy of the
+    function, reads it. A probe that fails means the evaluation points run one
+    at a time, which always runs the call, so falling back costs speed, never
+    correctness.
+
+    Parameters
+    ----------
+    function : Function
+        The function whose call is lifted.
+    argument_values : dict of str to Any
+        The call's argument values, by parameter name.
+    lifted_refs : list of FunctionInputRef
+        The lifted arguments: swept batches, or laws the call draws from.
+    point_body : Callable
+        The evaluation of one point, a function of its arguments by name.
+    stochastic_plan : StochasticPlan or None
+        The plan of the laws the call draws from, when it draws.
+    route_cache_key : Hashable
+        What one point runs besides the function's own body, such as the
+        controls a Function realized by routes selects by.
+
+    Returns
+    -------
+    ProbeResult
+        The outcome, whose ``error`` is the error the map raised when it did
+        not trace.
+    """
+    swept_batches: dict[_binding.FunctionInputRef, Any] = {}
+    drawn_refs: list[_binding.FunctionInputRef] = []
+    for lifted_ref in lifted_refs:
+        lifted_value = _binding.input_ref_value(argument_values, lifted_ref)
+        if isinstance(lifted_value, Batch):
+            swept_batches[lifted_ref] = lifted_value
+        else:
+            drawn_refs.append(lifted_ref)
+    shared_refs: list[_binding.FunctionInputRef] = []
+    # An argument JAX cannot flatten, such as one that holds itself, is passed
+    # to the probe as it is, and keeps the result from being stored.
+    every_shared_argument_flattens = True
+    for input_ref in _binding.iter_input_refs(function._signature_info, argument_values):
+        if input_ref in lifted_refs:
+            continue
+        try:
+            jax.tree.flatten(_binding.input_ref_value(argument_values, input_ref))
+        except Exception:
+            every_shared_argument_flattens = False
+        else:
+            shared_refs.append(input_ref)
+    shared_values = tuple(
+        _binding.input_ref_value(argument_values, shared_ref) for shared_ref in shared_refs
+    )
+
+    def with_shared_values(probed_shared_values: tuple[Any, ...]) -> dict[str, Any]:
+        return _binding.replace_input_refs(
+            argument_values, dict(zip(shared_refs, probed_shared_values, strict=True))
+        )
+
+    try:
+        if swept_batches:
+            swept_refs = list(swept_batches)
+            # The first row of the storage the executor maps.
+            lifted_stand_ins = tuple(
+                jax.tree.map(
+                    lambda column: column[:1],
+                    _sweep.mapped_storage(batch, int(math.prod(batch.batch_shape))),
+                )
+                for batch in swept_batches.values()
+            )
+            lifted_cache_key = (
+                "rows",
+                tuple(
+                    (swept_ref, type(batch), batch.element_spec.term_spec)
+                    for swept_ref, batch in swept_batches.items()
+                ),
+            )
+
+            def map_point_body(probe_inputs: tuple[Any, tuple[Any, ...]]) -> Any:
+                rows, probed_shared_values = probe_inputs
+                # The executor's own body, not a copy maintained in the probe.
+                evaluate_row = _sweep.mapped_row_body(
+                    func=point_body,
+                    values=with_shared_values(probed_shared_values),
+                    array_args=swept_refs,
                     label=function.output_label,
                     output_is_declared=(
-                        function.output_spec is not None and function.output_spec.spec is not None
+                        function.output_spec is not None
+                        and function.output_spec.term_spec is not None
                     ),
                 )
-                # The first row of the storage the executor maps.
-                probe_rows = tuple(
-                    jax.tree.map(
-                        lambda column: column[:1],
-                        _sweep.mapped_storage(source, int(math.prod(source.batch_shape))),
+                return jax.vmap(evaluate_row)(rows)
+
+        elif drawn_refs:
+            if stochastic_plan is None:  # pragma: no cover - planner contract guard
+                raise RuntimeError("distribution probe is missing its stochastic plan")
+            lifted_stand_ins = tuple(
+                _root_draw_stand_in(stochastic_plan.runtime_bindings[group.index].root)
+                for group in stochastic_plan.source_groups
+            )
+            lifted_cache_key = (
+                "draws",
+                tuple(
+                    (
+                        group.consumers,
+                        stochastic_plan.runtime_bindings[group.index].consumer_batches,
                     )
-                    for source in batched_sources.values()
+                    for group in stochastic_plan.source_groups
+                ),
+            )
+
+            record_draws = _broadcast.record_events(stochastic_plan)
+
+            def map_point_body(probe_inputs: tuple[Any, tuple[Any, ...]]) -> Any:
+                root_draws, probed_shared_values = probe_inputs
+                evaluate_draw = _broadcast.mapped_draw_body(
+                    func=point_body,
+                    values=with_shared_values(probed_shared_values),
+                    broadcast_args=drawn_refs,
+                    batch_events=_broadcast.batch_events(stochastic_plan),
+                    record_events=record_draws,
                 )
-                jax.make_jaxpr(jax.vmap(_row_call))(probe_rows)
-            elif drawn_refs:
-                if stochastic_plan is None:  # pragma: no cover - planner contract guard
-                    raise RuntimeError("distribution probe is missing its stochastic plan")
-                refs = drawn_refs
-                # The executor reads an enumerated group's atoms as it reads a
-                # sampled group's draws, so every group is probed with a stand-in
-                # for one draw of its root.
-                root_probes = []
-                for group in stochastic_plan.source_groups:
-                    binding = stochastic_plan.runtime_bindings[group.index]
-                    root = binding.root
-                    event = root.event_spec.spec
-                    if isinstance(event, BatchSpec):
-                        # A batch-valued draw is mapped in its raw form.
-                        root_probes.append(_batch_stand_in(root, event))
-                        continue
-                    held = _broadcast.batch_field(event)
-                    if held is not None:
-                        path, levels = held
-                        raise _broadcast.UnmappedBatchError(
-                            f"dispatch='jax' cannot map over the draws of {root.label!r}, whose "
-                            f"field {path!r} stores a batch on the levels {list(levels)} for "
-                            f"each draw. Lift over the marginal law at that field, as "
-                            f"marginal(law, {path!r}) gives it, or use dispatch='auto', "
-                            f"'sequential', or 'thread'."
-                        )
-                    from ..core._specs import _components_record
 
-                    components = _components_record(root.event_spec)
-                    if not isinstance(components, NumericRecordSpec) or not components.is_concrete:
-                        raise TypeError(
-                            f"{type(root).__name__} must declare a concrete numeric event "
-                            "to run under dispatch='jax'"
-                        )
-                    try:
-                        dtypes = root.dtypes
-                    except (AttributeError, NotImplementedError) as error:
-                        raise TypeError(
-                            f"{type(root).__name__} must declare its field dtypes to run "
-                            "under dispatch='jax'"
-                        ) from error
-                    columns = {}
-                    for path in components:
-                        dtype = dtypes.get(path)
-                        if dtype is None:
-                            dtype = dtypes.get(path.split("/", 1)[0])
-                        if dtype is None:
-                            dtype = _stored_dtype(root, path)
-                        columns[path] = jax.ShapeDtypeStruct(
-                            (1, *components[path].shape),
-                            dtype,
-                        )
-                    # The stand-in draw is at the kind the law's event declaration
-                    # names, as the law's own draws are.
-                    if root.event_spec.exposes_record:
-                        root_probe = NumericRecordBatch(
-                            columns,
-                            "draw",
-                            element_spec=components,
-                            axes_per_level=(1,),
-                            label=root.label,
-                        )
-                    else:
-                        root_probe = next(iter(columns.values()))
-                    root_probes.append(root_probe)
-
-                def probe_draw(root_values, dynamic_values):
-                    probe_values = _binding.replace_input_refs(
-                        dummy_kw, dict(zip(dynamic_refs, dynamic_values, strict=True))
-                    )
-                    _draw_call = _broadcast.mapped_draw_body(
-                        func=func,
-                        values=probe_values,
-                        broadcast_args=refs,
-                        batch_events=_broadcast.batch_events(stochastic_plan),
-                    )
-                    sampled = {}
+                def evaluate_at_root_draws(root_values: tuple[Any, ...]) -> Any:
+                    consumed_values = {}
                     for group, root_value in zip(
-                        stochastic_plan.source_groups,
-                        root_values,
-                        strict=True,
+                        stochastic_plan.source_groups, root_values, strict=True
                     ):
                         binding = stochastic_plan.runtime_bindings[group.index]
-                        for consumer, evaluate in zip(
-                            group.consumers,
-                            binding.consumer_evaluators,
-                            strict=True,
+                        for consumer, evaluate_consumer in zip(
+                            group.consumers, binding.consumer_evaluators, strict=True
                         ):
-                            sampled[consumer.arg_ref] = evaluate(root_value)
-                    return _draw_call(tuple(sampled[ref] for ref in refs))
+                            consumed_values[consumer.arg_ref] = _broadcast.lifted_row_form(
+                                evaluate_consumer(root_value), consumer.arg_ref, record_draws
+                            )
+                    return evaluate_draw(
+                        tuple(consumed_values[drawn_ref] for drawn_ref in drawn_refs)
+                    )
 
-                dynamic_values = tuple(
-                    _binding.input_ref_value(dummy_kw, ref) for ref in dynamic_refs
-                )
-                jax.make_jaxpr(jax.vmap(probe_draw, in_axes=(0, None)))(
-                    tuple(root_probes), dynamic_values
-                )
-            else:
-                # The trace takes the arguments as its inputs, so each argument
-                # that converts to an array enters as a JAX array.
-                traced_kw = _binding.replace_input_refs(
-                    dummy_kw,
-                    {
-                        ref: jnp.asarray(_binding.input_ref_value(values, ref))
-                        for ref in array_like_refs
-                    },
-                )
-                jax.make_jaxpr(lambda kw: func(**kw))(traced_kw)
-    except Exception as exc:
-        return exc
-    return None
+                return jax.vmap(evaluate_at_root_draws)(root_draws)
+
+        else:
+            lifted_stand_ins = ()
+            lifted_cache_key = ("values",)
+
+            def map_point_body(probe_inputs: tuple[Any, tuple[Any, ...]]) -> Any:
+                _, probed_shared_values = probe_inputs
+                return point_body(**with_shared_values(probed_shared_values))
+
+        probe_cache_key = (
+            _hashable_or_none((route_cache_key, lifted_cache_key))
+            if every_shared_argument_flattens
+            else None
+        )
+    except Exception as error:
+        # A lifted argument with no stand-in, such as a law whose event
+        # declares no dtype, cannot be mapped; the result depends on the law,
+        # so it is not stored.
+        return ProbeResult(traces=False, error=error.with_traceback(None))
+
+    def map_point_body_without_workflow_effects(
+        probe_inputs: tuple[Any, tuple[Any, ...]],
+    ) -> Any:
+        # A workflow draw reached while tracing fails the probe,
+        # even when the body catches the refusal.
+        with _context._workflow_probe():
+            return map_point_body(probe_inputs)
+
+    return probe(
+        None if probe_cache_key is None else function._probe_results,
+        map_point_body_without_workflow_effects,
+        (lifted_stand_ins, shared_values),
+        label=function.label,
+        cache_key_prefix=() if probe_cache_key is None else probe_cache_key,
+    )
+
+
+def _hashable_or_none(cache_key: Hashable) -> Hashable | None:
+    """*cache_key* when it hashes, and ``None`` when some part of it does not."""
+    try:
+        hash(cache_key)
+    except TypeError:
+        return None
+    return cache_key
+
+
+def _route_cache_key(
+    function: Function, resolved_controls: Mapping[str, Any], candidates: tuple[Any, ...] | None
+) -> Hashable:
+    """What one evaluation point of a lifted call runs besides the function's own body.
+
+    A Function's body is the same under every control, so its probe results
+    are keyed by the input structure alone, and every ``using`` copy shares
+    them. A Function realized by routes selects a route at each point by its
+    controls, so they enter the key.
+    """
+    if candidates is None:
+        return ("body",)
+    return ("routes", _frozen_controls(resolved_controls))
+
+
+def _frozen_controls(control_value: Any) -> Any:
+    """*control_value* with each mapping and sequence in it made a tuple, so a hashable one hashes."""
+    if isinstance(control_value, Mapping):
+        return tuple(
+            sorted(
+                ((str(name), _frozen_controls(value)) for name, value in control_value.items()),
+                key=lambda item: item[0],
+            )
+        )
+    if isinstance(control_value, list | tuple):
+        return tuple(_frozen_controls(value) for value in control_value)
+    return control_value
+
+
+def _root_draw_stand_in(root: Any) -> Any:
+    """A stand-in for one draw of *root*, led by an axis of one, which the probe maps.
+
+    An enumerated group's atoms are read as a sampled group's draws are, so
+    every root stands in by one draw of its event.
+
+    Parameters
+    ----------
+    root : Distribution
+        The law the call draws from.
+
+    Returns
+    -------
+    Any
+        A ``jax.ShapeDtypeStruct`` for a law over an array, a
+        ``NumericRecordBatch`` of them for a law over a record, and the raw
+        stand-in of a batch for a batch-valued draw.
+
+    Raises
+    ------
+    UnmappedBatchError
+        If the law's record event stores a batch for each draw in a field.
+    TypeError
+        If the law's event is not numeric and concrete, or a field's dtype is
+        neither declared nor stored.
+    """
+    event_term_spec = root.event_spec.term_spec
+    if isinstance(event_term_spec, BatchSpec):
+        # A batch-valued draw is mapped in its raw form.
+        return _batch_stand_in(root, event_term_spec)
+    batch_valued_field = _broadcast.batch_field(event_term_spec)
+    if batch_valued_field is not None:
+        path, levels = batch_valued_field
+        raise _broadcast.UnmappedBatchError(
+            f"jax.vmap cannot map over the draws of {root.label!r}, whose field {path!r} "
+            f"stores a batch on the levels {list(levels)} for each draw. Lift over the "
+            f"marginal law at that field, as marginal(law, {path!r}) gives it"
+        )
+    output_record = _output_record(root.event_spec)
+    if not isinstance(output_record, NumericRecordSpec) or not output_record.is_concrete:
+        raise TypeError(
+            f"{type(root).__name__} must declare a concrete numeric event to be mapped by JAX"
+        )
+    try:
+        field_dtypes = root.dtypes
+    except (AttributeError, NotImplementedError) as error:
+        raise TypeError(
+            f"{type(root).__name__} must declare its field dtypes to be mapped by JAX"
+        ) from error
+    stand_in_columns = {}
+    for path in output_record:
+        dtype = field_dtypes.get(path)
+        if dtype is None:
+            dtype = field_dtypes.get(path.split(_PATH_SEP, 1)[0])
+        if dtype is None:
+            dtype = _stored_dtype(root, path)
+        stand_in_columns[path] = jax.ShapeDtypeStruct((1, *output_record[path].shape), dtype)
+    # The stand-in draw is at the kind the law's event spec names, as the
+    # law's own draws are.
+    if _has_record_outputs(root.event_spec):
+        return NumericRecordBatch(
+            stand_in_columns,
+            "draw",
+            element=output_record,
+            axes_per_level=(1,),
+            label=root.label,
+        )
+    return next(iter(stand_in_columns.values()))
 
 
 def _batch_stand_in(root: Any, event: BatchSpec) -> Any:
@@ -1225,7 +1634,7 @@ def _batch_stand_in(root: Any, event: BatchSpec) -> Any:
     root : Distribution
         The law whose draws the probe stands in for.
     event : BatchSpec
-        The law's event declaration.
+        The law's event spec.
 
     Returns
     -------
@@ -1241,11 +1650,10 @@ def _batch_stand_in(root: Any, event: BatchSpec) -> Any:
         a leaf's dtype is neither declared nor stored.
     """
     flat = _flat_batch_spec(event)
-    element = flat.element_spec
+    element = flat.element_spec.term_spec
     if not isinstance(element, NumericSpec) or not flat.is_concrete:
         raise TypeError(
-            f"{type(root).__name__} must declare a concrete numeric event to run under "
-            f"dispatch='jax'"
+            f"{type(root).__name__} must declare a concrete numeric event to be mapped by JAX"
         )
     lead = (1, *flat.batch_shape)
     if isinstance(element, NumericArraySpec):
@@ -1257,7 +1665,7 @@ def _batch_stand_in(root: Any, event: BatchSpec) -> Any:
         dtype = leaf.dtype if leaf.dtype is not None else _stored_dtype(root, path)
         if dtype is None:
             raise TypeError(
-                f"{type(root).__name__} must declare its field dtypes to run under dispatch='jax'"
+                f"{type(root).__name__} must declare its field dtypes to be mapped by JAX"
             )
         columns[path] = jax.ShapeDtypeStruct((*lead, *leaf.shape), dtype)
     if isinstance(element, NumericArraySpec):
@@ -1268,7 +1676,7 @@ def _batch_stand_in(root: Any, event: BatchSpec) -> Any:
 def _stored_dtype(root: Any, path: str) -> Any:
     """The dtype of the atoms an empirical *root* stores at the leaf *path*, or None.
 
-    The probe reads it where the law's declaration leaves a dtype open, since an
+    The probe reads it where the law's event spec leaves a dtype open, since an
     empirical law holds its atoms and reading them draws nothing. Atoms that
     are objects have no dtype.
     """
@@ -1280,84 +1688,53 @@ def _stored_dtype(root: Any, path: str) -> Any:
     return None if dtype is None or dtype.kind == "O" else dtype
 
 
-def _require_jax_traceable(
-    function: Function,
-    values: dict[str, Any],
-    broadcast_args: list[_binding.FunctionInputRef],
-    *,
-    func: Callable[..., Any],
-    stochastic_plan: _plan.StochasticPlan | None,
-) -> None:
-    """Raise a clear error if explicit JAX dispatch cannot trace.
+def _lifted_point_traceability(
+    function: Function, probe_point: Callable[[], ProbeResult]
+) -> tuple[bool, str | None]:
+    """Whether JAX can trace one evaluation point of a lifted call of *function*, with the reason when it cannot.
 
-    The probe's errors that the other dispatch modes raise too are raised
-    unchanged: the :class:`~._call.ApplicabilityError` of a point whose
-    declarations violate the call contract, which planning raises, and the
-    :class:`~._result.ResultSchemaError` or :class:`~._result.ResultKindError` of
-    a result that violates its declaration, which the return raises. A batch
-    the map cannot carry, such as a joint law's batch-valued field, raises a
-    ``ValueError`` that names it.
+    A function's ``traceable`` claim decides with no probe. A function that
+    states nothing is traceable when one evaluation point traces, which
+    *probe_point* reads from the function's stored probe results or probes
+    once. A point that traced but failed ProbPipe's check of its inputs or of
+    its output counts as traced, since every executor refuses it the same way.
+
+    Parameters
+    ----------
+    function : Function
+        The function whose call is lifted.
+    probe_point : Callable
+        Reads or runs the probe of one evaluation point.
+
+    Returns
+    -------
+    tuple of (bool, str or None)
+        Whether JAX can trace an evaluation point, and why not when it cannot.
     """
-    trace_error = _jax_traceability_error(
-        function, values, broadcast_args, func=func, stochastic_plan=stochastic_plan
-    )
-    if trace_error is None:
-        return
+    traceable_claim = function._execution_claims.traceable
+    if traceable_claim is not None:
+        return traceable_claim, None if traceable_claim else "it claims traceable=False"
+    probe_result = probe_point()
+    if probe_result.traces:
+        return True, None
+    if probe_result.draws_global_random:
+        return False, (
+            "it draws from NumPy's global random generator, whose noise would be fixed into "
+            "the compiled JAX program"
+        )
+    trace_error = probe_result.error
     if isinstance(
         trace_error,
         (_call.ApplicabilityError, _result.ResultSchemaError, _result.ResultKindError),
     ):
-        raise trace_error
-    if isinstance(trace_error, _broadcast.UnmappedBatchError):
-        raise ValueError(str(trace_error)) from None
+        # The callable traced, and ProbPipe's check of its inputs or output
+        # refused the point, which it refuses under every executor.
+        return True, None
     if isinstance(trace_error, _context._StochasticProbeSignal):
-        message = (
-            _context.JAX_SUBMISSION_MESSAGE
-            if trace_error.submission
-            else _context.JAX_KEYLESS_DRAW_MESSAGE
-        )
-        raise TypeError(message) from trace_error
-    raise ValueError(
-        "dispatch='jax' failed while tracing the wrapped function with JAX; "
-        "ensure the function is JAX-traceable, or use dispatch='auto', "
-        "'sequential', or 'thread'."
-    ) from trace_error
-
-
-def _resolve_dispatch(
-    function: Function,
-    values: dict[str, Any],
-    broadcast_args: list[_binding.FunctionInputRef],
-    *,
-    jax_supported: bool = True,
-    func: Callable[..., Any],
-    stochastic_plan: _plan.StochasticPlan | None,
-) -> str:
-    """Resolve the dispatch strategy, caching JAX traceability detection.
-
-    Returns ``"jax"``, ``"sequential"``, or ``"thread"``. This is
-    independent of orchestration (``workflow_kind``), which wraps
-    whichever strategy is chosen.
-    """
-    if function.options["dispatch"] != "auto":
-        return function.options["dispatch"]
-
-    if not jax_supported:
-        return "sequential"
-
-    if (
-        _jax_traceability_error(
-            function, values, broadcast_args, func=func, stochastic_plan=stochastic_plan
-        )
-        is None
-    ):
-        return "jax"
-    else:
-        logger.info(
-            "Function '%s' is not JAX-traceable; using sequential dispatch.",
-            function._label,
-        )
-        return "sequential"
+        return False, "it draws random numbers without an explicit key"
+    if trace_error is None:
+        return False, "tracing it failed"
+    return False, f"tracing it raised {type(trace_error).__name__}: {trace_error}"
 
 
 @dataclass(frozen=True)
@@ -1384,6 +1761,10 @@ class _Route:
         The call's other arguments, by parameter name.
     controls : Mapping[str, Any]
         The resolved controls the rule received.
+    num_samples : int, tuple of int, or None
+        The number of Monte Carlo draws the route took, as
+        :attr:`~probpipe.core._call_context._NumSamplesUsed.provenance_num_samples` gives
+        it, or ``None`` when it took none.
     """
 
     name: str
@@ -1394,13 +1775,16 @@ class _Route:
     fixed_args: Mapping[str, Any] = field(default_factory=dict)
     controls: Mapping[str, Any] = field(default_factory=dict)
     method: str | None = None
+    num_samples: int | tuple[int, ...] | None = None
 
     @property
     def metadata(self) -> dict[str, Any]:
-        """The route's name and exactness, and its registry method, as provenance records them."""
+        """The route's name and exactness, its registry method, and its Monte Carlo draws, as provenance records them."""
         recorded: dict[str, Any] = {"route": self.name, "exact": self.exact}
         if self.method is not None:
             recorded["method"] = self.method
+        if self.num_samples is not None:
+            recorded["num_samples"] = self.num_samples
         return recorded
 
 
@@ -1413,9 +1797,10 @@ _PLANNED = "the route of the converted call"
 
 def _resolve_route(
     function: Function,
-    values: Mapping[str, Any],
+    argument_values: Mapping[str, Any],
     broadcast_plan: _plan.BroadcastPlan,
     rule_method: str | None,
+    resolved_controls: Mapping[str, Any],
 ) -> _Route:
     """Select the route that realizes the call (step 6).
 
@@ -1430,7 +1815,7 @@ def _resolve_route(
     ----------
     function : Function
         The function whose call the route realizes.
-    values : Mapping of str to Any
+    argument_values : Mapping of str to Any
         The call's admitted arguments, by parameter name.
     broadcast_plan : BroadcastPlan
         The call's lift, whose regime and first lifted argument the selection
@@ -1438,6 +1823,9 @@ def _resolve_route(
     rule_method : str or None
         The evaluation rule the ``method`` control names, or ``None`` to select
         the first feasible rule by rank.
+    resolved_controls : Mapping of str to Any
+        The call's resolved controls, which the rules receive and whose
+        ``exact_only`` excludes the approximate ones.
 
     Returns
     -------
@@ -1451,7 +1839,9 @@ def _resolve_route(
         If ``method`` names no route, or no rule is feasible under the controls,
         naming each rule tried and what it lacked.
     """
-    info, route = _route_report(function, values, broadcast_plan, rule_method)
+    info, route = _route_report(
+        function, argument_values, broadcast_plan, rule_method, resolved_controls
+    )
     if route is None:
         if broadcast_plan.regime == "none":
             raise ResolutionError(info.description)
@@ -1459,7 +1849,7 @@ def _resolve_route(
         detail = (
             f"pending: {', '.join(info.pending)}" if info.feasible is None else info.description
         )
-        restriction = " (exact_only=True)" if function.options["exact_only"] else ""
+        restriction = " (exact_only=True)" if resolved_controls["exact_only"] else ""
         raise ResolutionError(
             f"{function.label}: no evaluation rule applies to a call over {ref.label!r}"
             f"{restriction}. {detail}"
@@ -1469,16 +1859,18 @@ def _resolve_route(
 
 def _route_report(
     function: Function,
-    values: Mapping[str, Any],
+    argument_values: Mapping[str, Any],
     broadcast_plan: _plan.BroadcastPlan,
     rule_method: str | None,
+    resolved_controls: Mapping[str, Any],
 ) -> tuple[MethodInfo, _Route | None]:
     """The report of the route that realizes the call, and the route when it is selected.
 
     The report probes without executing, as :func:`_resolve_route` states the
-    selection; the route is ``None`` unless the report is feasible.
+    selection, under the call's *resolved_controls*; the route is ``None``
+    unless the report is feasible.
     """
-    method, exact_only = rule_method, function.options["exact_only"]
+    method, exact_only = rule_method, resolved_controls["exact_only"]
     if broadcast_plan.regime == "none":
         if method is not None:
             return MethodInfo(
@@ -1489,11 +1881,13 @@ def _route_report(
             ), None
         return MethodInfo(True, method_name=_BODY, exact=True), _Route(_BODY, True)
     ref = (broadcast_plan.array_args or broadcast_plan.dist_args)[0]
-    operand = _binding.input_ref_value(values, ref)
+    operand = _binding.input_ref_value(argument_values, ref)
     parameter = ref.parameter_name
     variadic = ref.subscript is not None
-    fixed_args = {name: value for name, value in values.items() if variadic or name != parameter}
-    controls = dict(function.options)
+    fixed_args = {
+        name: value for name, value in argument_values.items() if variadic or name != parameter
+    }
+    controls = dict(resolved_controls)
     registry = _rules.evaluation_rule_registry
     info = registry.check(
         function,
@@ -1548,12 +1942,13 @@ def _check_call(function: Function, args: tuple[Any, ...], kwargs: dict[str, Any
         If an argument's kind is not accepted, a condition fails, or the
         declarations conflict.
     ValueError
-        If an empty sweep lacks a concrete output declaration after input
+        If an empty sweep lacks a concrete output spec after input
         dimensions bind.
     ResolutionError
         If a conversion has no converter, or the ``method`` control names no
         route of a Function realized by routes.
     """
+    resolved_controls = current_call_context().resolved_controls
     bound = _call.resolve_function_call(
         function._signature_info,
         args,
@@ -1561,39 +1956,47 @@ def _check_call(function: Function, args: tuple[Any, ...], kwargs: dict[str, Any
         bind=function._bind,
         function_name=function._label,
     )
-    values, conversions, waiting = _normalization.plan_distribution_values(
+    argument_values, conversions, waiting = _normalization.plan_distribution_values(
         values=bound,
         signature_info=function._signature_info,
-        conversions=function.options["conversions"],
+        conversions=resolved_controls["conversions"],
     )
     _call.admit_arguments(
         function._signature_info,
-        values,
+        argument_values,
         input_spec=function.input_spec,
         function_name=function._label,
         roles=function._roles,
     )
     broadcast_plan = _plan.build_broadcast_plan(
-        values=values, signature_info=function._signature_info, roles=function._roles
+        values=argument_values, signature_info=function._signature_info, roles=function._roles
     )
-    candidates = function._route_candidates(function.options, values)
+    candidates = function._route_candidates(resolved_controls, argument_values)
     if candidates is not None:
-        return _check_routes(function, values, broadcast_plan, candidates, conversions, waiting)
+        return _check_routes(
+            function,
+            argument_values,
+            broadcast_plan,
+            candidates,
+            conversions,
+            waiting,
+            resolved_controls,
+        )
     lifted_refs = (*broadcast_plan.array_args, *broadcast_plan.dist_args)
     _, bindings = _bind_planned_function_inputs(
         function_name=function._label,
         input_spec=function.input_spec,
-        values=values,
+        values=argument_values,
         lifted_names={ref.parameter_name for ref in lifted_refs},
     )
-    result = (
+    result_spec = (
         function.output_spec.with_dim_sizes(**bindings)
         if function.output_spec is not None
         else None
     )
-    _plan.require_empty_sweep_output(broadcast_plan, result)
+    _plan.require_empty_sweep_output(broadcast_plan, result_spec)
     deferred = ()
-    if result is None or result.spec is None:
+    if result_spec is None or result_spec.term_spec is None:
         deferred = ("the result's type is completed from the returned value",)
     lifted = tuple(dict.fromkeys(ref.parameter_name for ref in lifted_refs))
     if waiting:
@@ -1603,30 +2006,41 @@ def _check_call(function: Function, args: tuple[Any, ...], kwargs: dict[str, Any
         return CallReport(
             routes=(pending,),
             deferred=deferred,
-            result=result,
+            result=result_spec,
             lifted=lifted,
             conversions=MappingProxyType(conversions),
         )
-    info, _ = _route_report(function, values, broadcast_plan, function.options["method"])
+    route_info, route = _route_report(
+        function, argument_values, broadcast_plan, resolved_controls["method"], resolved_controls
+    )
+    execution = (
+        ExecutionReport()
+        if route is None
+        else _lifted_execution_report(
+            function, argument_values, broadcast_plan, None, resolved_controls, route.name
+        )
+    )
     return CallReport(
-        routes=(info,),
-        selected=None if info.feasible is None else info,
+        routes=(route_info,),
+        selected=None if route_info.feasible is None else route_info,
         deferred=deferred,
-        result=result,
+        result=result_spec,
         lifted=lifted,
         conversions=MappingProxyType(conversions),
+        execution=execution,
     )
 
 
 def _check_routes(
     function: Function,
-    values: Mapping[str, Any],
+    argument_values: Mapping[str, Any],
     broadcast_plan: _plan.BroadcastPlan,
     candidates: tuple[Any, ...],
     conversions: Mapping[str, Any],
     waiting: tuple[str, ...],
+    resolved_controls: Mapping[str, Any],
 ) -> CallReport:
-    """The check of a call that a Function's routes realize at each of its points.
+    """The check of a call that a Function's routes realize at each of its points, under *resolved_controls*.
 
     A lifted call first needs an evaluation rule, selected by rank since the
     ``method`` control names a route; its points are then checked as the
@@ -1642,25 +2056,36 @@ def _check_routes(
         return CallReport(
             routes=(pending,), lifted=lifted, conversions=MappingProxyType(dict(conversions))
         )
+    execution = ExecutionReport()
     if broadcast_plan.regime != "none":
-        info, _ = _route_report(function, values, broadcast_plan, None)
-        if info.feasible is not True:
+        route_info, route = _route_report(
+            function, argument_values, broadcast_plan, None, resolved_controls
+        )
+        if route_info.feasible is not True:
             return CallReport(
-                routes=(info,),
-                selected=None if info.feasible is None else info,
+                routes=(route_info,),
+                selected=None if route_info.feasible is None else route_info,
                 lifted=lifted,
                 conversions=MappingProxyType(dict(conversions)),
             )
-    token = _call._CHECKING.set(True)
+        if route is not None:
+            execution = _lifted_execution_report(
+                function, argument_values, broadcast_plan, candidates, resolved_controls, route.name
+            )
+    checking_flag_reset = _call._CHECKING.set(True)
     try:
-        point = _resolution.check_points(
-            function, values, function.options, candidates, broadcast_plan
+        points_report = _resolution.check_points(
+            function, argument_values, resolved_controls, candidates, broadcast_plan
         )
     finally:
-        _call._CHECKING.reset(token)
-    _plan.require_empty_sweep_output(broadcast_plan, point.result)
+        _call._CHECKING.reset(checking_flag_reset)
+    _plan.require_empty_sweep_output(broadcast_plan, points_report.result)
     return _resolution.call_report(
-        point, lifted=lifted, conversions=conversions, candidates=candidates
+        points_report,
+        lifted=lifted,
+        conversions=conversions,
+        candidates=candidates,
+        execution=execution,
     )
 
 
@@ -1726,8 +2151,8 @@ def _apply_scope() -> Generator[None, None, None]:
     _replay._reject_function_apply()
     with (
         _context._ephemeral_workflow_run(),
-        _broker._function_stochastic_scope() as broker,
-        _execution.point_work_item_scope(broker),
+        _evaluation_keys._function_stochastic_scope() as broker,
+        _execution.in_place_evaluation_point_scope(broker),
     ):
         yield
 
@@ -1737,9 +2162,10 @@ class _CallEngine:
 
     def __call__(self, function: Function, /, *args: Any, **kwargs: Any) -> Any:
         result = _call_function(function, args, kwargs)
-        if not function.options["raw"]:
+        resolved_controls = current_call_context().resolved_controls
+        if not resolved_controls["raw"]:
             return result
-        if function._route_candidates(function.options) is not None:
+        if function._route_candidates(resolved_controls) is not None:
             return _result.raw_form(result)
         return _result._detach(result)
 
@@ -1759,7 +2185,11 @@ class _CallEngine:
         admits each argument by its role, with no lifting, runs the route
         selected for the point, and returns the result's raw form.
         """
-        candidates = function._route_candidates(function.options, values)
+        staged, result = _boundary.maybe_stage(function, values)
+        if staged:
+            return result
+        resolved_controls = current_call_context().resolved_controls
+        candidates = function._route_candidates(resolved_controls, values)
         if candidates is None:
             arguments = _call.presented_arguments(function._signature_info, values)
             return function._implementation.invoke(
@@ -1775,7 +2205,7 @@ class _CallEngine:
         token = _call._CHECKING.set(False)
         try:
             term = _realized_point(
-                function, values, function.options, candidates, kind_error=_ResultKindMismatch
+                function, values, resolved_controls, candidates, kind_error=_ResultKindMismatch
             )
         finally:
             _call._CHECKING.reset(token)

@@ -38,8 +38,8 @@ def _lift() -> Function:
     """A lifted call of a module-level def, which replay can anchor."""
     return Function(
         _shift,
-        n_broadcast_samples=8,
-        dispatch="sequential",
+        max_evaluations=8,
+        executor="sequential",
         label="shift",
         output_spec=OutputSpec(shift=None),
     )
@@ -55,7 +55,7 @@ def _two_empirical_draws(offset):
     law = standard_normal()
     first = converter_registry.convert(law, EmpiricalDistribution, num_samples=4)
     second = converter_registry.convert(law, EmpiricalDistribution, num_samples=4)
-    return jnp.stack([first.atoms.values, second.atoms.values]) + offset
+    return jnp.stack([first.atoms.raw, second.atoms.raw]) + offset
 
 
 def _drawing() -> Function:
@@ -226,4 +226,4 @@ class TestReplay:
             recorded = _lift()(law)
 
         with pytest.raises(ReplayCompatibilityError), replay_run(recorded.provenance):
-            _lift().using(n_broadcast_samples=9)(law)
+            _lift().using(max_evaluations=9)(law)

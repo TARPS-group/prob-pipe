@@ -152,7 +152,7 @@ class TestConditionalRoundTrip:
         )
         assert (
             Record(
-                r.raw(),
+                r.raw,
                 label="r",
             )
             != r
@@ -410,7 +410,7 @@ class TestEditTemplateThreading:
             event_template=RecordSpec(obs=NumericArraySpec((), dtype=jnp.dtype("float32"))),
             label="r",
         )
-        m = left.merge(right)
+        m = left & (right)
         assert m.event_template.at_path("physics/force").dtype == jnp.dtype("float32")
         assert m.event_template["obs"].dtype == jnp.dtype("float32")
 
@@ -449,41 +449,39 @@ class TestEditTemplateThreading:
 
     def test_merge_field_versus_prefix_clash_raises(self):
         with pytest.raises(ValueError):
-            Record(
-                {"a/b": 1.0},
-                label="r",
-            ).merge(
+            (
                 Record(
-                    {"a": 2.0},
+                    {"a/b": 1.0},
                     label="r",
+                )
+                & (
+                    Record(
+                        {"a": 2.0},
+                        label="r",
+                    )
                 )
             )
 
-    def test_deep_merge_combines_subtree(self):
-        m = Record(
-            {"g/x": 1.0},
-            label="r",
-        ).merge(
-            Record(
-                {"g/y": 2.0},
-                label="r",
-            )
-        )
-        assert tuple(m.keys()) == ("g/x", "g/y")
+    def test_a_merge_refuses_a_group_both_records_have(self):
+        # A merge is shallow: two groups of one name are refused, whatever they hold.
+        with pytest.raises(
+            ValueError, match=r"since both have 'g'\. Rename one, or merge the groups"
+        ):
+            (Record({"g/x": 1.0}, label="r") & (Record({"g/y": 2.0}, label="r")))
 
-    def test_deep_merge_regroups_into_earlier_subtree(self):
-        # A later key sharing an earlier subtree's name regroups INTO that
-        # subtree (first-appearance order), ahead of later top-level names.
-        m = Record(
-            {"g/x": 1.0, "h/y": 2.0},
-            label="r",
-        ).merge(
-            Record(
-                {"g/z": 3.0},
-                label="r",
-            )
-        )
-        assert tuple(m.keys()) == ("g/x", "g/z", "h/y")
+    def test_a_merge_of_record_specs_refuses_a_group_both_have(self):
+        with pytest.raises(
+            ValueError, match=r"since both have 'g'\. Rename one, or merge the groups first"
+        ):
+            (RecordSpec(g=RecordSpec(b=())) & (RecordSpec(g=RecordSpec(c=()))))
+
+    def test_a_merge_of_records_sharing_a_field_says_to_rename_one(self):
+        with pytest.raises(ValueError, match=r"since both have 'a'\. Rename one of them$"):
+            (Record({"a": 1.0}, label="r") & (Record({"a": 2.0}, label="s")))
+
+    def test_a_merge_places_the_right_record_s_groups_after_the_left_s(self):
+        m = Record({"g/x": 1.0, "h/y": 2.0}, label="r") & (Record({"k/z": 3.0}, label="r"))
+        assert tuple(m.keys()) == ("g/x", "h/y", "k/z")
 
     def test_replace_to_opaque_demotes_numeric_template(self):
         # An all-numeric Record's template auto-promotes; replacing a field
@@ -494,10 +492,10 @@ class TestEditTemplateThreading:
         )
         assert isinstance(r.event_template, NumericRecordSpec)
         r2 = r.replace(x="hello")
-        assert r2.raw("x") == "hello"
+        assert r2["x"].raw == "hello"
         assert not isinstance(r2.event_template, NumericRecordSpec)
         # ... and merging a mixed record into a numeric one likewise demotes.
-        m = r.merge(
+        m = r & (
             Record(
                 {"label": "fox"},
                 label="r",
@@ -525,10 +523,13 @@ class TestEditTemplateThreading:
         for edited in (
             r.without("obs"),
             r.replace(obs="new"),
-            r.merge(
-                Record(
-                    {"extra": 5.0},
-                    label="r",
+            (
+                r
+                & (
+                    Record(
+                        {"extra": 5.0},
+                        label="r",
+                    )
                 )
             ),
         ):
@@ -550,9 +551,13 @@ class TestEditTemplateThreading:
             {"physics": 9.0, "physics/mass": 5.0},  # ancestor listed first
             {"physics/mass": 5.0, "physics": 9.0},  # descendant listed first
         ):
-            with pytest.raises(ValueError, match="got both 'physics' and the path 'physics/mass'"):
+            with pytest.raises(
+                ValueError, match=r"'physics/mass' is inside 'physics'\. Keep one of them"
+            ):
                 r.replace(updates)
-        with pytest.raises(ValueError, match="overlap"):
+        with pytest.raises(
+            ValueError, match=r"'physics/mass' is inside 'physics'\. Keep one of them"
+        ):
             r.event_template.replace(
                 {"physics": NumericArraySpec((2,)), "physics/mass": NumericArraySpec((5,))}
             )
@@ -567,7 +572,7 @@ class TestRecordSpecOps:
     def test_without_merge_on_template(self):
         tpl = RecordSpec(physics=RecordSpec(force=(), mass=()), obs=())
         assert tuple(tpl.without("physics/mass").keys()) == ("physics/force", "obs")
-        merged = RecordSpec(a=()).merge(RecordSpec(b=(3,)))
+        merged = RecordSpec(a=()) & (RecordSpec(b=(3,)))
         assert tuple(merged.keys()) == ("a", "b")
 
     def test_map_over_specs_requires_coercible_output(self):
@@ -608,11 +613,19 @@ class TestBoundaryRules:
         assert len(r) == 3
         assert list(r) == ["physics/force", "physics/mass", "obs"]
 
-    def test_membership_and_indexing_coincide_leaf_only(self, r):
+    def test_membership_and_indexing_coincide(self, r):
         assert "physics/force" in r and "obs" in r
-        assert "physics" not in r  # subtree is not a member
+        assert "physics" in r  # a group is a member, as r["physics"] works
+        assert r["physics"] is r.at_path("physics")
+        assert r.keys() == ("physics/force", "physics/mass", "obs")  # keys() lists fields only
+        assert "nope" not in r
+        assert ("physics", "force") not in r  # a tuple is a list of paths, not a path
         with pytest.raises(KeyError):
-            r["physics"]  # subtree is not indexable
+            r["nope"]
+
+    def test_is_field_takes_one_path(self, r):
+        with pytest.raises(TypeError, match="a path must be a str"):
+            r.is_field(("physics", "force"))
 
     def test_at_path_and_children(self, r):
         assert isinstance(r.at_path("physics"), Record)
@@ -620,10 +633,10 @@ class TestBoundaryRules:
         assert tuple(r.children) == ("physics", "obs")
         assert isinstance(r.children["physics"], Record)  # children includes subtrees
 
-    def test_is_field_equals_membership(self, r):
+    def test_is_field_tells_a_field_from_a_group(self, r):
         assert r.is_field("physics/force") is True
         assert r.is_field("physics") is False
-        assert r.is_field("physics/force") == ("physics/force" in r)
+        assert r.is_field("nope") is False
 
     def test_map_preserves_class_and_reinfers_template(self):
         # map on a NumericRecord returns a NumericRecord, nested children
@@ -675,7 +688,7 @@ class TestBoundaryRules:
             {"a/b": da, "c": 3.0},
             label="nr",
         )
-        restored = nr.raw("a/b")
+        restored = nr["a/b"].raw
         assert isinstance(restored, xr.DataArray)
         assert restored.dims == ("t",)
 

@@ -9,9 +9,9 @@ structure-preserving transforms are defined. It is reused by
 and :class:`~probpipe.Record` (a tree of values), so the type- and value-level
 structures cannot drift apart on how a field is named or a path is resolved.
 
-See :class:`NamedTree` for the specifics: the field/path/key terminology, the
-mapping contract and navigation surface, the leaf-versus-node rule, and the
-transforms.
+See :class:`NamedTree` for the specifics: the field, path, and group
+terminology, the mapping contract and how ``[]`` reads paths, the
+leaf-versus-node rule, and the transforms.
 """
 
 from __future__ import annotations
@@ -20,14 +20,71 @@ from collections.abc import Callable, Iterable, Iterator, Mapping
 from types import MappingProxyType
 from typing import Any, Self, cast
 
+from ._shapes import (
+    PathsLike,
+    _as_joined_path,
+    _as_path,
+    _as_path_arguments,
+    _as_paths,
+    _missing_path,
+)
+
 __all__ = ["NamedTree"]
 
-# Separator for nested leaf paths (``"outer/inner"``). The path convention is
-# shared between a template and the values it describes; :mod:`probpipe.core.record`
-# imports these from here so the constant has a single home. Docstrings spell the
-# separator literally as ``/``; if it ever changes, update them (a guard test
-# pins this value so the change can't pass silently).
+# The separator of the names in a path (``"outer/inner"``), defined here and
+# nowhere else: every module that splits or joins a path imports it. Docstrings
+# spell the separator literally as ``/``; if it ever changes, update them (a
+# guard test pins this value so the change can't pass silently).
 _PATH_SEP = "/"
+
+
+def _last_name(path: str) -> str:
+    """The last name of *path*, as ``c`` of ``g/c``; a path of one name is that name."""
+    return path.rsplit(_PATH_SEP, 1)[-1]
+
+
+def _paths_label(paths: Iterable[str]) -> str:
+    """The label of a value indexed by several paths, such as ``"(a, g/c)"``."""
+    return "(" + ", ".join(paths) + ")"
+
+
+def _keyed_paths(paths: tuple[Any, ...], mapping: Mapping[str, Any]) -> dict[str, str]:
+    """The path behind each key of ``select(*paths, **mapping)``, positional paths first.
+
+    A positional path is keyed by its last name, so it can be passed as a
+    keyword argument, and a keyword path by its keyword.
+
+    Parameters
+    ----------
+    paths : tuple
+        The positional paths, as the caller gave them.
+    mapping : Mapping of str to Any
+        The keyword paths, as the caller gave them.
+
+    Returns
+    -------
+    dict of str to str
+        The path behind each key.
+
+    Raises
+    ------
+    TypeError
+        If a path is not a string.
+    ValueError
+        If a path is empty or has an empty name, or two paths take one key.
+    """
+    keyed: dict[str, str] = {}
+    entries = [(path, None) for path in paths] + [(path, key) for key, path in mapping.items()]
+    for given, keyword in entries:
+        path = _as_path(given, action="call select() with")
+        key = _last_name(path) if keyword is None else keyword
+        if key in keyed:
+            raise ValueError(
+                f"cannot select {keyed[key]!r} and {path!r} together, since both would be named "
+                f"{key!r}. Name one with a keyword, as select({key}2={path!r})"
+            )
+        keyed[key] = path
+    return keyed
 
 
 def _check_no_path_sep(name: str) -> None:
@@ -103,7 +160,7 @@ def _unflatten_paths(source: Mapping[str, Any]) -> dict[str, Any]:
 
 # -- Moving nodes to new exact paths ---------------------------------------------
 #
-# ``with_path_names`` rebuilds a plain nested-dict copy of a tree, in which the
+# ``rename`` rebuilds a plain nested-dict copy of a tree, in which the
 # dicts are the interior nodes, since a mapping is never a leaf. Each node of the
 # copy records its original path, so the rebuild reports where every node went.
 
@@ -156,9 +213,7 @@ def _is_vacant(node: _Moving) -> bool:
 def _collision(source: tuple[str, ...] | None, target: tuple[str, ...]) -> ValueError:
     """The error for a move of the node at *source* onto *target*, a path another node holds."""
     if source is None:
-        return ValueError(
-            f"with_path_names(): the path {_PATH_SEP.join(target)!r} is already taken"
-        )
+        return ValueError(f"rename(): the path {_PATH_SEP.join(target)!r} is already taken")
     return ValueError(
         f"cannot move {_PATH_SEP.join(source)!r} to {_PATH_SEP.join(target)!r}: that path is "
         f"already taken"
@@ -301,30 +356,121 @@ def _moved_tree(
     return _stripped(root, (), origins), origins
 
 
+def _checked_path_renames(
+    renames: Mapping[str, str] | None,
+    keyword_renames: Mapping[str, str],
+    *,
+    check_source: Callable[[str], object],
+) -> dict[str, str]:
+    """Check the arguments of a ``rename`` call, and return them as one mapping from old path to new path.
+
+    Every ``rename`` in ProbPipe, on a record, an output spec, or a kernel,
+    takes its renames the same way: a mapping given by position, keyword
+    renames, or both, each from a node's current path to its new path. This
+    function merges the two, checks every pair, and returns them in the order
+    given, so each ``rename`` has one set of rules and one set of messages.
+    It checks that:
+
+    1. each old path is a valid path, read as ``[]`` reads a path, and is the
+       path of a node, which *check_source* confirms for the caller's term;
+    2. no node is renamed twice;
+    3. each new path is a valid path, read the same way;
+    4. no node moves inside itself, as ``{"g": "g/h"}`` would;
+    5. no two nodes move to the same path, or one into the other.
+
+    It moves nothing: the caller applies the moves.
+
+    For example, ``_checked_path_renames({"g/mu": "loc"}, {"x": "y"},
+    check_source=tree._existing_node_at)`` returns ``{"g/mu": "loc", "x": "y"}``
+    when ``tree`` has nodes at ``g/mu`` and ``x``.
+
+    Parameters
+    ----------
+    renames : Mapping of str to str or None
+        The renames given by position, each keyed by a node's current path.
+    keyword_renames : Mapping of str to str
+        The renames given as keywords, each keyed by a node's current path.
+    check_source : Callable
+        Called with each old path, and raises ``KeyError`` when the caller's
+        term has no node at it.
+
+    Returns
+    -------
+    dict of str to str
+        The new path of each node, keyed by its old path, the positional
+        renames first, in the order given.
+
+    Raises
+    ------
+    KeyError
+        As *check_source* raises for an old path that is not the path of a node.
+    TypeError
+        If an old or a new path is not a string, such as a tuple of names.
+    ValueError
+        If an old or a new path is empty or has an empty name, a node is renamed
+        twice, no renames are given, a node moves inside itself, or two new paths
+        are equal or one lies inside the other.
+    """
+    pairs: dict[str, str] = {}
+    for old, new in [*(renames or {}).items(), *keyword_renames.items()]:
+        source = _as_path(old, action="call rename() with")
+        check_source(source)
+        if source in pairs:
+            raise ValueError(f"rename(): {source!r} is renamed more than once")
+        pairs[source] = _as_path(new, action=f"call rename() to move {source!r} to")
+    if not pairs:
+        raise ValueError("rename() requires at least one rename")
+    for source, target in pairs.items():
+        if target.startswith(source + _PATH_SEP):
+            raise ValueError(f"cannot move {source!r} to {target!r}, which is inside it")
+    moves = list(pairs.items())
+    for position, (source, target) in enumerate(moves):
+        for other_source, other_target in moves[position + 1 :]:
+            if target == other_target:
+                raise ValueError(f"{source!r} and {other_source!r} both move to {target!r}")
+            if other_target.startswith(target + _PATH_SEP) or target.startswith(
+                other_target + _PATH_SEP
+            ):
+                outer, inner = (
+                    (target, other_target)
+                    if len(target) < len(other_target)
+                    else (other_target, target)
+                )
+                raise ValueError(
+                    f"the targets {target!r} and {other_target!r} overlap: {inner!r} would be "
+                    f"inside {outer!r}"
+                )
+    return pairs
+
+
 class NamedTree[L]:
     """The named, ordered tree addressed by path — the shared collection substrate.
 
     A ``NamedTree`` is a named, ordered collection of **fields** stored in a
     nested, tree-like structure: a field is one named leaf, and the leaf value
     is nameless on its own — the name the tree gives it makes it a field. A
-    **path** is a ``/``-joined sequence addressing a field or an interior
-    node; a **key** is a path that addresses a field; a **child** of a node is
-    an entry directly under it; and the **canonical order** is the depth-first
-    walk visiting children in insertion order.
+    **path** is a ``str`` of ``/``-joined names from the top of the tree down
+    to a **node**, which is a field or a **group**, a node that is itself a
+    tree. A **child** of a node is an entry directly under it, and the
+    **canonical order** is the depth-first walk visiting children in insertion
+    order. Sibling names are distinct, so every path identifies at most one
+    node; distinct groups may reuse a name (``a/c`` and ``b/c``).
 
-    The class is a ``Mapping`` whose keys are exactly its field keys, in
-    canonical order, so ``keys()`` / ``values()`` / ``items()`` / ``len`` /
-    ``in`` / ``[]`` all agree on that one key set, as for a plain ``dict``:
-    ``x["a/b/c"]`` selects a field, ``len(x)`` counts the fields, and
-    ``"a/b/c" in x`` tests membership. A path may be written equivalently as
-    a ``/``-delimited string or a tuple of names, so
-    ``x["a/b/c"] == x["a", "b", "c"]``. Since interior nodes are *not* keys,
-    ``[]`` raises on an interior path; interior nodes are reached via the
-    one-level :attr:`children` view of the storage or :meth:`at_path`, which
-    can access any field or subtree, so ``x.children["a"].children["b"]`` is
-    the node that ``x.at_path("a", "b")`` and ``x.at_path("a/b")`` address.
-    Sibling names are distinct, so every path identifies at most one node;
-    distinct subtrees may reuse a name (``a/c`` and ``b/c``).
+    ``keys()``, ``values()``, ``items()``, iteration, and ``len`` range over
+    the fields, keyed by path in canonical order. ``[]`` takes a path or a
+    list of paths:
+
+    - one path, a ``str``, gives the node there: a field's object, or the
+      group's tree, so ``x["a"]["b/c"] == x["a/b/c"]``;
+    - a list or a tuple of paths gives a tree of the same family cut down to
+      those nodes, each at its own path and in this tree's canonical order,
+      whatever order the paths are given in.
+
+    ``p in x`` is true when ``p`` is a ``str`` and ``x[p]`` gives a node, so
+    it holds for a group, which ``keys()`` does not list. :attr:`children` is
+    the one-level view of the storage, and :meth:`at_path` reaches the node at
+    a path given as separate segments, so ``x.children["a"].children["b"]`` is
+    the node that ``x.at_path("a", "b")`` and ``x["a/b"]`` address.
 
     A child is an interior node if and only if it is an instance of the
     family's own node class (the hook :meth:`_node_type`); every other value
@@ -339,8 +485,8 @@ class NamedTree[L]:
     overrides the hook. Mappings are never leaves: a mapping value denotes tree
     structure (see :meth:`_check_leaf`).
     Navigation yields views into the same storage; the structure-preserving
-    transforms (:meth:`map`, :meth:`replace`, :meth:`merge`, :meth:`without`,
-    :meth:`with_path_names`) return a tree of the same family, rebuilt through
+    transforms (:meth:`map`, :meth:`replace`, :meth:`__and__`, :meth:`without`,
+    :meth:`rename`) return a tree of the same family, rebuilt through
     :meth:`_rebuild_class`.
 
     This substrate provides no constructor logic; each family's constructor
@@ -480,29 +626,105 @@ class NamedTree[L]:
         """``(key, field_object)`` pairs, in canonical order (materialised)."""
         return tuple((key, self._present(key, leaf)) for key, leaf in self._walk_leaves())
 
-    def __getitem__(self, key: str | tuple[str, ...]) -> L:
-        """Return the field object at *key* — leaf access only.
+    def __getitem__(self, paths: PathsLike, /) -> L | Self:
+        """The node at a path, or this tree cut down to the nodes at a list of paths.
 
-        *key* is a field key: a ``/``-delimited string or a tuple of names
-        (``obj["a/b"]`` == ``obj["a", "b"]``). It must address a leaf; a missing
-        key, or a partial path that stops at a subtree, raises ``KeyError`` (use
-        :meth:`at_path` to reach a subtree). A non-str/tuple key raises
-        ``TypeError``.
+        A tuple is a list of paths; a nested path is written with ``/``, so
+        ``x["g/c"]`` is the node ``c`` inside the group ``g``, while
+        ``x["g", "c"]`` is the tree cut down to the top-level nodes ``g`` and
+        ``c``.
+
+        Parameters
+        ----------
+        paths : str, or list or tuple of str
+            One path, which gives the node there, or a list of paths, which
+            gives a tree of the same family holding each of those nodes at its
+            own path, in this tree's canonical order.
+
+        Returns
+        -------
+        L or Self
+            A field's object, a group's tree, or the cut-down tree.
+
+        Raises
+        ------
+        KeyError
+            If a path is not a path of this tree.
+        TypeError
+            If *paths* is neither a string nor a list or tuple of strings.
+        ValueError
+            If a path is empty or has an empty name, or a list of paths is
+            empty, names a path twice, or holds a path inside another.
         """
-        if not isinstance(key, (str, tuple)):
-            raise TypeError(f"key must be str or tuple[str, ...], got {type(key).__name__}")
-        node = self._node_at(key)
-        if isinstance(node, self._node_type()):
-            raise KeyError(f"{key!r} is a subtree, not a field; use at_path() to navigate to it")
-        # Past the node-type guard the value is a leaf; ``_node_type()`` is a
-        # runtime ``type`` a checker cannot use to narrow the ``L | Self`` union.
-        return self._present(self._norm_path(key), cast(L, node))
+        read_paths = _as_paths(paths, action=f"index {type(self).__name__} by")
+        if isinstance(read_paths, str):
+            node = self._existing_node_at(read_paths)
+            if isinstance(node, self._node_type()):
+                return node
+            # Past the node-type guard the value is a leaf; ``_node_type()`` is a
+            # runtime ``type`` a checker cannot use to narrow the ``L | Self`` union.
+            return self._present(read_paths, cast(L, node))
+        tuple_given = read_paths if isinstance(paths, tuple) else ()
+        for path in read_paths:
+            self._existing_node_at(path, requested=tuple_given)
+        return self._cut_to(read_paths)
 
-    def __contains__(self, key: object) -> bool:
-        """Whether *key* is a field key (a leaf). Partial paths are not members."""
-        if not isinstance(key, (str, tuple)):
+    def __contains__(self, path: object, /) -> bool:
+        """Whether *path* is a ``str`` and a path of this tree, of a field or of a group."""
+        if not isinstance(path, str):
             return False
-        return self.is_field(key)
+        try:
+            self._node_at(path)
+        except KeyError:
+            return False
+        return True
+
+    def _cut_to(self, paths: tuple[str, ...]) -> Self:
+        """This tree cut down to the nodes at *paths*, each at its own path, in canonical order.
+
+        Every node that is neither at nor above a path of *paths* is removed,
+        so a list of paths and :meth:`without` partition the fields. A family
+        whose values carry a label overrides this to label the result by the
+        paths.
+
+        Parameters
+        ----------
+        paths : tuple of str
+            Paths of this tree, as :func:`~probpipe.core._shapes._as_paths`
+            reads them.
+
+        Returns
+        -------
+        Self
+            The cut-down tree.
+        """
+        outside = self._paths_outside(paths)
+        return self.without(*outside) if outside else self
+
+    def _paths_outside(self, paths: tuple[str, ...]) -> list[str]:
+        """The paths of the nodes that are neither at nor above a path of *paths*, outermost first.
+
+        Removing these nodes leaves the tree cut down to *paths*.
+        """
+        kept = set(paths)
+        above = {
+            _PATH_SEP.join(segments[:end])
+            for segments in (path.split(_PATH_SEP) for path in paths)
+            for end in range(1, len(segments))
+        }
+        outside: list[str] = []
+        for path in self._node_paths():
+            if path in kept or path in above:
+                continue
+            parent, _, _ = path.rpartition(_PATH_SEP)
+            if not parent or parent in above:
+                outside.append(path)
+        return outside
+
+    def _ordered_paths(self, paths: Iterable[str]) -> tuple[str, ...]:
+        """*paths*, paths of this tree, in its canonical order."""
+        rank = {path: index for index, path in enumerate(self._node_paths())}
+        return tuple(sorted(paths, key=rank.__getitem__))
 
     @property
     def fields(self) -> tuple[str, ...]:
@@ -517,81 +739,105 @@ class NamedTree[L]:
 
     # -- Tree structure -----------------------------------------------------
 
-    def at_path(self, *path: Any) -> L | Self:
-        """Return the object at *path* — a field object, or an interior subtree.
+    def at_path(self, *segments: str) -> L | Self:
+        """The node at the path that *segments* spell: a field's object, or a group's tree.
 
-        *path* addresses a position in the storage tree and may be written as a
-        ``/``-delimited string, separate string segments, or a single tuple of
-        names — these are equivalent::
+        Each segment is a name or a path, and the segments are joined with
+        ``/``, so these are equivalent::
 
             obj.at_path("physics/mass")
             obj.at_path("physics", "mass")
-            obj.at_path(("physics", "mass"))
+            obj["physics/mass"]
 
-        A *key* (a path that ends at a leaf) returns the field object. A
-        *partial path* (one that stops at an interior node) returns the subtree
-        rooted there, a collection of the same class.
-
-        This is the one operator that reaches interior nodes; the mapping
-        operators (``[]`` / ``in`` / iteration) range only over fields. A field
-        object is the leaf as the family presents it (:meth:`_present`).
+        ``obj[path]`` is the recommended form; ``at_path`` reads the same node.
 
         Parameters
         ----------
-        *path : str or tuple of str
-            The path, in any of the three equivalent forms.
+        *segments : str
+            The path's segments, one per argument.
 
         Returns
         -------
         L or Self
-            The field object for a key, and the subtree for a partial path.
+            The field's object, as the family presents it, or the group's tree.
 
         Raises
         ------
         KeyError
-            If the path reaches nothing, or tries to descend through a leaf.
+            If the path is not a path of this tree.
         TypeError
-            If a path segment is not a string.
+            If a segment is not a string, such as a tuple of segments.
+        ValueError
+            If no segment is given, or the path has an empty name.
         """
-        node = self._node_at(*path)
+        path = _as_joined_path(segments, function="at_path")
+        node = self._existing_node_at(path)
         if isinstance(node, self._node_type()):
             return node
-        return self._present(_PATH_SEP.join(self._split_path(path)), node)
+        return self._present(path, cast(L, node))
 
-    def _node_at(self, *path: Any) -> L | Self:
-        """The stored node at *path*: the leaf as stored, or the subtree.
+    def _node_at(self, path: str) -> L | Self:
+        """The stored node at *path*: the leaf as stored, or the group.
 
         Parameters
         ----------
-        *path : str or tuple of str
-            The path, in any form :meth:`at_path` accepts.
+        path : str
+            A path, which the caller has read.
 
         Returns
         -------
         L or Self
-            The leaf before :meth:`_present` sees it, or the subtree.
+            The leaf before :meth:`_present` sees it, or the group.
 
         Raises
         ------
         KeyError
-            If the path reaches nothing, or tries to descend through a leaf.
-        TypeError
-            If a path segment is not a string.
+            If *path* is not a path of this tree; the error holds the path alone.
         """
-        segments = self._split_path(path)
         node: Any = self
         node_type = self._node_type()
-        for i, name in enumerate(segments):
-            if i > 0 and not isinstance(node, node_type):
-                raise KeyError(
-                    f"{_PATH_SEP.join(segments[:i])!r} is a field, not a group, so path "
-                    f"{_PATH_SEP.join(segments)!r} does not exist"
-                )
-            field_map = node._tree
-            if name not in field_map:
-                raise KeyError(_PATH_SEP.join(segments))
-            node = field_map[name]
+        for name in path.split(_PATH_SEP):
+            if not isinstance(node, node_type) or name not in node._tree:
+                raise KeyError(path)
+            node = node._tree[name]
         return node
+
+    def _existing_node_at(self, path: str, *, requested: tuple[str, ...] = ()) -> L | Self:
+        """The stored node at *path*, with a ``KeyError`` that lists the paths this tree has.
+
+        Parameters
+        ----------
+        path : str
+            A path, which the caller has read.
+        requested : tuple of str
+            The tuple of paths that holds *path*, which the message reads, or
+            ``()`` for one path or a list of paths.
+
+        Returns
+        -------
+        L or Self
+            The leaf as stored, or the group.
+
+        Raises
+        ------
+        KeyError
+            If *path* is not a path of this tree.
+        """
+        try:
+            return self._node_at(path)
+        except KeyError:
+            raise KeyError(
+                _missing_path(
+                    path,
+                    owner=self._path_owner(),
+                    available=self._node_paths(),
+                    requested=requested,
+                )
+            ) from None
+
+    def _path_owner(self) -> str:
+        """How a message names this tree: ``"this RecordSpec"``, or a labeled value's label."""
+        return f"this {type(self).__name__}"
 
     @property
     def children(self) -> Mapping[str, L | Self]:
@@ -607,15 +853,30 @@ class NamedTree[L]:
         # the storage dict directly (no per-access copy).
         return MappingProxyType(self._tree)
 
-    def is_field(self, *path: Any) -> bool:
-        """Whether *path* resolves to a field (a leaf), not an interior subtree.
+    def is_field(self, path: str) -> bool:
+        """Whether *path* is the path of a field of this tree, rather than of a group or of nothing.
 
-        Returns ``True`` only when *path* is navigable **and** ends at a leaf.
-        Accepts the same path forms as :meth:`at_path`.
+        Parameters
+        ----------
+        path : str
+            One path.
+
+        Returns
+        -------
+        bool
+            Whether a field is at *path*.
+
+        Raises
+        ------
+        TypeError
+            If *path* is not a string.
+        ValueError
+            If *path* is empty or has an empty name.
         """
+        path = _as_path(path, action="call is_field() with")
         try:
-            node = self._node_at(*path)
-        except (KeyError, TypeError):
+            node = self._node_at(path)
+        except KeyError:
             return False
         return not isinstance(node, self._node_type())
 
@@ -799,13 +1060,12 @@ class NamedTree[L]:
     # authoritative schema overrides those three to thread it, reusing these helpers.
 
     def _leaves_without(self, paths: tuple[str, ...]) -> dict[str, Any]:
-        """Flat leaf-map with the fields/subtrees at *paths* dropped."""
+        """Flat leaf-map with the fields and groups at *paths*, read paths of this tree, dropped."""
         for path in paths:
-            self._node_at(path)  # KeyError if the path does not exist
-        drops = [self._norm_path(p) for p in paths]
+            self._existing_node_at(path)
 
         def is_dropped(key: str) -> bool:
-            return any(key == d or key.startswith(f"{d}{_PATH_SEP}") for d in drops)
+            return any(key == path or key.startswith(f"{path}{_PATH_SEP}") for path in paths)
 
         kept = {key: leaf for key, leaf in self._walk_leaves() if not is_dropped(key)}
         if not kept:
@@ -813,51 +1073,134 @@ class NamedTree[L]:
         return kept
 
     def without(self, *paths: str) -> Self:
-        """Return a new collection with the fields/subtrees at *paths* removed.
+        """Return a new collection with the fields and groups at *paths* removed.
 
-        Each path is a key (drop one leaf) or a partial path (drop a whole
-        subtree). A missing path raises ``KeyError``; removing every field raises
-        ``ValueError``. Surviving fields keep their order and their specs.
+        Each path names a field, which is dropped, or a group, which is dropped
+        with every node below it. Surviving fields keep their order and their
+        specs, so a list of paths and ``without`` partition the fields.
+
+        Parameters
+        ----------
+        *paths : str
+            One path per argument.
+
+        Returns
+        -------
+        Self
+            The collection without those nodes.
+
+        Raises
+        ------
+        KeyError
+            If a path is not a path of this tree.
+        TypeError
+            If a path is not a string, such as a tuple of paths.
+        ValueError
+            If a path is empty or has an empty name, the paths name a path
+            twice or a path inside another, or every field would be removed.
         """
+        paths = _as_path_arguments(paths, action="call without() with")
         return self._rebuild_node(self._leaves_without(paths), node_name=None)
 
     def _leaves_merged(self, other: Any) -> dict[str, Any]:
-        """Flat leaf-map unioning ``self``'s then *other*'s leaves, keyed by path."""
-        left = dict(self._walk_leaves())
-        right = dict(other._walk_leaves())
-        overlap = set(left) & set(right)
-        if overlap:
-            names = sorted(overlap)
-            shared = f"field {names[0]!r}" if len(names) == 1 else f"fields {names}"
-            raise ValueError(f"cannot merge: both have the {shared}")
-        return {**left, **right}
+        """Flat leaf-map of ``self``'s leaves then *other*'s, keyed by path, for two trees with no top-level name in common.
 
-    def merge(self, other: Any) -> Self:
-        """Return the union of two collections, merged by leaf key (deep).
+        Parameters
+        ----------
+        other : NamedTree
+            The tree merged after this one.
 
-        The merge is by field key: ``{"a/x": ...}`` and ``{"a/y": ...}`` combine
-        under a shared ``a``. A field key present in both, or a field-versus-prefix
-        clash between them, raises ``ValueError``. ``self``'s fields come first,
-        then ``other``'s.
+        Returns
+        -------
+        dict of str to Any
+            Each leaf of both trees, keyed by its path, this tree's first.
+
+        Raises
+        ------
+        ValueError
+            If the two trees share a top-level name, a field or a group.
         """
+        _check_no_shared_top_level_names(self, other, operands=f"the two {type(self).__name__}s")
+        return {**dict(self._walk_leaves()), **dict(other._walk_leaves())}
+
+    def __and__(self, other: Any) -> Self:
+        """Merge two trees by top-level name: this tree's fields and groups, then *other*'s.
+
+        The merge is shallow: a top-level name, a field or a group, present in
+        both trees raises, even when the two groups hold different fields. To
+        merge two groups of one name, merge the groups first and put the result
+        under the name.
+
+        Parameters
+        ----------
+        other : NamedTree
+            The tree whose fields and groups are added.
+
+        Returns
+        -------
+        Self
+            Both trees' fields and groups side by side.
+
+        Raises
+        ------
+        TypeError
+            If *other* is not a tree of this family, through ``NotImplemented``.
+        ValueError
+            If a top-level name is in both trees.
+
+        Examples
+        --------
+        >>> from probpipe import RecordSpec
+        >>> (RecordSpec(a=(3,)) & (RecordSpec(g=RecordSpec(b=()))))
+        NumericRecordSpec(a=(3,), g=NumericRecordSpec(b=()))
+        """
+        if not isinstance(other, self._node_type()):
+            return NotImplemented
         return self._rebuild_node(self._leaves_merged(other), node_name=None)
 
-    @staticmethod
     def _resolve_replace_updates(
-        _updates: Mapping[str, Any] | None, updates: Mapping[str, Any]
+        self, _updates: Mapping[str, Any] | None, updates: Mapping[str, Any]
     ) -> dict[str, Any]:
-        """Normalise ``replace``'s positional-mapping XOR keyword inputs to one dict."""
+        """``replace``'s updates, given as a mapping or as keywords, as one dict keyed by path.
+
+        Parameters
+        ----------
+        _updates : Mapping of str to Any or None
+            The updates given as a mapping.
+        updates : Mapping of str to Any
+            The updates given as keywords.
+
+        Returns
+        -------
+        dict of str to Any
+            The new value at each path, in the order given.
+
+        Raises
+        ------
+        KeyError
+            If a key is not a path of this tree.
+        TypeError
+            If a key is not a string.
+        ValueError
+            If both forms are given, a key is empty or has an empty name, or one
+            key is inside another, since replacing the outer node would discard
+            the inner update.
+        """
         if _updates is not None:
             if updates:
                 raise ValueError("pass replace() updates as a mapping or as keywords, not both")
-            return dict(_updates)
-        return dict(updates)
+            resolved = dict(_updates)
+        else:
+            resolved = dict(updates)
+        for path in _as_path_arguments(tuple(resolved), action="call replace() with"):
+            self._existing_node_at(path)
+        return resolved
 
     def _leaves_replaced(self, resolved: Mapping[str, Any]) -> dict[str, Any]:
         """Flat leaf-map with the object at each path replaced *in place*.
 
-        Each old leaf (or whole subtree) at a path is dropped and *new_value* put
-        where the first of those leaves was, so a replaced subtree keeps its
+        Each old leaf (or whole group) at a path is dropped and *new_value* put
+        where the first of those leaves was, so a replaced group keeps its
         position (canonical order is part of the collection's identity).
 
         Parameters
@@ -870,35 +1213,15 @@ class NamedTree[L]:
         -------
         dict of str to Any
             The leaf map, keyed by field key in canonical order.
-
-        Raises
-        ------
-        KeyError
-            If a path does not exist.
-        ValueError
-            If one update path is an ancestor of another — applying the
-            ancestor first would silently swallow the descendant's update, so
-            overlapping paths are rejected outright.
         """
-        for path in resolved:
-            self._node_at(path)  # KeyError if the path does not exist
-        norms = [self._norm_path(p) for p in resolved]
-        for i, a in enumerate(norms):
-            for b in norms[i + 1 :]:
-                if a == b or a.startswith(f"{b}{_PATH_SEP}") or b.startswith(f"{a}{_PATH_SEP}"):
-                    raise ValueError(
-                        f"replace() update paths overlap: {a!r} and {b!r} address "
-                        f"the same subtree; replace the enclosing path once instead"
-                    )
         flat = dict(self._walk_leaves())
         for path, new_value in resolved.items():
-            norm = self._norm_path(path)
             rebuilt: dict[str, Any] = {}
             placed = False
             for key, leaf in flat.items():
-                if key == norm or key.startswith(f"{norm}{_PATH_SEP}"):
+                if key == path or key.startswith(f"{path}{_PATH_SEP}"):
                     if not placed:
-                        rebuilt[norm] = new_value
+                        rebuilt[path] = new_value
                         placed = True
                 else:
                     rebuilt[key] = leaf
@@ -922,74 +1245,13 @@ class NamedTree[L]:
     # -- Field renaming -------------------------------------------------------
 
     def _resolve_path_renames(
-        self, mapping: Mapping[str, str] | None, kwargs: Mapping[str, str]
+        self, renames: Mapping[str, str] | None, keyword_renames: Mapping[str, str]
     ) -> dict[str, str]:
-        """Resolve :meth:`with_path_names` inputs to ``{source path: target path}``.
+        """Resolve :meth:`rename` inputs to ``{source path: target path}``, each source a node of this tree.
 
-        Each key is the exact path of a node, and each target is the node's new
-        exact path.
-
-        Parameters
-        ----------
-        mapping : Mapping of str to str or None
-            The renames :meth:`with_path_names` takes positionally.
-        kwargs : Mapping of str to str
-            The renames :meth:`with_path_names` takes as keywords.
-
-        Returns
-        -------
-        dict of str to str
-            The target of each node, keyed by its ``/``-joined path, in the order
-            given.
-
-        Raises
-        ------
-        KeyError
-            If a key is not the path of a node, naming the paths the tree has.
-        ValueError
-            If a target is empty or has an empty segment, two keys resolve to the
-            same node, no renames are given, a target lies inside its own node,
-            or two targets are equal or one lies inside the other.
+        :func:`_checked_path_renames` states the rules and the errors.
         """
-        pairs: dict[str, str] = {}
-        for source in (mapping or {}), kwargs:
-            for old, new in source.items():
-                if not isinstance(new, str) or not new:
-                    raise ValueError(f"new path for {old!r} must be a non-empty string")
-                if "" in new.split(_PATH_SEP):
-                    raise ValueError(
-                        f"new path {new!r} for {old!r} has an empty segment "
-                        f"(no leading, trailing, or doubled {_PATH_SEP!r})"
-                    )
-                segments = self._split_path((old,))
-                resolved = _PATH_SEP.join(segments)
-                try:
-                    self._node_at(segments)
-                except KeyError:
-                    raise KeyError(
-                        f"with_path_names(): {resolved!r} is not a path in this tree; the paths "
-                        f"are {list(self._node_paths())}"
-                    ) from None
-                if resolved in pairs:
-                    raise ValueError(f"with_path_names(): {resolved!r} is renamed more than once")
-                pairs[resolved] = new
-        if not pairs:
-            raise ValueError("with_path_names() requires at least one rename")
-        for resolved, new in pairs.items():
-            if new.startswith(resolved + _PATH_SEP):
-                raise ValueError(f"cannot move {resolved!r} to {new!r}, which is inside it")
-        moves = list(pairs.items())
-        for index, (source, target) in enumerate(moves):
-            for other_source, other in moves[index + 1 :]:
-                if target == other:
-                    raise ValueError(f"{source!r} and {other_source!r} both move to {target!r}")
-                if other.startswith(target + _PATH_SEP) or target.startswith(other + _PATH_SEP):
-                    outer, inner = (target, other) if len(target) < len(other) else (other, target)
-                    raise ValueError(
-                        f"the targets {target!r} and {other!r} overlap: {inner!r} would be "
-                        f"inside {outer!r}"
-                    )
-        return pairs
+        return _checked_path_renames(renames, keyword_renames, check_source=self._existing_node_at)
 
     def _renamed_tree(self, renames: Mapping[str, str]) -> tuple[dict[str, Any], dict[str, str]]:
         """This tree as a nested dict with *renames* applied, and each node's original path.
@@ -1036,19 +1298,19 @@ class NamedTree[L]:
         moved = {origin: path for path, origin in origins.items()}
         return {key: moved[key] for key in self.keys()}
 
-    def with_path_names(self, mapping: Mapping[str, str] | None = None, /, **kwargs: str) -> Self:
+    def rename(self, renames: Mapping[str, str] | None = None, /, **keyword_renames: str) -> Self:
         """Return a same-family tree with the given nodes renamed or moved, ``old -> new``.
 
         Acts on the nodes *within* the tree, leaves or whole subtrees; the object
         itself is relabeled by ``with_label`` on the tracked value types. Each key is
         the exact path of a node, so a keyword addresses a top-level node and the
-        positional mapping any node. Each target is the node's new exact path,
+        positional *renames* any node. Each target is the node's new exact path,
         so a bare name is a top-level path::
 
-            t.with_path_names(mu="loc")                  # rename a top-level node
-            t.with_path_names({"g/mu": "g/loc"})         # rename a node within g
-            t.with_path_names({"g/mu": "mu"})            # move it out of g
-            t.with_path_names({"mu": "g/mu"})            # move it into g
+            t.rename(mu="loc")                  # rename a top-level node
+            t.rename({"g/mu": "g/loc"})         # rename a node within g
+            t.rename({"g/mu": "mu"})            # move it out of g
+            t.rename({"mu": "g/mu"})            # move it into g
 
         The renames apply simultaneously: every key is resolved against the
         original tree, so swaps are well-defined, and a node below a moved node
@@ -1062,9 +1324,9 @@ class NamedTree[L]:
 
         Parameters
         ----------
-        mapping : Mapping of str to str, optional
+        renames : Mapping of str to str, optional
             The new path of each node, keyed by the node's path.
-        **kwargs : str
+        **keyword_renames : str
             The new path of each top-level node, keyed by the node's name.
 
         Returns
@@ -1076,38 +1338,43 @@ class NamedTree[L]:
         ------
         KeyError
             If a key is not the path of a node.
+        TypeError
+            If a key or a target is not a string, such as a tuple of names.
         ValueError
-            If a target is empty or has an empty segment, two keys rename the
-            same node, no renames are given, a node moves into its own subtree,
-            two targets are equal or one lies inside the other, or a target
-            collides with a node that remains.
+            If a key or a target is empty or has an empty name, two keys rename
+            the same node, no renames are given, a node moves into its own
+            subtree, two targets are equal or one lies inside the other, or a
+            target collides with a node that remains.
         """
-        tree, _ = self._renamed_tree(self._resolve_path_renames(mapping, kwargs))
+        tree, _ = self._renamed_tree(self._resolve_path_renames(renames, keyword_renames))
         return self._rebuild_node(tree, node_name=None)
 
-    # -- Internal utilities -------------------------------------------------
 
-    @staticmethod
-    def _split_path(path: tuple[Any, ...]) -> tuple[str, ...]:
-        """Normalise a path argument to a tuple of single-name segments.
+def _check_no_shared_top_level_names(left: NamedTree, right: NamedTree, *, operands: str) -> None:
+    """Refuse a merge by top-level name of *left* and *right* when they share a top-level name.
 
-        Accepts the forms the path-taking methods (``at_path`` / ``replace`` /
-        ``with_path_names``) allow: a ``/``-delimited string (``"a/b"``),
-        separate string segments (``"a", "b"``), or a single tuple of names
-        (``("a", "b")``). Every segment must be a string; a non-string segment
-        raises ``TypeError``.
-        """
-        if len(path) == 1 and isinstance(path[0], tuple):
-            parts: tuple[Any, ...] = path[0]
-        else:
-            parts = path
-        segments: list[str] = []
-        for part in parts:
-            if not isinstance(part, str):
-                raise TypeError(f"path segments must be strings, got {type(part).__name__}")
-            segments.extend(part.split(_PATH_SEP) if _PATH_SEP in part else [part])
-        return tuple(segments)
+    Parameters
+    ----------
+    left : NamedTree
+        The tree merged first, or the spec of the records the first batch holds.
+    right : NamedTree
+        The tree merged after *left*, or the spec of the second batch's records.
+    operands : str
+        What the message calls the two operands, such as ``"the two Records"``.
 
-    def _norm_path(self, path: Any) -> str:
-        """Normalise a path argument to its canonical ``/``-string form."""
-        return _PATH_SEP.join(self._split_path((path,)))
+    Raises
+    ------
+    ValueError
+        If a top-level name is in both trees. Where every shared name is a
+        group in both, the message says to merge the groups first.
+    """
+    shared = [name for name in left._tree if name in right._tree]
+    if not shared:
+        return
+    names = repr(shared[0]) if len(shared) == 1 else str(shared)
+    groups_in_both = all(
+        isinstance(left._tree[name], NamedTree) and isinstance(right._tree[name], NamedTree)
+        for name in shared
+    )
+    fix = "Rename one, or merge the groups first" if groups_in_both else "Rename one of them"
+    raise ValueError(f"cannot merge {operands}, since both have {names}. {fix}")

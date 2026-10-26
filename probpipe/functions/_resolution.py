@@ -15,12 +15,15 @@ A candidate has the members the engine reads:
    method;
 2. ``route_name``: the name of the route it belongs to;
 3. ``probe(call, result)`` and ``run(call, result, report)``: its feasibility
-   check, which reads the point's call object and result declaration and runs
+   check, which reads the point's call object and the result's output spec and runs
    nothing, and its execution, which returns the raw result;
 4. ``exactness(report)`` and ``method_of(report)``: the exactness of the
    implementation its report selected, and the registry method, if any;
 5. ``methods``: the methods of its route's registry, or ``None`` for a route
-   that delegates to none.
+   that delegates to none;
+6. ``collects_calls``: whether the calls its run makes directly report their
+   Monte Carlo draws to the call it realizes, as the calls of a derived
+   operation's formula do (:class:`~probpipe.core._call_context._NumSamplesUsed`).
 
 The check of a call the engine lifts is made at each of its points: a swept
 batch at each element, and a law the call broadcasts at a stand-in for its
@@ -37,6 +40,7 @@ from typing import Any
 
 from ..core._batch import BatchSpec
 from ..core._dispatch import Feasibility, MethodInfo, ResolutionError
+from ..core._executors import ExecutionReport
 from ..core._spec_base import TermSpec
 from ..core._specs import OutputSpec
 from ..values._binding import FunctionInputRef, input_ref_value, replace_input_refs
@@ -58,11 +62,11 @@ __all__ = [
 
 @dataclass(frozen=True)
 class StandIn:
-    """A stand-in for one point of a lifted argument, carrying the point's declaration.
+    """A stand-in for one point of a lifted argument, carrying the point's spec.
 
     A check draws nothing, so where a call passes a law's draw the check passes
-    this stand-in, whose spec is the law's event declaration, and an empty
-    sweep's point holds one whose spec is the batch's element declaration.
+    this stand-in, whose spec is the law's event spec, and an empty
+    sweep's point holds one whose spec is the spec of the batch's elements.
     """
 
     spec: TermSpec
@@ -129,8 +133,8 @@ class PointReport(Feasibility):
         The selected implementation's exactness; for a call, ``False`` when any
         point's is.
     result : OutputSpec or None
-        The result declaration planning derived, which for a lifted call is that
-        of one point.
+        The result's output spec that planning derived, which for a lifted call
+        is that of one point.
     routes : tuple of (str, Feasibility, bool or None)
         Each probed candidate's label, report, and exactness, in selection
         order. The exactness is the implementation's that the candidate's report
@@ -275,15 +279,15 @@ def check_point(
     Returns
     -------
     PointReport
-        The point's feasibility, with its planned result declaration and its
-        deferred checks.
+        The point's feasibility, with the planned output spec of its result and
+        its deferred checks.
 
     Raises
     ------
     ApplicabilityError
-        If an applicability condition of the function fails.
+        If an applicability check of the function fails.
     """
-    call, result, deferred = function._plan_point(values, controls)
+    call, result, deferred = function._plan_route_inputs(values, controls)
     if not select:
         return PointReport(True, result=result, deferred=deferred)
     candidate, report, probed = _probe(candidates, call, result)
@@ -326,7 +330,9 @@ def _label(candidate: Any, report: Feasibility) -> str:
 
 def _draws(values: Mapping[str, Any], plan: BroadcastPlan) -> dict[FunctionInputRef, StandIn]:
     """A stand-in for a draw of each law the call broadcasts over, by its reference."""
-    return {ref: StandIn(input_ref_value(values, ref).event_spec.spec) for ref in plan.dist_args}
+    return {
+        ref: StandIn(input_ref_value(values, ref).event_spec.term_spec) for ref in plan.dist_args
+    }
 
 
 def _stand_ins(values: Mapping[str, Any], plan: BroadcastPlan) -> dict[FunctionInputRef, StandIn]:
@@ -339,7 +345,7 @@ def _stand_ins(values: Mapping[str, Any], plan: BroadcastPlan) -> dict[FunctionI
     for ref in plan.array_args:
         spec = getattr(input_ref_value(values, ref), "spec", None)
         if isinstance(spec, BatchSpec):
-            stand_ins[ref] = StandIn(spec.element_spec)
+            stand_ins[ref] = StandIn(spec.element_spec.term_spec)
     return stand_ins
 
 
@@ -405,7 +411,7 @@ def check_points(
 
     A plain call has one point. A lifted call is checked at each point until
     one is infeasible, and an empty sweep is planned at its element
-    declaration and selects no route, since it runs none.
+    spec and selects no route, since it runs none.
     """
     if plan.array_args and plan.n_sweep == 0:
         point = replace_input_refs(values, _stand_ins(values, plan))
@@ -422,12 +428,12 @@ def check_points(
 def lifted_declaration(
     function: Any, values: Mapping[str, Any], controls: Mapping[str, Any], plan: BroadcastPlan
 ) -> OutputSpec | None:
-    """The result declaration of one point of a lifted call, planned from declarations alone.
+    """The output spec of one point's result in a lifted call, planned from specs alone.
 
     The point binds a stand-in for a draw of each law the call lifts and for an
     element of each batch it sweeps, and it evaluates and samples nothing. The
-    law of the evaluations therefore declares the components that one point's
-    result declares, as ``log_prob(mu)`` for a score.
+    law of the evaluations therefore declares the outputs that one point's
+    result declares, as ``log_prob`` for a score.
 
     Parameters
     ----------
@@ -450,10 +456,10 @@ def lifted_declaration(
     Raises
     ------
     ApplicabilityError
-        If an applicability condition of the function fails at the point.
+        If an applicability check of the function fails at the point.
     """
-    point = replace_input_refs(values, _stand_ins(values, plan))
-    _, result, _ = function._plan_point(point, controls)
+    stand_in_values = replace_input_refs(values, _stand_ins(values, plan))
+    _, result, _ = function._plan_route_inputs(stand_in_values, controls)
     return result
 
 
@@ -463,6 +469,7 @@ def call_report(
     lifted: tuple[str, ...],
     conversions: Mapping[str, Any],
     candidates: Sequence[Any] = (),
+    execution: ExecutionReport | None = None,
 ) -> CallReport:
     """The CallReport of a call from the check of its points.
 
@@ -470,7 +477,9 @@ def call_report(
     for the method its report names, and states the candidate's exactness; a
     report whose exactness is open states the call approximate. The report lists
     the methods of each registry that a route among *candidates* delegates to
-    once, keyed by the names of the routes that delegate to it.
+    once, keyed by the names of the routes that delegate to it. *execution*
+    reports how a lifted call would run its evaluation points; ``None``
+    reports none.
     """
     routes = tuple(
         MethodInfo(
@@ -508,4 +517,5 @@ def call_report(
         lifted=lifted,
         conversions=MappingProxyType(dict(conversions)),
         methods=MappingProxyType(methods),
+        execution=ExecutionReport() if execution is None else execution,
     )

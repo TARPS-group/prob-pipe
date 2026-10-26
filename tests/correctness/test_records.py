@@ -30,8 +30,8 @@ from probpipe import (
 from probpipe.core.constraints import real
 from probpipe.distributions._factored import _raw_record
 from tests._ops import (
+    CoupledMarginal,
     EmpiricalDistribution,
-    FieldView,
     cov,
     log_prob,
     marginal,
@@ -63,28 +63,15 @@ def _law(schema: str, layout: str, *, weighted: bool = False) -> EmpiricalDistri
     return EmpiricalDistribution(atoms, weights, label="law")
 
 
-def _node(raw, path, summary=None):
-    """The node of *raw* at the event path *path*.
-
-    A summary such as ``mean`` of a law over an exposed record names each
-    component ``c`` as ``mean(c)``, so a raw *summary* is read under that name
-    at the path's first segment.
-    """
-    head, *rest = path.split("/")
-    if summary is not None:
-        head = f"{summary}({head})"
-    for segment in (head, *rest):
+def _node(raw, path):
+    """The node of *raw* at the event path *path*, which a summary of the law shares."""
+    for segment in path.split("/"):
         raw = raw[segment]
     return raw
 
 
-def _at(raw, path, summary=None):
-    return np.asarray(_node(raw, path, summary), dtype=np.float64)
-
-
-def _named(spec: RecordSpec, summary: str) -> RecordSpec:
-    """The record a *summary* of a law over *spec* holds, which names each component ``c`` as ``summary(c)``."""
-    return RecordSpec({f"{summary}({name})": child for name, child in spec.children.items()})
+def _at(raw, path):
+    return np.asarray(_node(raw, path), dtype=np.float64)
 
 
 def _weights(law) -> np.ndarray:
@@ -118,16 +105,14 @@ class TestEmpiricalRecords:
         np.testing.assert_allclose(_weights(law), 1.0 / law.num_atoms)
 
     @pytest.mark.parametrize(("schema", "layout"), _CASES)
-    def test_the_mean_names_each_component_and_holds_each_leafs_average(self, schema, layout):
+    def test_the_mean_takes_the_events_schema_and_holds_each_leafs_average(self, schema, layout):
         law = _law(schema, layout)
         result = mean(law)
         assert isinstance(result, NumericRecord)
-        assert result.spec == _named(SCHEMAS[schema], "mean")
+        assert result.spec == SCHEMAS[schema]
         raw = mean.using(raw=True)(law)
         for path, values in columns(law.atoms, SCHEMAS[schema]).items():
-            np.testing.assert_allclose(
-                _at(raw, path, "mean"), values.mean(axis=0), rtol=1e-5, atol=1e-6
-            )
+            np.testing.assert_allclose(_at(raw, path), values.mean(axis=0), rtol=1e-5, atol=1e-6)
 
     @pytest.mark.parametrize(("schema", "layout"), _CASES)
     def test_weighted_moments_follow_the_weights_in_row_major_order(self, schema, layout):
@@ -139,11 +124,9 @@ class TestEmpiricalRecords:
         for path, values in columns(law.atoms, SCHEMAS[schema]).items():
             expected_mean = np.tensordot(weights, values, axes=1)
             expected_variance = np.tensordot(weights, (values - expected_mean) ** 2, axes=1)
+            np.testing.assert_allclose(_at(means, path), expected_mean, rtol=1e-5, atol=1e-6)
             np.testing.assert_allclose(
-                _at(means, path, "mean"), expected_mean, rtol=1e-5, atol=1e-6
-            )
-            np.testing.assert_allclose(
-                _at(variances, path, "variance"), expected_variance, rtol=1e-4, atol=1e-6
+                _at(variances, path), expected_variance, rtol=1e-4, atol=1e-6
             )
 
     @pytest.mark.parametrize("weighted", [False, True], ids=["uniform", "weighted"])
@@ -155,20 +138,20 @@ class TestEmpiricalRecords:
         raw = quantile.using(raw=True)(law, jnp.asarray(levels))
         weights = _weights(law)
         for path, values in columns(law.atoms, SCHEMAS[schema]).items():
-            node = _at(raw, path, "quantile")
+            node = _at(raw, path)
             assert node.shape == (3, *values.shape[1:])
             for index, q in enumerate(levels):
                 np.testing.assert_allclose(node[index], _inverse_cdf(values, weights, q))
 
     def test_one_level_gives_a_record_and_several_give_a_batch_on_a_quantile_level(self):
         law = _law("two-groups", "two-levels")
-        named = _named(SCHEMAS["two-groups"], "quantile")
+        schema = SCHEMAS["two-groups"]
         one = quantile(law, 0.5)
-        assert isinstance(one, NumericRecord) and one.spec == named
+        assert isinstance(one, NumericRecord) and one.spec == schema
         several = quantile(law, jnp.array([0.1, 0.9]))
         assert isinstance(several, NumericRecordBatch)
         assert (several.batch_shape, several.level_names) == ((2,), ("quantile",))
-        assert several.element_spec == named
+        assert several.element_spec.term_spec == schema
 
     @pytest.mark.parametrize(("schema", "layout"), _CASES)
     def test_the_covariance_follows_the_canonical_leaf_order(self, schema, layout):
@@ -193,7 +176,7 @@ class TestEmpiricalRecords:
         with workflow_run(seed=2):
             draws = sample(law, sample_shape=(32,))
         assert (draws.batch_shape, draws.level_names) == ((32,), ("sample",))
-        assert draws.element_spec == SCHEMAS[schema]
+        assert draws.element_spec.term_spec == SCHEMAS[schema]
 
         def rows(batch):
             return np.concatenate(
@@ -218,21 +201,19 @@ class TestEmpiricalRecords:
             group_mean = mean.using(raw=True)(group)
             for leaf in leaf_paths(node):
                 np.testing.assert_allclose(
-                    _at(group_mean, leaf), _at(parent_mean, f"{path}/{leaf}", "mean"), rtol=1e-6
+                    _at(group_mean, leaf), _at(parent_mean, f"{path}/{leaf}"), rtol=1e-6
                 )
 
-    def test_the_marginal_of_a_selection_exposes_a_record_of_its_final_segments(self):
+    def test_the_marginal_at_a_list_of_paths_keeps_each_node_at_its_path(self):
         law = _law("deep", "two-levels")
-        selection = marginal(law, ("model/theta/mu", "y"))
-        assert selection.event_spec == OutputSpec(
-            RecordSpec(mu=SCHEMAS["deep"].at_path("model", "theta", "mu"), y=SCHEMAS["deep"]["y"])
-        )
+        selection = marginal(law, ("y", "model/theta/mu"))
+        assert selection.event_spec == OutputSpec(SCHEMAS["deep"][["model/theta/mu", "y"]])
         parent_mean = mean.using(raw=True)(law)
         selected_mean = mean.using(raw=True)(selection)
         np.testing.assert_allclose(
-            _at(selected_mean, "mu", "mean"), _at(parent_mean, "model/theta/mu", "mean")
+            _at(selected_mean, "model/theta/mu"), _at(parent_mean, "model/theta/mu")
         )
-        np.testing.assert_allclose(_at(selected_mean, "y", "mean"), _at(parent_mean, "y", "mean"))
+        np.testing.assert_allclose(_at(selected_mean, "y"), _at(parent_mean, "y"))
 
 
 # ---------------------------------------------------------------------------
@@ -253,14 +234,14 @@ def _population_atoms() -> EmpiricalDistribution:
     atoms = NumericRecordBatch(
         {"population": {"mu": mu, "tau": tau}},
         "atom",
-        element_spec=RecordSpec(population=_POPULATION),
+        element=RecordSpec(population=_POPULATION),
         label="atoms",
     )
     return EmpiricalDistribution(atoms, label="hyper")
 
 
 def _theta_given_population():
-    """The kernel ``theta | population ~ N(mu, tau)``, whose given slot is a record."""
+    """The kernel ``theta | population ~ N(mu, tau)``, whose input is a record."""
     return RecordObservationKernel(
         "theta",
         {"population": _POPULATION},
@@ -270,15 +251,15 @@ def _theta_given_population():
 
 
 class TestRecordValuedFactors:
-    def test_the_joint_exposes_each_factors_components_with_their_packaging(self):
-        joint = _population_atoms() * Normal("x", 0.0, 1.0)
-        spec = joint.event_spec.spec
+    def test_the_joint_exposes_each_factors_outputs_with_their_form(self):
+        joint = _population_atoms() & Normal("x", 0.0, 1.0)
+        spec = joint.event_spec.term_spec
         assert list(spec.children) == ["population", "x"]
         assert spec.children["population"] == _POPULATION
 
-    def test_a_joint_draw_takes_the_record_component_from_one_atom(self):
+    def test_a_joint_draw_takes_the_record_output_from_one_atom(self):
         hyper = _population_atoms()
-        joint = hyper * Normal("x", 0.0, 1.0)
+        joint = hyper & Normal("x", 0.0, 1.0)
         with workflow_run(seed=3):
             draws = _raw_record(sample(joint, sample_shape=(64,)))
         atoms = _raw_record(hyper.atoms)["population"]
@@ -291,34 +272,34 @@ class TestRecordValuedFactors:
 
     def test_the_edge_free_joint_has_each_factors_mean(self):
         hyper = _population_atoms()
-        means = mean.using(raw=True)(hyper * Normal("x", 0.5, 1.0))
+        means = mean.using(raw=True)(hyper & Normal("x", 0.5, 1.0))
         hyper_mean = mean.using(raw=True)(hyper)
         for path in ("population/mu", "population/tau"):
-            np.testing.assert_allclose(_at(means, path, "mean"), _at(hyper_mean, path, "mean"))
-        assert float(means["mean(x)"]) == pytest.approx(0.5)
+            np.testing.assert_allclose(_at(means, path), _at(hyper_mean, path))
+        assert float(means["x"]) == pytest.approx(0.5)
 
-    def test_the_marginal_of_the_record_component_is_its_factors_law(self):
+    def test_the_marginal_of_the_record_output_is_its_factors_law(self):
         hyper = _population_atoms()
-        group = marginal(hyper * Normal("x", 0.0, 1.0), "population")
+        group = marginal((hyper & Normal("x", 0.0, 1.0)), "population")
         assert group.event_spec == OutputSpec(population=_POPULATION)
         np.testing.assert_allclose(
             _at(mean.using(raw=True)(group), "mu"),
-            _at(mean.using(raw=True)(hyper), "population/mu", "mean"),
+            _at(mean.using(raw=True)(hyper), "population/mu"),
         )
 
     def test_the_marginal_at_a_nested_path_reduces_its_factor(self):
         hyper = _population_atoms()
-        leaf = marginal(hyper * Normal("x", 0.0, 1.0), "population/tau")
+        leaf = marginal((hyper & Normal("x", 0.0, 1.0)), "population/tau")
         assert leaf.event_spec == OutputSpec(tau=_POPULATION["tau"])
         np.testing.assert_allclose(
             np.asarray(mean.using(raw=True)(leaf)),
-            _at(mean.using(raw=True)(hyper), "population/tau", "mean"),
+            _at(mean.using(raw=True)(hyper), "population/tau"),
         )
 
     def test_a_kernel_given_a_record_draws_with_the_law_of_total_variance(self):
         """``theta | population ~ N(mu, tau)`` gives ``𝔼[theta] = 𝔼[mu]`` and ``Var = 𝔼[tau²] + Var mu``."""
         hyper = _population_atoms()
-        joint = _theta_given_population() * hyper
+        joint = _theta_given_population() & hyper
         with workflow_run(seed=4):
             draws = _raw_record(sample(joint, sample_shape=(DRAWS,)))
         atoms = _raw_record(hyper.atoms)["population"]
@@ -331,7 +312,7 @@ class TestRecordValuedFactors:
 
     def test_the_joint_density_scores_each_factor_at_its_record(self):
         """The density of ``population * x`` is the population's record density plus the normal's."""
-        joint = Population() * Normal("x", 0.0, 1.0)
+        joint = Population() & Normal("x", 0.0, 1.0)
         value = {"population": {"mu": 0.3, "tau": 2.0}, "x": 0.5}
         expected = (
             scipy.stats.norm.logpdf(0.3, 0.0, 5.0)
@@ -376,23 +357,23 @@ class TestNestedViews:
         law = _correlated()
         key = jax.random.PRNGKey(7)
         parent = law._sample(key, (16,))
-        mu = FieldView(law, "population/mu")._sample(key, (16,))
-        theta = FieldView(law, "groups/theta")._sample(key, (16,))
+        mu = CoupledMarginal(law, "population/mu")._sample(key, (16,))
+        theta = CoupledMarginal(law, "groups/theta")._sample(key, (16,))
         np.testing.assert_array_equal(np.asarray(mu), np.asarray(parent["population"]["mu"]))
         np.testing.assert_array_equal(np.asarray(theta), np.asarray(parent["groups"]["theta"]))
 
     def test_the_correlation_of_co_sampled_siblings_is_the_parents(self):
         law = _correlated()
         key = jax.random.PRNGKey(8)
-        mu = FieldView(law, "population/mu")._sample(key, (DRAWS,))
-        theta = FieldView(law, "groups/theta")._sample(key, (DRAWS,))
+        mu = CoupledMarginal(law, "population/mu")._sample(key, (DRAWS,))
+        theta = CoupledMarginal(law, "groups/theta")._sample(key, (DRAWS,))
         expected = _atom_correlation(law, "population/mu", "groups/theta")
         _assert_correlation(mu, np.asarray(theta)[:, 0], expected)
 
     def test_siblings_drawn_with_independent_keys_are_uncorrelated(self):
         law = _correlated()
-        mu = FieldView(law, "population/mu")._sample(jax.random.PRNGKey(9), (DRAWS,))
-        theta = FieldView(law, "groups/theta")._sample(jax.random.PRNGKey(10), (DRAWS,))
+        mu = CoupledMarginal(law, "population/mu")._sample(jax.random.PRNGKey(9), (DRAWS,))
+        theta = CoupledMarginal(law, "groups/theta")._sample(jax.random.PRNGKey(10), (DRAWS,))
         _assert_correlation(mu, np.asarray(theta)[:, 0], 0.0)
 
     def test_a_function_of_sibling_views_keeps_their_correlation(self):
@@ -410,8 +391,8 @@ class TestNestedViews:
         values = columns(law.atoms, SCHEMAS["two-groups"])
         products = values["population/mu"] * values["population/tau"]
         with workflow_run(seed=11):
-            law_of_product = product.using(n_broadcast_samples=DRAWS)(
-                FieldView(law, "population/mu"), FieldView(law, "population/tau")
+            law_of_product = product.using(max_evaluations=DRAWS)(
+                CoupledMarginal(law, "population/mu"), CoupledMarginal(law, "population/tau")
             )
         estimate = float(jax.tree.leaves(mean.using(raw=True)(law_of_product))[0])
         assert abs(estimate - products.mean()) <= Z * products.std() / np.sqrt(DRAWS)
@@ -424,10 +405,10 @@ class TestNestedViews:
         + Var mu`` over the population's atoms.
         """
         hyper = _population_atoms()
-        joint = _theta_given_population() * hyper
+        joint = _theta_given_population() & hyper
         key = jax.random.PRNGKey(16)
-        theta = FieldView(joint, "theta")._sample(key, (DRAWS,))
-        mu = FieldView(joint, "population/mu")._sample(key, (DRAWS,))
+        theta = CoupledMarginal(joint, "theta")._sample(key, (DRAWS,))
+        mu = CoupledMarginal(joint, "population/mu")._sample(key, (DRAWS,))
         atoms = _raw_record(hyper.atoms)["population"]
         mu_atoms, tau_atoms = (np.asarray(atoms[k], np.float64) for k in ("mu", "tau"))
         expected = np.sqrt(mu_atoms.var() / ((tau_atoms**2).mean() + mu_atoms.var()))
@@ -436,20 +417,20 @@ class TestNestedViews:
     @pytest.mark.parametrize("path", ["population/mu", "groups/theta", "population"])
     def test_a_view_reads_the_parents_moments_and_quantiles_at_its_node(self, path):
         law = _correlated()
-        view = FieldView(law, path)
-        component = path.rsplit("/", 1)[-1]
+        view = CoupledMarginal(law, path)
+        output_name = path.rsplit("/", 1)[-1]
         for operation in (mean, variance):
             parent_raw = operation.using(raw=True)(law)
             view_raw = operation.using(raw=True)(view)
-            node = _node(parent_raw, path, operation.name)
+            node = _node(parent_raw, path)
             np.testing.assert_allclose(
                 np.asarray(jax.tree.leaves(view_raw)), np.asarray(jax.tree.leaves(node))
             )
         levels = jnp.array([0.25, 0.75])
         parent_q = quantile.using(raw=True)(law, levels)
         view_q = quantile.using(raw=True)(view, levels)
-        node = _node(parent_q, path, "quantile")
-        assert list(view.event_spec.components) == [component]
+        node = _node(parent_q, path)
+        assert list(view.event_spec.outputs) == [output_name]
         np.testing.assert_allclose(
             np.asarray(jax.tree.leaves(view_q)), np.asarray(jax.tree.leaves(node))
         )
@@ -457,49 +438,45 @@ class TestNestedViews:
     def test_a_group_view_draws_the_nested_mapping_of_its_node(self):
         law = _correlated()
         with workflow_run(seed=12):
-            draws = sample(FieldView(law, "population"), sample_shape=(8,))
+            draws = sample(CoupledMarginal(law, "population"), sample_shape=(8,))
         assert isinstance(draws, NumericRecordBatch)
-        assert draws.element_spec == _records.node_of(SCHEMAS["two-groups"], "population")
+        assert draws.element_spec.term_spec == _records.node_of(SCHEMAS["two-groups"], "population")
         assert set(_raw_record(draws)) == {"mu", "tau"}
 
 
 class TestSelections:
-    def test_a_selection_exposes_a_record_of_its_final_segments_in_order(self):
-        view = FieldView(_correlated(), ("groups/theta", "population/mu"))
+    def test_a_list_of_paths_keeps_each_node_at_its_path_in_the_parents_order(self):
+        view = CoupledMarginal(_correlated(), ("groups/theta", "population/mu"))
         assert view.event_spec == OutputSpec(
-            RecordSpec(
-                theta=SCHEMAS["two-groups"].at_path("groups", "theta"),
-                mu=SCHEMAS["two-groups"].at_path("population", "mu"),
-            )
+            SCHEMAS["two-groups"][["population/mu", "groups/theta"]]
         )
+        assert view.event_spec.term_spec.keys() == ("population/mu", "groups/theta")
 
     def test_a_selection_co_samples_its_nodes(self):
         law = _correlated()
-        view = FieldView(law, ("population/mu", "groups/theta"))
+        view = CoupledMarginal(law, ("population/mu", "groups/theta"))
         with workflow_run(seed=13):
             draws = _raw_record(sample(view, sample_shape=(DRAWS,)))
         expected = _atom_correlation(law, "population/mu", "groups/theta")
-        _assert_correlation(draws["mu"], np.asarray(draws["theta"])[:, 0], expected)
+        _assert_correlation(
+            draws["population"]["mu"], np.asarray(draws["groups"]["theta"])[:, 0], expected
+        )
 
     def test_the_moments_of_a_selection_are_the_parents_at_its_nodes(self):
         law = _correlated()
-        view = FieldView(law, ("population/mu", "groups/theta"))
+        view = CoupledMarginal(law, ("population/mu", "groups/theta"))
         parent = mean.using(raw=True)(law)
         selected = mean.using(raw=True)(view)
-        np.testing.assert_allclose(
-            _at(selected, "mu", "mean"), _at(parent, "population/mu", "mean")
-        )
-        np.testing.assert_allclose(
-            _at(selected, "theta", "mean"), _at(parent, "groups/theta", "mean")
-        )
+        np.testing.assert_allclose(_at(selected, "population/mu"), _at(parent, "population/mu"))
+        np.testing.assert_allclose(_at(selected, "groups/theta"), _at(parent, "groups/theta"))
 
-    def test_the_covariance_of_a_selection_is_the_parents_block_in_selection_order(self):
+    def test_the_covariance_of_a_list_view_is_the_parents_block_in_the_parents_order(self):
         law = _correlated()
-        view = FieldView(law, ("groups/theta", "population/mu"))
+        view = CoupledMarginal(law, ("groups/theta", "population/mu"))
         parent = cov.using(raw=True)(law)
         parent = np.asarray(parent.to_dense() if hasattr(parent, "to_dense") else parent)
-        # The parent's flat layout is (mu, tau, theta[0:4]); the selection's is (theta, mu).
-        order = [2, 3, 4, 5, 0]
+        # The parent's flat layout is (mu, tau, theta[0:4]); the view's is (mu, theta).
+        order = [0, 2, 3, 4, 5]
         selected = cov.using(raw=True)(view)
         selected = np.asarray(selected.to_dense() if hasattr(selected, "to_dense") else selected)
         np.testing.assert_allclose(selected, parent[np.ix_(order, order)], rtol=1e-5, atol=1e-6)
@@ -534,8 +511,8 @@ class TestRenames:
     def test_a_rename_moves_the_node_and_translates_its_values(self, renames, moved):
         """The renamed law's draws, moments, and quantiles at a new path are the original's at the old."""
         law = _two_groups()
-        renamed = law.with_path_names(renames)
-        new_paths = set(leaf_paths(renamed.event_spec.spec))
+        renamed = law.rename(renames)
+        new_paths = set(leaf_paths(renamed.event_spec.term_spec))
         assert set(moved) <= new_paths
         assert not set(renames) & new_paths
         key = jax.random.PRNGKey(14)
@@ -547,17 +524,17 @@ class TestRenames:
             )
             for operation in (mean, variance):
                 np.testing.assert_allclose(
-                    _at(operation.using(raw=True)(renamed), new, operation.name),
-                    _at(operation.using(raw=True)(law), old, operation.name),
+                    _at(operation.using(raw=True)(renamed), new),
+                    _at(operation.using(raw=True)(law), old),
                 )
             np.testing.assert_allclose(
-                _at(quantile.using(raw=True)(renamed, levels), new, "quantile"),
-                _at(quantile.using(raw=True)(law, levels), old, "quantile"),
+                _at(quantile.using(raw=True)(renamed, levels), new),
+                _at(quantile.using(raw=True)(law, levels), old),
             )
 
     def test_the_marginal_at_a_new_path_is_the_original_marginal_at_the_old(self):
         law = _two_groups()
-        renamed = law.with_path_names({"population/mu": "mu"})
+        renamed = law.rename({"population/mu": "mu"})
         np.testing.assert_allclose(
             np.asarray(mean.using(raw=True)(marginal(renamed, "mu"))),
             np.asarray(mean.using(raw=True)(marginal(law, "population/mu"))),
@@ -570,25 +547,23 @@ class TestRenames:
         path rather than by the order of the group's fields.
         """
         law = _two_groups()
-        round_trip = law.with_path_names({"population/mu": "mu"}).with_path_names(
-            {"mu": "population/mu"}
-        )
-        spec = law.event_spec.spec
-        assert set(leaf_paths(round_trip.event_spec.spec)) == set(leaf_paths(spec))
+        round_trip = law.rename({"population/mu": "mu"}).rename({"mu": "population/mu"})
+        spec = law.event_spec.term_spec
+        assert set(leaf_paths(round_trip.event_spec.term_spec)) == set(leaf_paths(spec))
         for path in leaf_paths(spec):
-            assert round_trip.event_spec.spec.at_path(*path.split("/")) == spec.at_path(
+            assert round_trip.event_spec.term_spec.at_path(*path.split("/")) == spec.at_path(
                 *path.split("/")
             )
             np.testing.assert_allclose(
-                _at(mean.using(raw=True)(round_trip), path, "mean"),
-                _at(mean.using(raw=True)(law), path, "mean"),
+                _at(mean.using(raw=True)(round_trip), path),
+                _at(mean.using(raw=True)(law), path),
             )
 
-    def test_a_factored_joint_moves_a_component_into_a_group(self):
-        joint = Normal("a", 0.0, 1.0) * Normal("b", 2.0, 1.0)
-        renamed = joint.with_path_names({"a": "g/a"})
-        assert set(leaf_paths(renamed.event_spec.spec)) == {"g/a", "b"}
-        assert float(_at(mean.using(raw=True)(renamed), "g/a", "mean")) == pytest.approx(0.0)
+    def test_a_factored_joint_moves_an_output_into_a_group(self):
+        joint = Normal("a", 0.0, 1.0) & Normal("b", 2.0, 1.0)
+        renamed = joint.rename({"a": "g/a"})
+        assert set(leaf_paths(renamed.event_spec.term_spec)) == {"g/a", "b"}
+        assert float(_at(mean.using(raw=True)(renamed), "g/a")) == pytest.approx(0.0)
 
 
 # ---------------------------------------------------------------------------
@@ -607,8 +582,7 @@ class TestRawForms:
     def test_a_record_valued_raw_result_is_a_nested_mapping_of_raw_leaves(self, operation):
         raw = operation.using(raw=True)(_law("deep", "three-levels"))
         assert _is_nested_mapping_of_arrays(raw)
-        model, y = (f"{operation.name}({name})" for name in ("model", "y"))
-        assert set(raw) == {model, y} and set(raw[model]) == {"theta", "noise"}
+        assert set(raw) == {"model", "y"} and set(raw["model"]) == {"theta", "noise"}
 
     def test_a_raw_batch_of_draws_is_the_nested_mapping_of_columns_with_the_batch_axes_leading(
         self,
@@ -622,17 +596,17 @@ class TestRawForms:
     def test_per_leaf_quantiles_put_the_level_axes_first(self):
         levels = jnp.array([[0.1, 0.5, 0.9], [0.2, 0.4, 0.6]])
         raw = quantile.using(raw=True)(_law("deep", "one-level"), levels)
-        assert np.shape(_node(raw, "model/theta/mu", "quantile")) == (2, 3)
-        assert np.shape(_node(raw, "model/theta/sd", "quantile")) == (2, 3, 2)
-        assert np.shape(_node(raw, "y", "quantile")) == (2, 3, 3)
+        assert np.shape(_node(raw, "model/theta/mu")) == (2, 3)
+        assert np.shape(_node(raw, "model/theta/sd")) == (2, 3, 2)
+        assert np.shape(_node(raw, "y")) == (2, 3, 3)
 
     def test_a_record_result_detaches_to_its_nested_mapping(self):
         law = _law("two-groups", "one-level")
-        detached = mean(law).raw()
+        detached = mean(law).raw
         assert _is_nested_mapping_of_arrays(detached)
         np.testing.assert_allclose(
-            _at(detached, "population/mu", "mean"),
-            _at(mean.using(raw=True)(law), "population/mu", "mean"),
+            _at(detached, "population/mu"),
+            _at(mean.using(raw=True)(law), "population/mu"),
         )
 
 

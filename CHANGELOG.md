@@ -9,6 +9,64 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed (breaking)
 
+- **Record conformance and unification require declaration order.** Before,
+  `RecordSpec(x=(), y=())` admitted an existing record or record spec ordered
+  `{y, x}`. Now it refuses that order, including inside nested records and at
+  function input, function return, and kernel-conditioning boundaries. Pass a
+  raw mapping to have its fields laid out in declaration order without changing
+  the caller's mapping, or build the record in that order.
+- **Removing an unknown input raises.** Before,
+  `InputSpec(x=()).without("missing")` silently retained `x`; now it raises
+  `KeyError`, naming the unknown input and the available inputs.
+- **Optional declarations require Python defaults.** A function or kernel input
+  marked optional without a matching parameter default now raises `ValueError`
+  at construction. A declared parameter that has a default is marked optional.
+
+- **`ConversionInfo.samples` is renamed `claims_random_events`.** It is `True`
+  when executing the conversion claims a workflow-owned random event, such as a
+  draw from the source, so the result depends on the workflow seed, and `False`
+  when the result is a deterministic function of the source and the converter
+  options. Replace `info.samples` with `info.claims_random_events`, and pass
+  `claims_random_events=` where a converter's `check` passed `samples=`.
+- **`raw` is a property on every term.** Replace `x.raw()` with `x.raw`, and
+  search your code for `.raw(` to find the calls. The `raw` of a `Function`,
+  an `Operation`, or a `Bijector` is a callable, so an old `f.raw()` calls the
+  wrapped function with no arguments instead of raising.
+  - A `Record` and a `RecordBatch` no longer take a path, and `record.raw` is
+    the whole nested mapping. Replace `record.raw("x")` with
+    `record["x"].raw` to read one field's view, or with `record.raw["x"]` to
+    read the stored form, and `record.raw("g/x")` with `record.raw["g"]["x"]`.
+    Inside a JAX trace, `record["x"]` is the traced value itself, so traced
+    code reads `record.raw["x"]`. A field's view presents a stored Python
+    scalar as an array, so `record["x"].raw` is an array where
+    `record.raw["x"]` is the stored `float`.
+  - Every read returns the same raw form. A law, a kernel, or a field view
+    keeps the detached copy it returns, and the copy refuses provenance,
+    since every reader shares it; `with_label` gives a copy that can carry
+    provenance. A record keeps its resolved leaves and returns a new `dict`
+    over them on each read.
+  - A subclass of a tracked term or of `LinOp` defines `raw` with
+    `@property`, and a class on which `raw` is a method, a class or static
+    method, or a cached function raises `TypeError` when it is created.
+- **A numeric term shows its values.** The repr of a `NumericArray`, a
+  `NumericRecord`, or a batch of either shows the values below its summary, and
+  `str()` shows the values alone, so a mean shows its value without reading `raw`:
+
+  ```text
+  >>> mean(Normal("mu", 0.25, 1.0, label="prior"))
+  NumericArray('𝔼[mu ~ prior]', shape=(), dtype=float32, support=real)
+    0.25
+  ```
+
+  NumPy's printing formats the values, so `np.set_printoptions` sets the
+  precision and shortens a large array with `...`, and only the entries shown
+  are read from the device. The values are indented by two spaces under the
+  summary. A record shows one line for each field path, such as
+  `population/mu`, and the summary above those lines leaves out `fields=`.
+  `str()` of a record or a batch gave its repr before. In a notebook a record and a batch of records
+  display as a two-column table of paths and values. Inside `jax.jit`, and
+  inside another term's repr such as a law's atoms, a term shows its summary
+  alone, and a record's summary then keeps `fields=`.
 - **`with_options` is renamed `using`.** `Function.using(**controls)` and
   `Operation.using(**controls)` behave as `with_options` did.
   Replace `condition_on.with_options(method="tfp_nuts")(model, data)` with
@@ -184,17 +242,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   A slot with a default stays given once conditioning binds the others, so
   `condition_on(counts, {"K": k, "r": q})` prints as
   `counts(y | n0=50.0; K, r)`, and a given that binds it moves it after `;`.
-  It returned the repr before. A product that `*` or `joint` builds prints factor by
+  It returned the repr before. A product that `&` or `joint` builds prints factor by
   factor, as `lik(y | mu)·prior(mu)`, and a product given a label by
   `with_label` or by the `FactoredDistribution` constructor prints by that
   label, as `model(y, mu)`. A label built from another label parenthesizes a
   product, a draw such as `mu ~ prior`, and a score such as `log prior(mu)`. So
-  a selection of draws from `x * y` is labeled `(x·y)[sample=0:2]`, where it was
-  `x·y[sample=0:2]`, and the posterior of `lik * prior` given `y` prints as
+  a selection of draws from `x & y` is labeled `(x·y)[sample=0:2]`, where it was
+  `x·y[sample=0:2]`, and the posterior of `lik & prior` given `y` prints as
   `(lik·prior)(mu; y)`. A batch element brackets a batch label of several words,
   as `[my draws][draw=1]`. Labels still join associatively, so
-  `(lik * prior) * d` is labeled `lik·prior·d`, and a labeled product enters
-  a further product as one operand, so `model * d` prints as
+  `(lik & prior) & d` is labeled `lik·prior·d`, and a labeled product enters
+  a further product as one operand, so `model & d` prints as
   `model(y, mu)·d(z)`. A marginal over the whole
   events of several factors prints factor by factor, in the order the paths
   name them where a product can take that order, so
@@ -229,15 +287,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   as `x + (-1.0)`. Replace a comparison of such a result's label with
   its law's label by one with the new label, or set a label with
   `with_label`.
-- **A score's component names the scored components.** `log_prob(d, x)` for a
-  law over `mu` declares its result under the component `log_prob(mu)`, and
-  for a law over `y` and `mu` under `log_prob(y, mu)`, where it was
-  `log_prob`. `unnormalized_log_prob`, `prob`, and `unnormalized_prob` follow,
-  as `prob(mu)`. The law of an operation lifted over a law, such as
-  `log_prob(prior, q)` for a law `q` of values, declares the component that one
-  point's result declares, as `log_prob(mu)`, where it took the label of the
-  scored law. Replace a lookup of the component `log_prob` by one of
-  `log_prob(mu)`.
+- **The law of a lifted score declares the score's component.** The law of
+  an operation lifted over a law, such as `log_prob(prior, q)` for a law `q`
+  of values, declares the component that one point's result declares, which
+  is the operation's name, as `log_prob`, where it took the label of the
+  scored law. Replace a lookup of the scored law's label by one of
+  `log_prob`.
 - **The atoms of a posterior are labeled by its components.** The atoms of the
   empirical law that `condition_on` or an inference method returns are labeled
   by the law's components, as `beta` or `(K, r, phi)`, where they were labeled
@@ -266,9 +321,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   fixed. A kernel applied at some of its given slots prints the other slots
   as given, as `glm(y | sigma; beta)`. Fixing the whole events of upstream
   factors still gives the labels of the factors left, so
-  `condition_on(lik * prior, {"mu": 0.5})` is labeled `lik` and prints as
+  `condition_on(lik & prior, {"mu": 0.5})` is labeled `lik` and prints as
   `lik(y; mu)`. The fixed paths are recorded whichever route conditions, an
-  inference method's included, and a marginal, a view, and `raw()` keep them.
+  inference method's included, and a marginal, a view, and `raw` keep them.
   The repr shows them after the constructor call, as
   `Normal('y', loc=0.5, scale=1.0, label='lik', fixed=('mu',))` or
   `EmpiricalDistribution(atoms=..., label='model', fixed=('y',))`.
@@ -277,9 +332,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   result's label, as `model`, where it was recorded as `posterior`.
   Replace a comparison with a label such as `"model | y"` by one with
   `"model"`, or compare `str(posterior)` with `"model(mu; y)"`.
-- **`raw()` of a field view returns the raw form of the marginal at its path.**
-  `d[p].raw()` returns the TFP distribution where the marginal at `p` is a
-  parametric family, so `model["mu"].raw()` for a `Normal` prior over `mu` is
+- **`raw` of a field view is the raw form of the marginal at its path.**
+  `d[p].raw` returns the TFP distribution where the marginal at `p` is a
+  parametric family, so `model["mu"].raw` for a `Normal` prior over `mu` is
   the TFP `Normal`. Any other marginal is returned as a detached ProbPipe law,
   labeled as `marginal(d, p)` labels it, where it was always a detached law
   under the view's label. A parameter annotated with a TFP class, such as
@@ -287,12 +342,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   swept batch of views. To keep the ProbPipe law, call `marginal(d, p)`.
 - **A field view is labeled as the marginal at its path, and prints as it.** A
   view at the whole event of one factor takes the factor's label, so
-  `model["mu"]` for `model = (lik * prior).with_label("model")` is labeled
+  `model["mu"]` for `model = (lik & prior).with_label("model")` is labeled
   `prior` and prints as `prior(mu)`, where it was labeled `model`. A view of the
   whole events of several factors takes their joined label and prints factor by
   factor, as `model[("b", "a")]` prints as `b(b)·a(a)`. Any other view keeps its
   parent's label, as `model["y"]` prints as `model(y)`, and the repr of every
-  view names `FieldView` and the path. Replace a comparison of such a view's
+  view names `CoupledMarginal` and the path. Replace a comparison of such a view's
   label with its parent's label by one with the factor's label.
 - **`BatchSpec` takes its levels by name.** `BatchSpec(element_spec, **levels)`
   maps each level's name to the shape of its axes, outermost first, as in
@@ -351,7 +406,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **A term marks each NumPy array it stores read-only.** Constructing a term
   from a NumPy array, such as a `NumericArray`, a `Record`, or a parametric
   family, sets the array's `writeable` flag to `False` in place. A write into
-  that array afterwards, through the caller's handle or through `.raw()`,
+  that array afterwards, through the caller's handle or through `.raw`,
   raises `ValueError: assignment destination is read-only`, where it used to
   change the term. To keep a writable array, pass a copy,
   as in `NumericArray(values.copy(), label="x")`. A pandas or xarray container is
@@ -359,12 +414,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **A relabeled or dimension-bound copy of a law draws together with the law
   it copies.** A lift draws every law that `with_label`, `with_dim_names`, or
   `with_dim_sizes` returns together with the law it is made from, as it draws a
-  law that `with_path_names` returns. Each method returns the same law under a
+  law that `rename` returns. Each method returns the same law under a
   new label, new dimension names, or bound dimensions. So
   `f(d, d.with_label("e"))` evaluates `f` on one draw of `d` per repetition,
   where it drew two independent values before, and
-  `d.with_path_names(x="y").with_dim_sizes(n=3)` and
-  `d.with_dim_sizes(n=3).with_path_names(x="y")` both draw with `d`. A law read
+  `d.rename(x="y").with_dim_sizes(n=3)` and
+  `d.with_dim_sizes(n=3).rename(x="y")` both draw with `d`. A law read
   from a `Record` field draws with the law the record stores, so
   `f(r["x"], r["x"])` also evaluates `f` on one draw. To draw two independent
   values, construct the law twice.
@@ -460,16 +515,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   inside `workflow_run(seed=0)`, and
   `learn_amortized_posterior(prior, simulator, random_seed=0)` with
   `learn_amortized_posterior(prior, simulator)` inside `workflow_run(seed=0)`.
-- **A result names each component by what its value means.**
-  - `mean`, `variance`, and `quantile` name each component of the law's event
-    by their call. The mean of a law over `mu` and `tau` is a record whose
-    fields are `mean(mu)` and `mean(tau)`, and the mean of a law over `theta` is
-    declared under `mean(theta)`: replace `mean(posterior)["mu"]` with
-    `mean(posterior)["mean(mu)"]`. A plug-in call such as
-    `predict(**mean(posterior))` names its keywords instead.
-  - `cov` is declared under the call on every component of the event, as
-    `cov(mu, tau)`, and `expectation(d, f)` under `mean(c)` for each component
-    `c` of `f`'s output declaration.
+- **A result's component names address its parts.** A summary taken
+  coordinate by coordinate takes the law's event components and paths, and a
+  value that no one event component indexes, such as a score or a covariance,
+  takes the operation's name.
+  - `quantile` at several levels returns a batch on the level `quantile`
+    under the event's components, where the batch was declared under the
+    single component `quantile`.
+  - `expectation(d, f)` is declared under the components of `f`'s output
+    declaration, where it was declared under `expectation`.
   - A batch of draws is declared under the event's components, where it was
     declared under `sample`.
   - `OutputSpec` takes a positional `DistributionSpec`,
@@ -480,9 +534,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     each was declared under the operation's name. `factor`, `joint`,
     `random_log_prob`, `random_unnormalized_log_prob`, and the Bayes stage of
     `condition_on` declare none, and the returned law carries its own.
-  - A repr writes names that are no Python identifiers, such as `mean(mu)`,
+  - A repr writes names that are no Python identifiers, such as `my model`,
     in order inside one `**{...}` mapping, as in
-    `OutputSpec(**{'mean(theta)': NumericArraySpec(shape=())})`.
+    `OutputSpec(**{'my model': NumericArraySpec(shape=())})`.
 - **`predictive_check`, `score_posterior`, and `add_ppc` take their randomness
   from the workflow scope.** The three drop their `key` parameter, and a `key=`
   keyword raises `TypeError`. A call claims one workflow-owned random event of
@@ -509,11 +563,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   alone decides the packaging. The form with several keywords, which exposed a
   record of them, raises `TypeError`: replace `OutputSpec(a=a_spec, b=b_spec)`
   with `OutputSpec(RecordSpec(a=a_spec, b=b_spec))`.
-- `with_path_names` addresses a node by its exact path on `Record`,
+- `rename` addresses a node by its exact path on `Record`,
   `RecordSpec`, `RecordBatch`, and every `NamedTree`, so a single name addresses
   a top-level node and a nested node takes its full path. A bare name no longer
   resolves to a nested node: for a nested field `g/mu`, replace
-  `r.with_path_names(mu="loc")` with `r.with_path_names({"g/mu": "loc"})`. A
+  `r.rename(mu="loc")` with `r.rename({"g/mu": "loc"})`. A
   top-level node whose name recurs deeper, which no key could address, is
   renamed by its name.
 - **A `Function` is constructed from its label and its callable, and declares
@@ -865,7 +919,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   references to use `NumericArraySpec`. The bare backend-array alias remains
   `Array`. The design baseline now gives each raw value kind a corresponding
   tracked term and batch form, including `NumericArray` / `NumericArrayBatch`
-  and `Opaque` / `OpaqueBatch`, and defines `Batch.raw()` as a shared storage
+  and `Opaque` / `OpaqueBatch`, and defines `Batch.raw` as a shared storage
   view. Runtime implementations of those design contracts land in the
   subsequent stack.
 
@@ -922,7 +976,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `UnmanagedConcurrentWorkflowEntryError`, `ReplayCompatibilityError`, and
   `ReplayUnsupportedCallableError`.
 
-  A top-level workflow snapshots `provenance_config.mode` on entry. Nested
+  A top-level workflow snapshots `config.provenance.mode` on entry. Nested
   scopes and managed workers inherit that value, and configuration changes
   made during execution apply only to the next top-level workflow.
 
@@ -956,7 +1010,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Function` swept over a batch collected numeric rows into a single-field
   `NumericRecordBatch` keyed by the function's own name, so `out["my_func"]`
   reached the column. The aggregate is now the batch form of the rows' own kind,
-  read through `.values`.
+  read through `.raw`.
 
   A row that is itself a batch keeps its levels either way. Only `RecordBatch`
   rows did before, so once a scalar law's `sample` began returning a
@@ -995,7 +1049,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   So `log_prob`, `mean`, `variance`, `quantile`, `expectation`, and a scalar
   law's `sample` all return a `NumericArray`. **A result is no longer indexable
   by the function's name** — `result["my_func"]` becomes `result` itself, and an
-  opaque result is read through `.value`.
+  opaque result is read through `.raw`.
 
   A callable result is callable because it *is* the function kind, rather than
   because a single-field record forwards `__call__`.
@@ -1013,7 +1067,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `annotations["arviz"]["posterior"]["params"]` with the leaf's variable.
 - **`predictive_check` takes the kernel of the observations and a law over its
   given slots.** A replication is a draw of the kernel's event from
-  `kernel * law`, so a model `likelihood * prior` is checked with its own
+  `kernel & law`, so a model `likelihood & prior` is checked with its own
   likelihood: the posterior as the law gives a posterior predictive check, and
   the prior gives a prior predictive check. Replace
   `predictive_check(posterior, simulator, test_fn, y, num_observations=n)` with
@@ -1033,13 +1087,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   read one set of replications.
 - **`GenerativeLikelihood` is removed from `probpipe.core.protocols`.** The
   observations of a model are a `ConditionalDistribution`, built with
-  `conditional_distribution` and composed with a prior as `likelihood * prior`.
+  `conditional_distribution` and composed with a prior as `likelihood & prior`.
   The certification of a data generator for an omitted key is removed with it.
 
 - **`Function` controls now live outside user call kwargs.**
   `@function(...)` configures definition-time controls, and
   `workflow.using(...)(...)` is the call-time override API for
-  `seed`, `n_broadcast_samples`, and `include_inputs`. Wrapped
+  `seed`, `max_evaluations`, and `include_inputs`. Wrapped
   functions may now declare and receive those names as ordinary
   parameters. Passing those names as call kwargs no longer configures
   ProbPipe controls; use `workflow.using(...)(...)` instead.
@@ -1230,7 +1284,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     invariant.
 
 - **Prefect orchestration is now opt-in** (#182). The shipped global
-  default for `prefect_config.workflow_kind` is `WorkflowKind.OFF`
+  default for `config.prefect.workflow_kind` is `WorkflowKind.OFF`
   instead of the prior `WorkflowKind.DEFAULT` (which auto-promoted to
   `TASK` whenever Prefect was importable). The old behaviour silently
   enabled Prefect for any environment with Prefect on `sys.path` —
@@ -1242,7 +1296,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   ```python
   import probpipe
-  probpipe.prefect_config.workflow_kind = probpipe.WorkflowKind.TASK
+  probpipe.config.prefect.workflow_kind = probpipe.WorkflowKind.TASK
   ```
 
   Or via the new `PROBPIPE_WORKFLOW_KIND` environment variable
@@ -1482,18 +1536,683 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ``BroadcastDistribution``, ``ProbabilisticModel``, ``SimpleModel``,
   ``SimpleGenerativeModel``, ``PyMCModel``, ``StanModel``). No backward
   alias.
+- **`n_broadcast_samples` is split into `max_evaluations` and `num_samples`.**
+  `max_evaluations` is the maximum number of times a call lifted over laws
+  evaluates its function, 256 by default. The lift enumerates the empirical
+  arguments whose combinations of atoms number at most `max_evaluations` and
+  samples the others within that count. `num_samples` is the number of Monte
+  Carlo draws of a summary, such as `mean` or `quantile`, and of a converter
+  that draws, 1024 by default, so the default Monte Carlo estimates change. `expectation(d, f)` evaluates `f` at most `num_samples`
+  times, and `convert.using(num_samples=n)` and an argument's conversion take
+  the call's `num_samples` unless the converter's `num_samples` option is given.
+  `probpipe.config.sampling` holds both defaults and replaces
+  `set_default_n_broadcast_samples` and `Function.DEFAULT_N_BROADCAST_SAMPLES`,
+  and the environment variables `PROBPIPE_SAMPLING_MAX_EVALUATIONS` and
+  `PROBPIPE_SAMPLING_NUM_SAMPLES` set their initial values. A call's provenance
+  records `num_samples` whenever its routes drew Monte Carlo samples, including
+  the variance of `standard_deviation`, and a lift's provenance records
+  `max_evaluations` where it recorded `n_samples` or `k`. The old name raises
+  `TypeError` as an unknown control. A replay recipe records its plan under
+  `probpipe.stochastic_plan/v2`, so `replay_run` refuses a result recorded
+  earlier and asks for it to be recorded again. Migrate each use as follows:
+  - a lifted function or `pushforward`: `f.using(n_broadcast_samples=n)` becomes
+    `f.using(max_evaluations=n)`;
+  - a summary, `expectation` included: `mean.using(n_broadcast_samples=n)`
+    becomes `mean.using(num_samples=n)`;
+  - the session's default: `set_default_n_broadcast_samples(n)` becomes
+    `probpipe.config.sampling.max_evaluations = n` for lifts and
+    `probpipe.config.sampling.num_samples = n` for summaries.
+- **The settings objects are sections of `probpipe.config`.** `config` holds
+  four sections, which keep their classes, checks, and environment variables,
+  and `config.reset()` resets all four. The top-level names
+  `notation_config`, `provenance_config`, and `prefect_config` are removed,
+  with no alias. Migrate each as follows:
+  - `probpipe.notation_config` becomes `probpipe.config.notation`;
+  - `probpipe.provenance_config` becomes `probpipe.config.provenance`;
+  - `probpipe.prefect_config` becomes `probpipe.config.prefect`.
+
+  A `using` block sets temporary values, for one section as
+  `with probpipe.config.sampling.using(num_samples=4096):` and for several as
+  `with probpipe.config.using(sampling={"num_samples": 4096}, notation={"max_depth": 12}):`.
+  The previous values apply again when the block exits, an error included, and
+  blocks nest. A view's own control, which `f.using(...)` sets, wins over a
+  block, which wins over the session's value. A block applies to the work that a call
+  inside it dispatches to worker threads or Prefect workers, and to no other
+  thread. An unknown section or setting raises `TypeError` naming the known
+  ones, and a value is checked as an assignment checks it. Blocks close in the
+  reverse order of opening. A block that a generator holds open can break that
+  order in two ways, and each raises `RuntimeError`: a block closed while a call
+  opened inside it still runs keeps applying until the call ends, and a call or
+  a block that ends while a block opened inside it is still open closes that
+  block with it. Either way no closed block applies afterwards.
+- **A derived operation is computed by its formula, through its derived route.**
+  The formula of a derived operation is the equation that defines it, such as
+  `prob = exp ∘ log_prob`. Its derived route runs the formula and is registered
+  under the name `derived`. `@operation` takes `derived_route_check=`, the
+  derived route's own feasibility check, and `derived_route=`, and an
+  operation and its summary hold the formula as `formula`. The names with
+  `identity` are removed, with no alias. `@operation(conditions=...)` is
+  renamed `@operation(applicability_checks=...)`: these checks apply to every
+  call, read the operands' declarations, and raise `ApplicabilityError`. A call's
+  provenance and check report name the route `derived`, so code that reads the
+  route sees a new value: `standard_deviation(d).provenance.metadata["route"]`
+  was `"identity"` and is now `"derived"`. Migrate each use as follows:
+  - `@operation(identity_check=check)` becomes `@operation(derived_route_check=check)`;
+  - `@operation(conditions=checks)` becomes `@operation(applicability_checks=checks)`;
+  - `@operation(identity_route=route)` becomes `@operation(derived_route=route)`;
+  - `op.identity` and `op.summary().identity` become `op.formula` and
+    `op.summary().formula`;
+  - `op.using(method="identity")` becomes `op.using(method="derived")`;
+  - a check of `metadata["route"] == "identity"` becomes
+    `metadata["route"] == "derived"`.
+- **Seeded draws made inside a ProbPipe call change once.** The key of a
+  workflow-owned draw made inside a call is derived from strings that name
+  the call's evaluation point, and these strings now say "evaluation point"
+  where they said "managed". The same code at the same seed therefore draws
+  other values: a `sample`, a Monte Carlo summary, and a draw in a function's
+  body all change, while the draws a lift makes of its input laws do not. A
+  replay record written before this change is refused, so record the result
+  again to replay it. The same call before and after:
+
+  ```python
+  with workflow_run(seed=7):
+      draws = sample(Normal("x", 0.0, 1.0), 3)
+  # before: [-0.523403, 1.038044, -1.069435]
+  # after:  [0.80094, 0.327328, -0.465379]
+  ```
+- **"Slot" becomes "input" and "component" becomes "output", in names,
+  messages, and documentation.** An *input* is a named place where a function or
+  a conditional distribution receives a value, and an *output* is a name under
+  which a term's value can be read and passed on to an input of the same name.
+  "Component" now means only a component law of a `MixtureDistribution`. The
+  input, output, and event "declarations" are now input, output, and event
+  *specs*. No name has an alias:
+
+  | Before | After |
+  |---|---|
+  | `output_spec.spec`, `x.event_spec.spec` | `output_spec.term_spec`, `x.event_spec.term_spec` |
+  | `output_spec.with_spec(spec)`, `output_spec.with_spec(spec=spec)` | `output_spec.with_term_spec(spec)`, whose argument is positional only |
+  | `output_spec.components` | `output_spec.outputs` |
+  | `output_spec.exposes_record` | removed; `output_spec.outputs` lists the outputs, a record's top-level names in the positional form `OutputSpec(RecordSpec(...))` and the one name of the keyword form `OutputSpec(x=...)` |
+  | `OutputSpec.default(spec, component="x")`, `OutputSpec.default(spec=..., component=...)` | `OutputSpec.default(spec, output_name="x")`, `OutputSpec.default(term_spec=..., output_name=...)` |
+  | `Normal(component="x", ...)` and every family's first parameter `component` | `Normal(output_name="x", ...)`; a positional name, as `Normal("x", 0.0, 1.0)`, is unchanged |
+  | `EmpiricalDistribution(..., component="theta")`, `distribution(..., component="x")`, and the first parameter `component` of `KDEDistribution`, `BootstrapDistribution`, `BootstrapReplicateDistribution`, `BijectorTransformedDistribution`, `LinearPushforwardDistribution`, `RandomFunction`, and `RandomMeasure` | `output_name="theta"`, `output_name="x"`, and `output_name` |
+  | `factor(d, component_name)` | `factor(d, output_name)` |
+  | the route `method="by_component"` of `mean`, `variance`, and `quantile` | `method="by_output"`, and `provenance.metadata["route"]` reads `"by_output"` |
+  | the key `"components"` of each block in that route's `provenance.metadata["blocks"]` | `"outputs"` |
+  | the route `"bind_given_slots"` of `condition_on` on a conditional distribution | `"bind_inputs"`, also in `provenance.metadata["route"]` |
+  | the page `docs/api/declarations.md` | `docs/api/input_and_output_specs.md` |
+
+  For example, `Normal("mu", 0.0, 1.0).event_spec.components` becomes
+  `Normal("mu", 0.0, 1.0).event_spec.outputs`, and
+  `variance.using(method="by_component")(d)` becomes
+  `variance.using(method="by_output")(d)`.
+
+  The route names change silently for code that reads them. For a conditional
+  distribution `k` with the input `mu`, the same call gives another value:
+
+  ```python
+  condition_on(k, {"mu": 0.3}).provenance.metadata["route"]
+  # before: 'bind_given_slots'
+  # after:  'bind_inputs'
+  variance.using(method="by_output")(d).provenance.metadata["route"]
+  # before (with method="by_component"): 'by_component'
+  # after:  'by_output'
+  ```
+- **The provenance mode is fixed for a workflow run.** The outermost
+  `workflow_run` takes the mode in effect when it opens, and a call outside
+  every `workflow_run` takes it when the call opens. Inside the run, a
+  `config.provenance.using` block, a `config.using(provenance=...)` block, an
+  assignment to `config.provenance.mode`, or a `reset` that would set another
+  mode raises `RuntimeError`, naming the run's mode. Before, the block or the
+  assignment was ignored for the run's provenance while
+  `config.provenance.mode` read the new value. One that sets the run's own mode
+  is accepted. Set the mode before the run opens:
+
+  ```python
+  # before: provenance was recorded although the block read OFF
+  with workflow_run(seed=1):
+      with config.provenance.using(mode=ProvenanceMode.OFF):
+          y = f(x)
+  # after: the block raises; set the mode before the run opens
+  with config.provenance.using(mode=ProvenanceMode.OFF), workflow_run(seed=1):
+      y = f(x)
+  ```
+- **The work a call dispatches reads the session's settings as they were when
+  the outermost call opened.** Inside a function's body and the other work a
+  call evaluates, under `dispatch="sequential"` and `"thread"` and in Prefect
+  tasks, a setting that no `using` block sets reads the session's value from a
+  snapshot that the outermost call takes when it opens. Before, a worker read
+  the session's current value. A session assignment made while a call runs
+  therefore reaches none of that call's work, and it applies from the next call
+  on. The `prefect` section is the exception, and is read as it stands. The
+  same call before and after:
+
+  ```python
+  @function(dispatch="thread", max_workers=1)
+  def body(x):
+      if float(x) == 0.0:
+          config.sampling.num_samples = 7
+      return config.sampling.num_samples
+
+  body(NumericArrayBatch(jnp.arange(3.0), "x", label="xs"))
+  # before: [7, 7, 7]
+  # after:  [1024, 1024, 1024]
+  ```
+- **A path is a `str`, and a list or a tuple of `str` is a list of paths.**
+  `[]` on a `Record`, a `RecordSpec`, a batch, and a law reads its argument
+  one way: `"g/c"` is one path, and `["a", "g/c"]` or `("a", "g/c")` a list of
+  paths. A tuple was one nested path on records and batches before, so
+  replace `record["g", "c"]` with `record["g/c"]`, and `at_path(("g", "c"))`
+  with `at_path("g", "c")`. A missing path from a tuple whose `/`-joined form
+  is a path says so and gives the nested path. Some calls still run and
+  return something else, so check these:
+
+  ```python
+  site = Record({"habitat": {"forest": 0.7, "wetland": 0.3}, "forest": 2.0}, label="site")
+  site["habitat", "forest"]
+  # before: 0.7, the nested value
+  # after:  the record {habitat: {forest, wetland}, forest}
+
+  grouped["a", "g/c"].event_spec   # grouped is a law over {a, g: {c, e}}
+  # before: OutputSpec(RecordSpec(a=..., c=...))
+  # after:  OutputSpec(RecordSpec(a=..., g=RecordSpec(c=...)))
+
+  sample(grouped["a", "g/c"]).label
+  # before: "(a, c) ~ Normal·Normal·Normal"
+  # after:  "(a, g/c) ~ Normal·Normal·Normal"
+
+  marginal(a_law * b_law, ["b", "a"]).notation
+  # before: "b(b)·a(a)"
+  # after:  "a(a)·b(b)", in the law's order
+
+  "g" in draw         # draw a record {a, g: {c, e}}
+  # before: False
+  # after:  True
+  1.0 in sample(Normal("x", 0.0, 1.0), sample_shape=3)
+  # before: True when a draw equals 1.0
+  # after:  False; a batch tests paths, never its elements
+  ```
+
+  - One path gives the node there, a group included: `record["g"]` is the
+    group's record, and `spec["g"]` its `RecordSpec`, where both raised
+    `KeyError` before. `at_path` still gives any node.
+  - A list of paths keeps each node at its own path, in the term's order,
+    whatever order the list gives, and a law indexed by several paths no
+    longer raises when two of them end in the same name. A list of one path
+    keeps the name: `record[["g"]]` is the record `{g: {c, e}}`.
+  - `marginal(d, field)` is `marginal(d, paths)`, and takes a list too.
+  - A malformed list of paths raises before anything is looked up: an empty
+    path or name, as in `"g//c"`, and an empty list, a path given twice, or a
+    path inside another raise `ValueError`. `batch[()]` raises instead of
+    returning the whole batch. A path and a position in one `[]`, a list of
+    positions, a set, and an iterator raise `TypeError`.
+  - `without`, `select`, `replace`, `is_field`, and the keys of
+    `rename` take one `str` path per argument, so `without("a", "a")`
+    and `without("g", "g/c")` raise `ValueError`, and a tuple raises
+    `TypeError`. `is_field` takes one path, `is_field("g/c")`.
+  - `in` on a law works, where it raised `TypeError`.
+  - A law over a single value has no paths, so `Normal("x", 0.0, 1.0)["y"]`
+    raises `TypeError` where it raised `KeyError`. A batch of arrays or
+    opaque values raises `TypeError` for a path, as before. A missing path of
+    a record, or of a law or batch over records, still raises `KeyError`.
+- **`select` keys each path by its last name.** `record.select("a", "g/c")`
+  is `{"a": ..., "c": ...}`, so the result splats into a call, where it was
+  keyed `"g/c"`. Two paths with one last name raise `ValueError`; name one
+  with a keyword, as `select("s1/theta", other="s2/theta")`. `RecordBatch.select`
+  changes the same way.
+
+- **A lifted function that draws from NumPy's or Python's global random
+  generator gives each point its own noise, with a warning.** Before, JAX
+  traced it once and fixed one draw into the compiled program, so every point
+  received the same noise; now ProbPipe evaluates it one point at a time.
+
+  ```python
+  @function
+  def simulate(r):
+      return r + np.random.normal()
+
+  simulate.using(max_evaluations=5)(Normal("r", 0.0, 1.0))
+  # before: every draw's noise was the same number
+  # after:  each draw has its own noise, and a UserWarning names simulate
+  ```
+- **A batch's `element_spec` is the output spec of one element.**
+  `Batch.element_spec` and `BatchSpec.element_spec` are now an `OutputSpec`,
+  like a distribution's `event_spec`: the spec they held before is
+  `element_spec.term_spec`, and `element_spec.outputs` lists an element's
+  outputs. A batch of single arrays or opaque values names its elements
+  `element`, as `OutputSpec(element=NumericArraySpec(()))`, and a batch of
+  records, distributions, or conditional distributions is in the positional
+  form, as `OutputSpec(RecordSpec(...))`. For now a batch of functions, and a
+  batch whose elements are batches of single values, also name their elements
+  `element`. Equality, hashing, fingerprints, and the printed spec of a batch
+  are unchanged.
+
+  ```python
+  draws = sample(Normal("mu", 0.0, 1.0), sample_shape=4)
+  draws.element_spec.shape          # before
+  draws.element_spec.term_spec.shape  # after
+  draws.element_spec                # after: OutputSpec(element=NumericArraySpec(...))
+  ```
+- **A batch constructor takes the elements' spec as `element`.** The keyword
+  `element_spec=` of `NumericArrayBatch`, `RecordBatch`, `NumericRecordBatch`,
+  `OpaqueBatch`, `FunctionBatch`, `DistributionBatch`,
+  `ConditionalDistributionBatch`, and `RecordBatch.stack` becomes `element=`,
+  and a batch's repr shows it under that name. `BatchSpec`'s first argument is
+  named `element` and takes an `OutputSpec` or a bare spec; a bare spec names
+  single arrays or opaque values `element`.
+
+  ```python
+  NumericArrayBatch(values, "site", label="heights", element_spec=NumericArraySpec(()))  # before
+  NumericArrayBatch(values, "site", label="heights", element=NumericArraySpec(()))       # after
+  BatchSpec(OutputSpec(x=NumericArraySpec(())), sample=4)  # new: elements named x
+  ```
+
+- **An inference method receives an `InferenceTarget` and its run's random key.**
+  `InferenceMethod.execute(target, /, *, key, **options)` takes the key as a
+  required keyword, which `condition_on` derives for each run from the
+  enclosing `workflow_run`; the private `run_seed` is removed. Every target is
+  an `InferenceTarget`: a law that is itself unnormalized arrives as the
+  target of conditioning it on nothing. A method that recognized a law by its
+  class, such as a program's posterior, now lists `Distribution` in
+  `supported_types`, since a method that lists only the law's class is never
+  selected, and reads the law from `target.joint` in `check`. A posterior's
+  provenance names the target as its parent, and the target's names the
+  model; the target of conditioning a law on nothing is that law, so the
+  posterior of `rwmh(law)` still names `law`. Seeded draws of the built-in methods are unchanged.
+
+  ```python
+  # before
+  def execute(self, target, /, **options):
+      key = run_seed(self.name)
+      ...
+  # after
+  def execute(self, target, /, *, key, **options):
+      ...
+  ```
+
+- **`make_posterior` is public, and takes the target first.** It reads the
+  posterior's event and the layout of the chains from the target, so
+  `event_spec=` and `field_order=` are gone: a backend whose trace orders its
+  variables differently extracts them in the target's order. A program whose
+  array sizes come from its data passes `parameter_shapes=`.
+
+  ```python
+  # before
+  make_posterior(chains, (target,), "my_method", event_spec=prior.event_spec, field_order=names)
+  # after
+  from probpipe.inference import make_posterior
+  make_posterior(target, chains, method="my_method")
+  ```
+
+- **The posterior of a law over one array is named by the law's output.**
+  A law that is not a parametric family and whose event is one array, such as
+  one built from a log-density alone, gave a posterior whose output was
+  `posterior`; it now takes the law's output, as every other target's
+  posterior does. The same call before and after:
+
+  ```python
+  posterior = inference_method_registry.execute(law, method="blackjax_nuts")  # law's output is "x"
+  # before: list(posterior.event_spec.outputs) == ["posterior"]
+  # after:  list(posterior.event_spec.outputs) == ["x"]
+  ```
+
+- **A run of `empirical_reweighting` takes one random event of its workflow.**
+  Every method run now receives a key, so the random draws made after an
+  `empirical_reweighting` run in one `workflow_run` get different keys. The
+  posterior itself is unchanged. The same code before and after:
+
+  ```python
+  with workflow_run(seed=0):
+      posterior = condition_on.using(method="empirical_reweighting")(model, observed)
+      later = sample(Normal("z", 0.0, 1.0), 3)
+  # before and after: posterior is the same law
+  # before: later held one set of draws; after: it holds another
+
+- **An output spec over a distribution has no outputs, and a merge refuses a
+  distribution over distributions.** A distribution's draws are not
+  determined by the distributions of their fields, so an output spec in the
+  positional form over a `DistributionSpec` or a `ConditionalDistributionSpec`,
+  as for a function that returns a distribution, has no outputs, and a batch of
+  distributions has none either. A distribution whose event is such a spec has
+  no paths, so indexing it by the name of the inner distributions' output
+  raises `TypeError`, and merging it with `&` raises `TypeError`, where it built
+  a joint that failed when sampled. To pass the distributions on by name, wrap
+  them under a name, as `OutputSpec(RecordSpec(params=law_spec))`. The same
+  calls give other values:
+
+  ```python
+  OutputSpec(Normal("mu", 0.0, 1.0).spec).outputs
+  # before: {'mu': NumericArraySpec(())}
+  # after:  {}
+
+  laws_of_x["x"]                # laws_of_x: a distribution over laws of x
+  # before: laws_of_x itself
+  # after:  TypeError: cannot index ... by 'x', since its draws are distributions
+
+  sample(laws_of_x).label
+  # before: 'x ~ ℙ'
+  # after:  '() ~ ℙ', since the law has no outputs; its notation is 'ℙ()'
+  ```
+
+  A distribution whose event spec is positional over a `BatchSpec` of records
+  changes the same way: `[]` by the name of its element's one output, and `&`,
+  raise `TypeError`, since a batch's outputs are not yet read as one record.
+
+- **`&` on records, record specs, and batches of records is shallow.** It
+  merges by top-level name, so two records that both have a group `g` raise
+  `ValueError`, where their groups' fields were combined. Merge the groups
+  first, then put the result under `g`:
+
+  ```python
+  Record({"g": {"b": 1.0}}) & Record({"g": {"c": 2.0}})
+  # before: the record {g: {b, c}}
+  # after:  ValueError: cannot merge the two NumericRecords, since both have 'g'.
+  #         Rename one, or merge the groups first
+  Record({"g": Record({"b": 1.0}) & Record({"c": 2.0})})   # the old result
+  ```
+
+- **A compiled JAX program that fails while it runs raises its error.** A
+  joint's mapping of a kernel, a family's sampler, and pyabc's compiled
+  simulator are traced before they first run. A body that does not trace
+  still runs eagerly, but an error raised while the traced JAX program runs
+  now propagates, where ProbPipe used to run the computation again eagerly
+  and could hide the error. The same code before and after:
+
+  ```python
+  @conditional_distribution(given_spec={"mu": NumericArraySpec(())})
+  def likelihood(mu):
+      y_mean = jax.pure_callback(solver, jax.ShapeDtypeStruct((), jnp.float32), mu)
+      return Normal("y", y_mean, 1.0)
+
+  sample(likelihood & Normal("mu", 0.0, 1.0), 3)  # solver raises when it runs
+  # before: the kernel's function ran again under an eager jax.vmap
+  # after: the solver's error propagates, and the kernel's function ran once
+  ```
+
+- **The controls `dispatch` and `max_workers` are removed: lifted calls,
+  sweeps, and plain calls run on executors.** Name the executor with
+  `executor` and its options with `executor_options`. Passing `dispatch=` or
+  `max_workers=` raises `TypeError`, which names the unknown control. A call
+  that names an executor while `workflow_kind` selects Prefect warns that the
+  executor runs nothing, since Prefect runs the evaluations.
+
+  ```python
+  # before
+  growth.using(dispatch="thread", max_workers=8)(prior)
+  # after
+  growth.using(executor="thread", executor_options={"max_workers": 8})(prior)
+  ```
+
+- **A function JAX can trace is mapped by `jax` whatever executor is named.**
+  `dispatch="sequential"` ran such a function one draw at a time, and
+  `executor="sequential"` does not: claim `traceable=False` to run it one draw
+  at a time. The draws agree up to the last bit of rounding.
+
+  ```python
+  # before: one draw at a time
+  growth.using(dispatch="sequential")(prior)
+  # after: one draw at a time
+  Function(growth_body, traceable=False)(prior)
+  ```
+
+- **A lifted call or a sweep whose evaluation fails raises `EvaluationError`.**
+  The call runs every draw or grid point, keeps the outputs that succeeded,
+  and raises `EvaluationError`, a `RuntimeError` chained to the first
+  failure's exception, whose `failures` name each failed one. An output that
+  does not match the function's output spec fails its evaluation point too,
+  so it raises `EvaluationError` chained to the `ResultSchemaError`, where it
+  raised the `ResultSchemaError` itself. A plain call still raises the
+  exception its body raised.
+
+  ```python
+  # before
+  try:
+      simulate(prior)
+  except ValueError: ...
+  # after
+  try:
+      simulate(prior)
+  except EvaluationError as error:
+      error.failures   # each failed draw's index, kind, and error
+  ```
+
+- **Replay refuses a call recorded before this change.** The execution
+  contract no longer names an evaluator and a transport, since no executor
+  changes a result, so its version is `probpipe.workflow_rng_execution/v2`,
+  and a replay record notes the executor the call named, `executor` and
+  `executor_options`, in place of `requested_dispatch` and
+  `requested_workflow_kind`. Record the call again.
+
+- **`EvaluationPoints` built where no ProbPipe call places its evaluations in
+  the workflow raises `RuntimeError`,** as directly in a function's body,
+  since the place in the workflow gives each evaluation its random keys. Ask
+  for the evaluations with `evaluate_at_points`, which takes a place of its
+  own, or through a ProbPipe call, such as a lifted call.
+
+- **A failed embedded evaluation stops its compiled JAX program and raises
+  `EvaluationError`.** Previously an opaque Function could not cross this
+  boundary. Failed host callbacks raise rather than returning a placeholder
+  value, and a ProbPipe call preserves host-side executor refusal exceptions.
+  For example, `sample(model, 3)` now raises `EvaluationError` if a wrapped
+  opaque simulator fails while the joint's compiled factor runs; the same
+  call previously failed to trace the simulator.
+- **A declared `float64` output requires `jax_enable_x64=True`.** Calls and
+  `apply` refuse the declaration while 64-bit floats are disabled, instead of
+  storing a silently narrowed output. Enable 64-bit floats before calling,
+  or declare `float32`: replace `f(x)` under disabled 64-bit floats with
+  `jax.config.update("jax_enable_x64", True); f(x)` before any calls run.
+
+- Multiplication and truth values of distributions and kernels now raise
+  `TypeError`: replace `lik * prior` and `lik and prior` with `lik & prior`.
+  Merging coupled marginals now raises `ValueError` instead of silently treating
+  them as independent: replace `d["a"] & d["b"]` with `d["a", "b"]`
+  for their joint law, or `marginal(d, "a") & marginal(d, "b")` for independent laws.
+  Scalar multiplication of Gaussian random functions is unchanged, and record
+  truth values change as the entry on container truth below states.
+
+- **`&` refuses coupled laws at any depth of either operand.** A merge
+  compares the root ancestor of each operand and of every factor inside it,
+  grouped sub-joints included. So `d & d["a"].rename(a="z")`,
+  `d["a"] & d.rename(a="p", b="q")`, and a grouped sub-joint holding `d["a"]`
+  merged with `d["b"]` now raise `ValueError`, where they built a joint that
+  drew the coupled laws independently. The check precedes the check of
+  shared outputs, so `d & d["a"]` reports the coupling. The advice to merge
+  standalone marginals appears only when `marginal` computes them, and a law
+  in both operands is named once: `prior & prior` raises "cannot merge
+  prior & prior: the law prior is in both operands. Merge it once".
+
+- **Every record uses container truth, including `NumericRecord`.**
+  `bool(Record({"x": 0.0}))` now returns `True`, where scalar conversion
+  returned `False`; `bool(Record({}, label="empty"))` returns `False`, where it raised.
+  Test `bool(record["x"])` when the field's value should decide truth.
+
+- **`rename`, `[]`, and `in` take the parameters the design declares.** On a
+  law, a kernel, a record, a record batch, and an output spec, `rename` takes
+  `(renames, /, **keyword_renames)`, and `[]` and `in` on a law and a record
+  take their path positionally only. A call that gives its renames by position
+  or as keywords is unchanged. Calling the special methods with the path as a
+  keyword now raises `TypeError`: replace `d.__getitem__(key="x")` with
+  `d["x"]` and `d.__contains__(path="x")` with `"x" in d`.
+
+  A `rename` now checks each key and each new path with the rules that `[]`
+  applies to a path, on a record, a record batch, an output spec, and a
+  kernel. A new path that is not a string raises `TypeError`, where it raised
+  `ValueError`. A kernel's key that is not a string raises `TypeError`, where
+  it raised `AttributeError`. A key that is not a path of the term raises
+  `KeyError` before its new path is read, so `record.rename(zz="")` raises
+  `KeyError`, where it raised `ValueError`. The messages are those of `[]`:
+
+  ```python
+  record.rename(x=("g", "x"))
+  # before: ValueError: new path for 'x' must be a non-empty string
+  # after:  TypeError: cannot call rename() to move 'x' to ('g', 'x'), since a path must be a str, got tuple
+  record.rename(x="a//b")
+  # before: ValueError: new path 'a//b' for 'x' has an empty segment ...
+  # after:  ValueError: cannot call rename() to move 'x' to 'a//b', since the path 'a//b' has an empty name. ...
+  ```
+
+- **A lifted call's provenance records its sets of evaluation points under
+  `"evaluations"`, which replaces `"dispatch"`.** Each entry names the
+  callable, the executor that ran it, the options that executor received, the
+  number of evaluation points, and the point indices of any that failed. A
+  sweep's provenance records its sets the same way.
+
+  ```python
+  draws = forward.using(executor="thread", executor_options={"max_workers": 2})(prior)
+  draws.provenance.metadata["dispatch"]                       # before: 'thread'
+  draws.provenance.metadata["evaluations"][0]["executor"]     # after: 'thread'
+  ```
+
+- **Inside a JAX transformation, a plain `Function` call returns its raw
+  value.** Under `jax.jit`, `jax.vmap`, or `jax.grad`, `f(x)` returns the raw
+  form of its result, such as a JAX array or a record's mapping, where it
+  returned a `NumericArray` or a `NumericRecord` holding traced values. The
+  same code returns something else, and `jax.grad` of a plain call now works:
+
+  ```python
+  jax.vmap(lambda x: f(x))(xs)
+  # before: NumericArray holding the mapped values
+  # after:  the JAX array of the mapped values
+  jax.grad(lambda x: f(x))(1.0)
+  # before: ValueError, since the NumericArray is not a JAX array
+  # after:  the derivative of f at 1.0
+  ```
+
+  Replace `f(x).raw` inside a transformed function with `f(x)`. An operation
+  and a sweep inside a transformation still return their terms, so a law keeps
+  its capabilities there, and a call outside every transformation returns a
+  term as before.
+
+- **Merging records uses `&`, and related APIs are renamed.** The removed
+  methods raise `AttributeError`, and importing `FieldView` raises `ImportError`:
+
+  ```python
+  record_a.merge(record_b)            # before, on Record, RecordSpec, and RecordBatch
+  record_a & record_b                 # after
+  d.with_path_names(x="y")            # before
+  d.rename(x="y")                     # after
+  from probpipe.distributions import FieldView        # before
+  from probpipe.distributions import CoupledMarginal  # after
+  ```
+
+- **The `joint` operation's route is recorded as `"merge"`, where it was
+  `"compose"`.** The same call records another route name, and a recipe
+  recorded before the change cannot be replayed:
+
+  ```python
+  joint(lik, prior).provenance.metadata["route"]
+  # before: 'compose'
+  # after:  'merge'
+  ```
+
+- **`blackjax_nuts` and `tfp_nuts` start each chain from its own draw of the
+  prior.** Before, every chain started from one draw. This is a silent change:
+  the same seeded call runs and draws differently, and R-hat can now detect a
+  chain that stayed in the mode it started in. The call below shows where each
+  chain starts, in a run without warmup whose tiny step keeps each chain at
+  its start:
+
+  ```python
+  prior = Normal("theta", jnp.zeros(3), jnp.ones(3))
+  likelihood = conditional_distribution(
+      lambda theta: Poisson("y", jnp.exp(theta)), label="likelihood", given_spec=prior.event_spec
+  )
+  options = {"num_warmup": 0, "num_results": 1, "num_chains": 4, "step_size": 1e-6}
+  with workflow_run(seed=0):
+      posterior = condition_on.using(method="blackjax_nuts", method_options=options)(
+          likelihood & prior, {"y": jnp.array([1.0, 4.0, 2.0])}
+      )
+  # before: every chain starts at [0.41, 0.55, 1.49]
+  # after: the chains start at [-0.92, 0.23, 0.24], [0.33, 0.89, 0.11],
+  #        [-0.58, -0.66, 0.04], and [0.34, -0.56, 1.05]
+  ```
+
+  Pass one state as `init` to start every chain from it, as
+  `method_options={"init": jnp.array([0.4, 0.55, 1.5])}`.
 
 ### Added
 
+- **`print(x.provenance)` prints the lineage of `x`.** Each line is one step,
+  from the loaded data or another root down to `x`, with the call that made it,
+  its route and method, and whether it is exact or approximate. A step that two
+  later steps use is listed once, and both refer to its number. A field or an
+  element read from a container shows as the container indexed by its path,
+  as `4['beta']`. Operands remain visible when their labels match the operation's
+  name, and substituting parent references preserves quoted string arguments.
+  The steps that a route runs inside a call, such as the inference target and
+  the sampler's run inside `condition_on`, fold into that call's line, which
+  names the route and the method. A step that a later step also uses stays a
+  line, and the record, `to_dict()`, and `provenance_ancestors` keep every step.
+  A managed call records the positions of its route's results among its parents
+  under the metadata key `route_results`. The repr stays the short form.
+
+  ```text
+  >>> print(answer.provenance)
+  1. load_data('data.csv', '72327ac7…')  route body, exact
+  2. prepare_inputs(1)                   route body, exact
+  3. model = build_model(2)              route body, exact
+  4. posterior = condition_on(3, 2)      method nuts, approximate
+  5. mean(4['beta'])                     route closed_form, exact
+  ```
+
+- **Bare calls can share a default random stream.**
+  `workflow_run.set_default(seed=...)` starts the stream, and
+  `workflow_run.clear_default()` removes it. Explicit scopes and replay use
+  their own streams. Provenance mode can change between calls in the default
+  scope.
+
+- **Input declarations read four sources.** `InputSpec`, a mapping, a
+  `RecordSpec`'s top-level fields, or an `OutputSpec`'s outputs can declare a
+  function's `input_spec` or a kernel's `given_spec`. Tuple shapes are shorthand
+  for `NumericArraySpec` in inputs and keyword outputs. Input specs support list
+  selection, membership, `get`, and compatible merges with `&`; a shared input
+  retains its first type, and is optional only when both sides mark it optional.
+
+- **`summarize(d)` collects a law's standard summaries in one record that
+  displays as a table.** Each top-level field is the term an operation returns
+  for the law, with its provenance: `mean`, `sd` from `standard_deviation`,
+  `median`, and the ends of the central 80% interval, `q10` and `q90`. So
+  `summarize(d)["sd/mu"]` is the standard deviation of `mu`, and
+  `pd.DataFrame(summarize(d).raw)` gives the table.
+
+  ```text
+  >>> with workflow_run(seed=0):
+  ...     summarize(Normal("mu", 0.0, 2.0) & Poisson("count", 4.0))
+  summary of Normal(mu)·Poisson(count)
+           mean  sd  median         q10        q90
+    mu       0.  2.      0.  -2.5631032  2.5631022
+    count    4.  2.      4.   1.         6.
+  mean, sd: exact. median, q10, q90: Monte Carlo, 256 draws.
+  ```
+
+  - **Columns:** `interval=0.9` gives `q5` and `q95`. Given statistics, as
+    `summarize(d, mean, variance)` or `summarize(d, {"sd": standard_deviation})`,
+    replace the default columns.
+  - **MCMC posteriors:** a posterior on the levels `chain` and `draw` also gets
+    `r_hat`, `ess_bulk`, and `ess_tail`, and its line reads
+    `MCMC, 4 chains of 1,000 draws`.
+  - **Monte Carlo errors:** `mcse=True` adds `mcse_<name>` for each statistic:
+    ArviZ's error for an MCMC posterior, and for another law `0` where the
+    route was exact and `sd / sqrt(n)` for a mean from `n` draws.
+  - **Batches:** a `DistributionBatch` gives a batch of summary records, which
+    displays a table for each law.
+- **A record of summaries displays as a table.** A numeric record whose
+  top-level fields are records over the same paths, at least one of which
+  records how it was computed, shows one row for each path and one column for
+  each field, in its repr and in a notebook, with a line that states how each
+  column was computed. A record built by hand, as
+  `Record({"mean": mean(d), "sd": standard_deviation(d)})`, displays the same
+  way. A record of plain values keeps one line for each path.
 - **`standard_deviation(d)` returns the standard deviation of a law, the square
   root of its variance in each coordinate.** A record law's standard deviation
-  is a record with a field per component, as `standard_deviation(mu)`, so
-  `standard_deviation(Normal("mu", 0.0, 2.0) * Gamma("tau", 2.0, 1.0))` holds
+  is a record with a field per component, as `mu` and `tau`, so
+  `standard_deviation(Normal("mu", 0.0, 2.0) & Gamma("tau", 2.0, 1.0))` holds
   `2.0` and `√2` without mapping `sqrt` over the fields of `variance`. A random
   function's is its pointwise standard deviation function, and the result is
   labeled `√𝕍[(mu, tau) ~ d]`. It is defined as `sqrt(variance(d))`, so it takes
-  the routes of `variance`, and `exact_only` and `n_broadcast_samples` set on it
-  pass to `variance`.
+  the routes of `variance`, and `exact_only`, `max_evaluations`, and
+  `num_samples` set on it pass to `variance`.
 - **A derived operation's `method` error names the operation that has the
   route.** `standard_deviation.using(method="monte_carlo")` raises
   `ResolutionError` saying that `standard_deviation` does not pass `method` on
@@ -1521,17 +2240,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   law by its own route.** The new route `by_component` computes each component
   whose view has an exact summary by that view's route, and the other
   components together, from one set of draws, so the mean of a dependent
-  joint such as `likelihood * prior` holds the exact means of the prior's root
+  joint such as `likelihood & prior` holds the exact means of the prior's root
   factors. The result is approximate when any component is, and its
   provenance records the route and exactness of each block of components. Under
   `exact_only=True`, the error names the components that have an exact
   summary and the calls on their views that compute it. `cov` keeps the
   Monte Carlo fallback for a dependent joint.
-- **`notation_config.max_depth` sets how many nested levels a label or a
+- **`config.notation.max_depth` sets how many nested levels a label or a
   notation shows.** A label derived from other terms, such as
   `E[f(beta ~ model; y)]`, and the notation of a law nest one level for each
   value or law they are computed from. A rendering shows at most
-  `notation_config.max_depth` levels, 8 by default or the value of the
+  `config.notation.max_depth` levels, 8 by default or the value of the
   environment variable `PROBPIPE_NOTATION_MAX_DEPTH`, and at most 64, the
   number of levels a stored expression keeps. A part nested deeper
   shows as its label, the name of a law or a function, or as `…` for a value,
@@ -1555,7 +2274,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `EmpiricalDistribution` over numeric atoms and whose likelihood has a
   conditional log-density: the posterior keeps the prior's atoms, each weighted
   by its prior weight times the likelihood of the given values there, so
-  `condition_on(likelihood * particles, {"y": y})` is a particle filter's update.
+  `condition_on(likelihood & particles, {"y": y})` is a particle filter's update.
   The method is exact, so automatic selection tries it before the approximate
   methods and `exact_only=True` admits it. It evaluates the likelihood at every
   atom in one `jax.vmap` when the likelihood traces.
@@ -1584,6 +2303,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Each notebook opens on Google Colab from its badge, and the notebook
   job of CI gains a leg for `docs/get_started/`. A notebook links to another
   page by its file, which the docs build rewrites to the page's URL and checks.
+- **A user guide of nine chapters.** Each chapter explains one feature area on
+  small examples, and the guide's overview page lists them:
+  1. terms: the label and notation, spec, and stored data of every object,
+     immutability, batches, and provenance;
+  2. values and records;
+  3. distributions, including `distribution` from a sampler or a density;
+  4. joint models and conditional distributions;
+  5. functions on values, distributions, and batches;
+  6. conditioning and the inference methods, with a PyMC model and SMC-ABC;
+  7. MCMC diagnostics, predictive checks, leave-one-out comparison, and
+     simulation-based calibration;
+  8. empirical distributions, `convert`, resampling, and sequential updating;
+  9. routes, options, reproducible draws, and provenance.
+
+  Each chapter opens on Google Colab from its badge, and the user-guide leg
+  of the notebook job installs the `pymc` and `pyabc` extras for chapter 6.
 - **`SBCResult.coverage(levels)`** returns, for each credible level, the share
   of the replications whose `θ★` lies in the central interval of that level, one
   share per parameter. It reads the ranks alone: `θ★` lies in the interval when
@@ -1602,6 +2337,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   failed check raises `ValueError`. A simulator's kernel is
   `conditional_distribution` of a function that returns
   `distribution(..., sample=...)`, which claims conditional sampling.
+- **The registry catalog.** `probpipe.registry_catalog` lists the registries
+  and their entries, so a user can see which implementations exist and how a
+  call resolves. `print(registry_catalog)` gives one row per registry, and
+  `registry_catalog.describe(name)` lists one registry's entries, each with
+  its priority, exactness, and description. A dispatch registry's floors and
+  its opt-in-only methods are each listed in a section of their own. An entry
+  is one registered item of a registry, such as an inference method or a
+  converter.
+  - **Membership:** a registry is cataloged by implementing
+    `SupportsRegistryCataloging` and by an explicit
+    `registry_catalog.register(registry)`, which rejects an empty or duplicate
+    name. The protocol's `name`, `description`, and `kind` are read-only, and
+    its methods are `entry_summaries()` and `describe_entry()`. Constructing a registry does not catalog it, and the catalog has no
+    removal, so reloading a module that registers a registry raises.
+  - **The built-in registries:** the bijector factories, the converters, the
+    evaluation rules, the inference methods, and the operations, each under
+    its own name, and each entry with a one-line description.
+  - **Dispatch registries:** `BaseDispatchRegistry` takes keyword-only `name`
+    and `description`, which are read-only, and its `kind` is `"dispatch"`.
+    Its `entry_summaries()` reports each method's registered name, exactness,
+    floor status, effective priority, supported types, and description as an
+    `EntrySummary`, in `list_methods()` order. A method may declare a one-line
+    `description` property, which registration reads and validates with its
+    other declarations.
+  - **Floors:** a dispatch method declares `is_floor`, `False` by default, and
+    every registry ranks a floor after each method that is not one, whatever
+    their exactness and priority. Floor status is the first criterion of
+    selection order, before exactness, priority, specificity, and
+    registration order, and `set_priorities` cannot change it. The sampling
+    lift and the elementwise sweep declare it, so the evaluation rules rank
+    them as before.
+  - **Bijectors:** `register_bijector` takes a keyword-only `description`,
+    which the catalog shows, and each constraint with no smooth bijector is
+    described by the reason.
+  - **Operations:** `OperationSummary` is an `EntrySummary`, and
+    `OperationRegistry` implements `SupportsRegistryCataloging`.
+  - **Exports:** `probpipe` exports `registry_catalog` and the four classes
+    that `probpipe/core/_catalog.py` defines: `RegistryCatalog`,
+    `EntrySummary`, `RegistryInfo`, and `SupportsRegistryCataloging`.
 - **Writing rules and a prose checker.** `STYLE_GUIDE.md` §10 states the
   writing rules for docstrings, comments, the documentation, `design/`, and PR
   and issue text, and `design/README.md` § Conventions adds two rules for the
@@ -1634,7 +2408,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   slot when `given_spec` and the annotation do not. In a joint, a factor that
   produces a component of the slot's name meets it, so one kernel serves the
   model with the constant and the model with a prior on it:
-  `counts * prior` uses `n0=50.0`, and `counts * (prior * LogNormal("n0", ...))`
+  `counts & prior` uses `n0=50.0`, and `counts & (prior & LogNormal("n0", ...))`
   infers `n0`. An unmet optional slot leaves the joint unconditional.
   `InputSpec` records the optional slots, as `InputSpec.optional`,
   `InputSpec.required`, `with_optional`, and `without`.
@@ -1653,7 +2427,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     whose fields become the components, and `OutputSpec(**{c: spec})`
     otherwise.
   - `exposes_record` reports whether the components are a record's fields.
-  - `with_path_names` renames nodes by the declaration's paths, which start
+  - `rename` renames nodes by the declaration's paths, which start
     with a component, so the field `beta` of a whole record under the component
     `parameters` is `parameters/beta`, as it is when the record is exposed. A
     key that is not a path raises `KeyError`, and a whole term's component is
@@ -1717,7 +2491,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   returns when its declared kind is an `OpaqueSpec`, completing the pair with the
   `OpaqueBatch` that already existed. It adds identity and nothing else: no
   attribute forwarding, no `__call__`, no operators — the wrapped value is
-  reached through `.value`, explicitly. `OpaqueBatch`'s element contract is
+  reached through `.raw`, explicitly. `OpaqueBatch`'s element contract is
   unchanged; it still hands back the object the caller put in rather than
   wrapping it.
 
@@ -1828,7 +2602,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   The structural transforms re-derive the class from their result, as the record
   transforms do: an edit that removes the last non-numeric field promotes, one that
-  introduces a non-numeric field demotes, and a mixed `merge` therefore gives the
+  introduces a non-numeric field demotes, and a mixed `&` therefore gives the
   same answer whichever way round it is written. An edited field is typed the way
   template inference would type it, so a field of callables stays a function field,
   and `replace` accepts what field access hands back.
@@ -2041,8 +2815,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   common base (previously the private `_NamedTree`). The substrate owns the
   leaf-keyed mapping interface, nested-dict export (`to_nested_dict`) that the
   constructor reads back, and the
-  structural edits `merge` / `without` / `replace`, and gains
-  `with_path_names(old=new, ...)` — rename leaves or whole subtrees by path,
+  structural edits `&` / `without` / `replace`, and gains
+  `rename(old=new, ...)` — rename leaves or whole subtrees by path,
   or by bare name when unique in the tree. Each family declares its leaf type
   (`ValueSpec` for templates; arbitrary values for records), checked at
   construction, and **a `Mapping` is never a leaf**: a dict field value is
@@ -2108,8 +2882,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   uniform and non-uniform weights so the estimator is continuous in the
   weights.
 
-- **`ProvenanceMode` enum and `provenance_config` singleton for lineage-tracking
-  control.** Three modes are available: `FULL` retains live references to every
+- **`ProvenanceMode` enum and the `config.provenance` section for
+  lineage-tracking control.** Three modes are available: `FULL` retains live references to every
   parent distribution (good for interactive debugging); `LIGHTWEIGHT` (the new
   default) stores only `ParentInfo` descriptors — type name, distribution label,
   and the parent's own provenance chain — so parent data arrays are free to be
@@ -2118,7 +2892,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ```python
   import probpipe
   from probpipe import ProvenanceMode
-  probpipe.provenance_config.mode = ProvenanceMode.FULL  # for debugging
+  probpipe.config.provenance.mode = ProvenanceMode.FULL  # for debugging
   ```
 
 - **`ParentInfo` descriptor** (new public export).  A frozen dataclass carrying
@@ -2139,7 +2913,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   future cross-run `cache_key_fn` can fail closed on weak inputs.
 
 - **`Provenance.create()` factory classmethod.**  Centralises mode-checking:
-  reads `provenance_config.mode`, wraps each parent in a `ParentInfo`, and
+  reads `config.provenance.mode`, wraps each parent in a `ParentInfo`, and
   returns `None` in OFF mode.  All ~15 provenance assembly sites in the
   codebase now route through this single entry point, so mode behavior is
   uniform everywhere.
@@ -2427,7 +3201,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`Record.to_numeric()` / `NumericRecord.to_native()`** — explicit
   conversion to / from ProbPipe's native JAX-array form, with metadata
   round-trip via the aux registry. Backend metadata survives the structural
-  edits (`without` / `merge` / `replace` / `with_path_names`) for leaves they
+  edits (`without` / `&` / `replace` / `rename`) for leaves they
   leave unchanged, at any nesting depth, and a pickle round-trip (an
   aux-carrying record pickles through its native form, so `to_native` stays
   faithful across `pickle` / Ray transport); a value transform (`map`) or a
@@ -2470,8 +3244,193 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   outer-to-inner order, so bootstrap replicates of trajectories support
   moments and `include_inputs=True` lifts.
 
+- **A `Function` states whether JAX can trace it.** `@function(traceable=True)`
+  and `Function(..., traceable=True)` state that JAX can trace the callable,
+  so a lifted call maps it with JAX without testing it first;
+  `traceable=False` states that it cannot, so it is never traced and a lifted
+  call evaluates it one point at a time; the default `None` states nothing.
+  `vectorized=True` states that the callable takes a stack of evaluation
+  points in one call. The claims are fixed for the `Function`'s life, and
+  every `using` copy keeps them.
+
+  ```python
+  @function(traceable=False)        # a solver called through subprocess
+  def forward(theta): ...
+  ```
+
+- **Executors run the evaluations a call asks for.** `executor_registry` holds
+  `jax`, which maps a callable JAX can trace over every evaluation at once,
+  `sequential`, `thread`, and `process`, which runs chunks of evaluations in
+  worker processes started under the calling process's JAX settings and
+  settings in `config`. A draw made inside an evaluation takes the same random
+  key under every executor, so changing the executor changes no result. The
+  evaluations of one callable form one `EvaluationPoints`, which an executor
+  runs by its `EvaluationChunk`s; a user's executor subclasses
+  `EvaluationExecutor` and returns `EvaluationOutcomes`
+  (`docs/api/extending.md`).
+
+  ```python
+  from probpipe import executor_registry
+  executor_registry.list_methods()   # ['jax', 'sequential', 'thread', 'process']
+  ```
+
+- **The controls `executor` and `executor_options`.** `f.using(executor="thread",
+  executor_options={"max_workers": 8})` names the executor that runs the
+  evaluations of `f`'s calls, and the options that executor takes. The two are
+  set as one unit, and `using(executor=None)` removes the choice. A call
+  checks them when it opens: an executor that is not registered raises
+  `ResolutionError`, and an option the executor does not take raises
+  `ValueError`.
+
+- **`EvaluationError` names every failed evaluation.** A set of evaluations
+  runs every evaluation, keeps the outputs that succeeded, and then raises
+  `EvaluationError`, a `RuntimeError` chained to the first failure's
+  exception, whose `failures` give each failed evaluation's position, kind,
+  and error. An output that does not match the callable's output spec fails
+  its evaluation alone.
+
+- **`probpipe.testing.check_executor`** checks an executor against the
+  executor contract before it is registered: it runs fixed sets of
+  evaluations, including failing ones and draws nested in evaluations, under
+  64-bit floats, and compares each outcome with `sequential`'s.
+
+- **`UnshippableSettingError`.** Work sent to a worker process carries the
+  call's `config` settings, except the `prefect` section; a setting whose
+  value cannot be pickled travels as a placeholder, and reading it in the
+  worker raises `UnshippableSettingError`.
+
+- **`cloudpickle` is a direct dependency**, which the `process` executor uses
+  to send closures and functions defined in a notebook to worker processes.
+
+- **The interface of an inference target is public.** `probpipe.inference`
+  exports `InferenceTarget`, the protocol every inference method receives:
+  a law over the model's unobserved quantities, with the model as `joint`, the
+  observed values as `given`, and the model's prior and likelihood as
+  `factors()`, which returns a `ModelFactors`. `make_posterior` builds a
+  method's result from chains of the `to_vector` coordinates of draws.
+  [A new inference method](docs/api/extending.md) shows a method written
+  against them.
+
+- **An `OutputSpec` is indexed by path, and merges with `&`.** `O["g/b"]` is
+  the output spec of the value at a path, a single value named by the path's
+  last name, as `OutputSpec(b=...)`, and a record having its top-level names
+  as outputs; `O[["a", "g/b"]]` is the record of the values at a list of
+  paths, each at its own path. `"g/b" in O` tests paths. `O.without("g/c")`
+  removes values by path. `O & P` merges two output specs into one record of
+  the outputs of both, `O`'s first, where the output `y` of the keyword form
+  becomes the field `y`; it refuses an output in both, and an output spec over
+  distributions, whose draws have no outputs. An output spec is not iterable;
+  `list(O.outputs)` lists its outputs. So a conditional distribution's inputs
+  can be declared from another distribution's outputs:
+
+  ```python
+  x = Normal("a", 0.0, 1.0) & Normal("sigma", 1.0, 1.0)
+  x.event_spec["a"]                            # OutputSpec(a=NumericArraySpec(()))
+  x.event_spec.without("sigma") & ke.event_spec   # ke: a kernel ke(e | sigma)
+  # OutputSpec(RecordSpec(a=..., e=...))
+  ```
+
+- **`evaluate_at_points` asks for the evaluations of a callable at many
+  arguments.** Code such as a route of an operation, an inference method, or
+  a function's body passes the arguments that vary, stacked on a leading
+  axis, and those every evaluation shares, and receives each evaluation's
+  output, or under `stacked=True` the outputs stacked on a leading axis, from
+  the executor the call chooses.
+
+  ```python
+  from probpipe import evaluate_at_points
+  simulations = evaluate_at_points(simulate, varying={"theta": thetas}, shared={"data": y},
+                                   origin="simulate", output_spec=simulate.output_spec)
+  ```
+
+- Opaque Functions with concrete numeric output shapes and explicit dtypes
+  can run inside JAX programs, kernels, and joints through host callbacks.
+  Stored programs carry the live call context through a dynamic token, and
+  embedded evaluations use the executor machinery and host-side output checks.
+
+- **Density values accept raw mappings in any insertion order.**
+  `log_prob(d, {"b": 2.0, "a": 1.0})` is arranged in `d`'s event order
+  before inferring its spec, as are the other density operations and nested
+  record values. Constructed records still have to conform in order.
+
+- **`check` reports how a call will run its evaluation points.**
+  `CallReport.execution` is an `ExecutionReport` holding one
+  `EvaluationReport` per callable a lifted call or a sweep evaluates: the
+  number of evaluation points, whether the callable traces and whether its
+  claim or its probe says so, the executor that will run them, and the
+  executors it rejected with their reasons. The report's repr shows it only
+  when a callable is opaque or runs on an executor other than `jax`.
+
+  ```python
+  forward.using(executor="thread").check(prior).execution.evaluations[0].executor
+  # MethodInfo(True, method_name='thread', exact=True)
+  ```
+
+- **A call that names an executor which runs nothing warns.** For example,
+  `growth.using(executor="thread")(prior)` over a function JAX can trace warns
+  `growth named executor='thread', but every callable in the call is traceable
+  and was compiled by jax, so 'thread' ran nothing`.
+
+- **A failed `jax.vmap` states its error once.** When one exception fails
+  every evaluation point that `jax` maps together, `EvaluationError` reads
+  `evaluation of 'growth' failed at all 8 draws, which jax.vmap evaluates
+  together: ValueError: r must be positive`, and `error.failures` still lists
+  each evaluation point.
+
+- **An AI assistant designs a ProbPipe pipeline with you.** The design
+  assistant interviews a scientist about their question, data, and existing
+  models, then proposes, validates on realistic simulated data, and fits a
+  pipeline, recording each decision in a design document. Any agent that can
+  run shell commands follows it through the prompt in
+  `docs/get_started/design_assistant.md`. In Claude Code it is the skill
+  `/design-pipeline`. Its instructions are in `.claude/skills/design-pipeline/`.
+
+- **`blackjax_nuts` takes `target_accept_prob` and `max_tree_depth`.** It
+  passes the target acceptance rate of the step-size adaptation to BlackJAX's
+  window adaptation as `target_acceptance_rate`, and the maximum depth of the
+  NUTS tree to its NUTS kernel as `max_num_doublings`. An unset option keeps
+  BlackJAX's default of 0.8 and 10, which `blackjax_nuts` used before. A target outside the open interval from 0 to 1 and a depth below 1
+  raise `ValueError`, and a value of another type raises `TypeError`:
+
+  ```python
+  posterior = condition_on.using(
+      method="blackjax_nuts",
+      method_options={"target_accept_prob": 0.95, "max_tree_depth": 12},
+  )(model, observed)
+  ```
+
+- **`init` gives each chain its own starting point.** For `blackjax_nuts`,
+  `blackjax_hmc`, and `tfp_nuts`, an array with a leading axis of length
+  `num_chains` gives each chain its row, and `init="per_chain"` starts each
+  chain from its own draw of the default initial state, which is a draw of the
+  prior when the prior can be sampled. `blackjax_nuts` and `tfp_nuts` start
+  each chain from its own draw by default, and `blackjax_hmc` keeps one shared
+  start unless `init` says otherwise:
+
+  ```python
+  posterior = condition_on.using(
+      method="blackjax_hmc", method_options={"init": "per_chain"}
+  )(model, observed)
+  ```
+
 ### Changed
 
+- **The documentation installs ProbPipe from `main`.** The install commands,
+  the Colab cells of the tutorials and user guide, their data URLs, and the
+  design assistant's prompt name the `main` branch.
+
+- **Faster minibatches without replacement.** Sampling retains distinct indices
+  from batches of random candidates. Additional candidates supplement an incomplete batch.
+  Batches larger than half the dataset sample the excluded indices and shuffle
+  their complement. Smaller batches use space proportional to the batch size.
+  Uniform subsets and random ordering are preserved. The same seed can produce
+  different indices and training trajectories than earlier implementations.
+  Repeating a draw with the same key and arguments remains reproducible.
+
+- **A converter's `check` states only its promise.** It leaves `method_name`
+  and `exact` unset on the `ConversionInfo` it returns, and the converter
+  registry sets both from the registration. A converter that passes both still
+  works, since the registry replaces them.
 - **A parametric family and a joint's conditional factors reuse their
   compiled code across calls.** A family samples, scores, and takes quantiles
   through compiled programs that a later call with the same parameter shapes
@@ -2549,11 +3508,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   applied at given slots keeps the kernel's label. Conditioning a joint on the
   whole events of the factors upstream of the rest returns the other factors,
   whose labels joined with `·` label the result, so
-  `condition_on(likelihood * prior, {"mu": 0.5})` is labeled `likelihood`. Any
+  `condition_on(likelihood & prior, {"mu": 0.5})` is labeled `likelihood`. Any
   other conditioning applies Bayes' rule, and the posterior is labeled by the
   expression of the law's label and the conditioned paths, as `model | y`. A
   marginal that is the product of some of a joint's factors takes their labels,
-  so `marginal(location * scale, "tau")` is labeled `scale`, and any other
+  so `marginal(location & scale, "tau")` is labeled `scale`, and any other
   marginal keeps the law's label. Both took the law's label before.
 - **Each operand of an operator reads as one unit in the result's label.** A
   label with a space that is not an expression, such as a user's
@@ -2561,7 +3520,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `effect + [other effect]`, since parentheses mark an expression. An
   operand that opens with a unary operator is parenthesized, so `(-x) ** 2` is
   labeled `(-x) ** 2`, since `-x ** 2` reads as `-(x ** 2)`. A joint groups each
-  factor's label the same way, so `likelihood * posterior` for a posterior
+  factor's label the same way, so `likelihood & posterior` for a posterior
   labeled `model | y` is labeled `likelihood·(model | y)`. A batch view of a
   batch whose label is an expression parenthesizes it, as in
   `(model | y)[dataset=0]`.
@@ -2890,8 +3849,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   leaf-trafficking surface: `EventTemplate` binds `NamedTree[ValueSpec]` (so
   `template["x"]` type-checks as a `ValueSpec`) while `Record` binds
   `NamedTree[Any]`. The leaf accessors (`[]`, `values`, `items`, `map`) carry
-  `L`, and the structure-preserving transforms (`without` / `merge` /
-  `replace` / `with_path_names` / `map`) return `Self`.
+  `L`, and the structure-preserving transforms (`without` / `&` /
+  `replace` / `rename` / `map`) return `Self`.
   Annotations only — no runtime behavior change.
 
 - **`NumericRecord` stores native-form leaves; conversion is lazy at the
@@ -2950,8 +3909,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   keyword and unlabeled forms are removed. `Record(...)` whose fields are all
   numeric (bare arrays and scalars, no backend metadata) returns a
   `NumericRecord`; passing an explicit non-numeric `event_template=` pins a
-  plain `Record`. Structural transforms (`without` / `merge` / `replace` /
-  `with_path_names`) re-derive the numeric axis the same way, and a nested
+  plain `Record`. Structural transforms (`without` / `&` / `replace` /
+  `rename`) re-derive the numeric axis the same way, and a nested
   record stored as a field is renamed to its field key. An operation that
   assembles a record supplies a meaningful, deterministic label derived from
   its inputs (the producing distribution's or model's label, or a domain term
@@ -3076,7 +4035,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ancestor.obj                                 # None — parent may be GC'd
 
   # To restore live-object access, opt in to FULL mode
-  probpipe.provenance_config.mode = ProvenanceMode.FULL
+  probpipe.config.provenance.mode = ProvenanceMode.FULL
   ancestor = provenance_ancestors(result)[0]
   ancestor.obj                                 # live Distribution
   ancestor.obj.sample(key, (10,))              # works
@@ -3399,9 +4358,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   A nested numeric sweep checks once whether its function traces with JAX and
   shares that check across its cells. Each cell keeps its own check when its
   swept values must stay fixed or when the sweep is over stored objects.
+- **`apply` and `check` inside a call use their own `num_samples`.** The
+  routes that `f.apply(...)` runs, or that `f.check(...)` probes, inside
+  another call read the `num_samples` that `f`'s own controls, a
+  `config.using` block, or the session give, as `f(...)` does, so a converter
+  that draws takes that count. They read the enclosing call's count before.
+
+- **A `Function` that states nothing is traced once per input structure.**
+  A lifted call of a `Function` without a `traceable` claim traces its body
+  once for each structure of its inputs (their shapes, dtypes, and other
+  values) and stores the outcome, which later calls, `check`, and every
+  `using` copy read. A Python `float` argument is data, so a sweep over
+  `n0=10.0, 11.0, ...` traces once; an `int` used as a loop count is traced
+  again as a constant. `f.check(prior)` now runs that trace too, so it may run
+  the function's Python once, up to its first operation that needs a concrete
+  value. A body that branches in Python on an argument that is not lifted, or
+  on a swept value, now runs one point at a time, where before it was traced
+  again with that value fixed; the results are the same up to rounding.
+- **A false `traceable=True` claim raises an error naming the claim.** A
+  `Function` that claims `traceable=True` and fails while JAX traces it raises
+  `TypeError: 'forward' claims traceable=True, but tracing it failed: it
+  converts a traced value to NumPy (TracerArrayConversionError). Remove the
+  claim, or claim traceable=False`, chained to JAX's error, whether it is
+  traced by a lifted call or inside a kernel or a user's `jax.jit`.
+  `dispatch="jax"` on a `Function` that claims `traceable=False` raises
+  `ValueError`.
+- **Inference methods read the target's traceability instead of tracing it.**
+  A law or a kernel derives whether JAX can trace it from its parts and keeps
+  the answer: a family is traceable, a joint is traceable when each factor is,
+  and a law built from functions is traceable when its density traced, or its
+  sampler for a law without one. So `condition_on.check` and method selection
+  trace nothing for a model of families, NUTS, HMC, and elliptical slice
+  sampling refuse a target with a part JAX cannot trace, and random-walk
+  Metropolis runs such a target in a Python loop. The law that a kernel builds anew at each given value traces
+  its functions once, not at every application, unless its functions read
+  the values they capture, as `jnp.zeros(int(n))` does.
+
+- **A plain operation coordinates its route in the calling thread.**
+  An executor named on the operation runs the evaluation points requested by
+  that route, including embedded opaque calls. The coordinator does not occupy
+  a worker needed by its callbacks; ordinary Function bodies retain their
+  selected-executor behavior.
 
 ### Removed (breaking)
 
+- **`NumericArray.value`, `Opaque.value`, and `NumericArrayBatch.values` are
+  removed.** Each returned what `raw` returns, so replace `x.value` and
+  `batch.values` with `x.raw` and `batch.raw`.
 - **`evaluate` is removed.** `pushforward(d, f)` computes the law of `f(X)`
   for `X ~ d`, and the direct call `f(v)` replaces every other use:
   `f(v)` for a value, `function(f)(batch)` for a batch, and `f(d)` for a map
@@ -3443,7 +4446,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **A derived operation passes `exact_only` and `n_broadcast_samples` to the
+- **Default workflow streams continue across notebook cells.** IPython cells
+  with top-level `await` and kernels that change tasks between cells keep the
+  configured stream. User-created tasks retain their own ownership checks.
+
+- **An installed PyMC older than 6.2 raises an `ImportError` that names the
+  upgrade,** as `PyMC 5.28.5 is installed, but PyMCModel requires PyMC 6.2 or
+  later`, where PyMC 5 failed on import with an error about ArviZ. A missing
+  PyMC names the API and the release it requires, and the command that
+  installs it. Google Colab preinstalls PyMC 5, so every notebook's Colab
+  install cell, and the smallest Colab command of the installation page,
+  installs the `pymc` extra, and pip no longer reports a dependency conflict.
+- **A derived operation passes `exact_only` and its counts to the
   functions its identity calls.** `prob.using(exact_only=True)(Normal("x",
   0.0, 2.0), 0.0)` used to raise `ResolutionError` and now returns the exact
   density, because the `log_prob` that `prob` calls selects only exact routes.
@@ -3453,11 +4467,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   when a call inside it has only an approximate route, and when it is declared
   without an `identity_check`, which the message names. The conversion of an
   argument inside the identity follows its parameter's `conversions` control,
-  as in a direct call. A derived operation's `n_broadcast_samples` used to be
-  dropped at its identity's calls, which drew their own default, and now sets
-  their draws when the derived call sets it, unless the identity sets its own
-  on the call. The other controls stay each call's own. A composite identity,
-  such as `expectation`'s, runs each of its steps under the same two controls.
+  as in a direct call. A derived operation's `max_evaluations` and
+  `num_samples` used to be dropped at its identity's calls, which drew their
+  own default, and now set their evaluations and draws when the derived call
+  sets them, unless the identity sets its own on the call. The other controls
+  stay each call's own. A composite identity, such as `expectation`'s, runs each
+  of its steps under the same controls.
   A call under `exact_only` on an operation without an exact route says so,
   where it said that no route is registered.
 - **A SciPy distribution with a location or scale its family does not hold
@@ -3577,13 +4592,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `positive_definite`, requires every entry of the event to be real. The
   result keeps its shape, and the check still traces under `jax.jit`.
 - **Renaming an empirical law's paths returns an empirical law.**
-  `with_path_names` on an `EmpiricalDistribution` over records, such as an MCMC
+  `rename` on an `EmpiricalDistribution` over records, such as an MCMC
   posterior, returned a law without `atoms`, `num_atoms`, or `weights`, and its
   repr showed the posterior's atoms under the old names. It now returns an
   `EmpiricalDistribution` with the same label and weights whose atoms carry the
   new paths. A law that renames at its boundary, such as a renamed
-  `KDEDistribution`, reads as `KDEDistribution(...).with_path_names({...})`. A
-  lift draws every law that `with_path_names` returns together with the law it
+  `KDEDistribution`, reads as `KDEDistribution(...).rename({...})`. A
+  lift draws every law that `rename` returns together with the law it
   renames. A factored joint rebuilt under the new paths and a rename of a whole
   term's component used to lift independently of the law they rename, and now
   draw with it too.
@@ -3635,7 +4650,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   body received a tracked argument whatever its parameter's annotation, so
   `def g(c: pd.Series)` raised `AttributeError` on a record field that holds a
   `Series`. A parameter annotated with a class such as `pd.Series`,
-  `xr.DataArray`, or `jax.Array` now receives the argument's `raw()` when that is
+  `xr.DataArray`, or `jax.Array` now receives the argument's `raw` when that is
   an instance of the class, in a call, in `apply`, and for each element of a
   sweep and each draw of a broadcast.
 - **A level name is any non-empty string without `/`.** A batch required a
@@ -3694,7 +4709,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   produced ones where the declaration leaves them unset, a declared symbolic
   dimension binds to the produced size, and a record unifies field by field.
 - **An exact lift over an empirical law runs in one `vmap`.** A function lifted
-  over an empirical law with at most `n_broadcast_samples` atoms is evaluated at
+  over an empirical law with at most `max_evaluations` atoms is evaluated at
   every combination of atoms, and these evaluations ran in a Python loop even
   when the call traces, so a body that runs `jax.lax.scan` was traced again for
   each atom. A 22-step population trajectory over a 2,000-atom posterior took
@@ -4110,6 +5125,115 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   setuptools since 70.1). Build-time changes only; runtime dependencies
   are unchanged.
 
+- **A joint's compiled mapping of a kernel reads the settings of the call that
+  runs it.** The JAX program that maps a kernel over the draws of its inputs is
+  compiled for each value of the static settings, the call's `num_samples` and
+  `max_evaluations` and the values of `config.sampling`, so a kernel that reads
+  one while it is traced computes with the current call's value instead of the
+  first call's. What the kernel notes while it is traced, such as the draws of
+  a Monte Carlo estimate, is reported by every call, cold or warm. The same code
+  before and after:
+
+  ```python
+  @conditional_distribution(given_spec={"mu": NumericArraySpec(())})
+  def shifted(mu):
+      return Normal("y", mu + config.sampling.num_samples, 1e-3)
+
+  model = shifted * Normal("mu", 0.0, 1e-3)
+  with config.sampling.using(num_samples=500):
+      sample(model, 3)  # y near 500, before and after
+  with config.sampling.using(num_samples=2000):
+      sample(model, 3)  # before: y near 500, after: y near 2000
+  ```
+
+  Each `config` setting is now documented as static or inert: a static
+  setting is part of a compiled JAX program's cache key, and an inert one,
+  which changes no computed value, is not.
+
+- **A record keeps its declared field order through a sweep or a lift.** A
+  function that declares a record input received the record's fields in
+  alphabetical order under a `jax` sweep or a lift, and refused it, because
+  JAX maps a dict with its keys sorted. A lifted function that returns a
+  dict, and a law that `distribution(sample=...)` builds from a sampler that
+  returns a dict, had their fields sorted in the same way. Each now keeps the
+  declared order, or the order the function wrote:
+
+  ```python
+  spec = NumericRecordSpec(r=NumericArraySpec(()), m=NumericArraySpec(()))
+
+  @function(input_spec=InputSpec(x=spec))
+  def difference(x):
+      return x["r"] - x["m"]
+
+  batch = NumericRecordBatch({"r": jnp.arange(3.0), "m": jnp.ones(3)}, level_names=("draw",))
+  difference(batch)  # before: EvaluationError, after: [-1. 0. 1.]
+  ```
+- **A call that draws nothing leaves later draws unchanged under the
+  `process` executor.** A sweep or a plain call whose evaluation points ran in
+  worker processes took a place in the workflow even when no point drew, so
+  the seeded draws after it differed from those under `sequential` or
+  `thread`. It now takes its place only when a point draws, as a call run in
+  place does. A report rejected by replay or effect validation commits no
+  occurrence and leaves the later draws unchanged:
+
+  ```python
+  with workflow_run(seed=1):
+      scaled.using(executor="process")(x=grid, scale=2.0)   # draws nothing
+      sample(Normal("z", 0.0, 1.0))
+  # before: a different draw than with executor="sequential"
+  # after:  the same draw under every executor
+  ```
+- **A plain call that names the `thread` or `process` executor runs inside
+  `jax.grad` and `jax.vmap`.** Inside a JAX transformation the call runs its
+  body in the calling thread, as a call that names `jax` does, and warns that
+  the named executor ran nothing because the call ran inside a JAX
+  transformation. Before, it sent the traced arguments to the named executor,
+  so `thread` raised JAX's `UnexpectedTracerError`, and `process` raised
+  `ResolutionError` because the arguments cannot be pickled. Outside a
+  transformation the named executor runs the body.
+  A custom executor's automatic-selection priority cannot override this
+  calling-thread execution.
+- **`&` between a record or a record spec and a value of another family
+  raises `TypeError`.** `Record({"a": 1.0}) & {"z": 1}`, `Record & RecordSpec`,
+  and `RecordSpec & OutputSpec` raised `AttributeError` from inside the merge.
+  They now return `NotImplemented`, so Python raises its `TypeError` for an
+  unsupported operand.
+- **Messages for misused executor options, empty or list-valued evaluation
+  points, and a position on a term without positions say what went wrong.**
+  - An executor that does not read several of `executor_options` names every
+    one, not only the first.
+  - Options given without `executor` go to the executor automatic selection
+    picks, and when it does not read them the message says it was chosen
+    automatically and asks for the executor the options are for.
+  - Evaluation points built from varying arguments with 0 rows say so, where
+    the message said the argument had no leading axis. A Python list of
+    scalars as a varying argument asks for an array, as `jnp.asarray(x)`.
+    Vectorized outputs also distinguish a scalar with no leading axis from
+    an array with 0 rows.
+  - `record[["a", 0]]` on a record, a law, or a spec says that only a batch
+    takes positions, where it suggested indexing a batch.
+  - `EvaluationError` counts one evaluation point in the singular.
+  - A `given` with unknown inputs and one with missing required inputs each
+    get their own message.
+  - The warning for a low `max_evaluations`, and 42 messages the recent work
+    added, join their clauses as sentences instead of with semicolons.
+- **Building a law from functions no longer hashes the arrays its functions
+  capture.** The check that the functions trace hashed every captured array on
+  the host, which only the fallback for a function that reads a captured value
+  needs. A law whose density captures a 1,000,000-element array now builds in
+  about 0.35 ms instead of about 10 ms.
+
+- **`blackjax_nuts` refuses `num_integration_steps`.** The option sets the mean
+  trajectory length of `blackjax_hmc`, and `blackjax_nuts` accepted and ignored
+  it, so a call that passes it to `blackjax_nuts` now raises the `TypeError` of
+  an unknown method option.
+
+- **`summary_table()` reports divergences and a missing R-hat as not passed.**
+  A run with a divergent transition, or with an R-hat that is NaN or not
+  computed, as for chains that never move, ends the table with a line such as
+  `✗  Not passed: 400 divergent transitions and R-hat not computed for theta.`
+  instead of `✓  All available diagnostics passed.`
+
 ### Removed
 
 - **sbijax dropped (breaking).** The `sbijax`-backed simulation-based
@@ -4148,6 +5272,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   tutorial's SBI sections are flagged out of date until a replacement
   backend ships — its `condition_on` dispatch and NUTS material remain
   accurate.
+
+- **The private helper `is_jax_traceable` is removed** from
+  `probpipe.inference._inference_utils`. `f.check(x)` reports whether a lifted
+  call traces, and a law's or kernel's traceability decides how inference
+  runs it.
 
 ### Migration
 
@@ -4190,6 +5319,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
       Normal, loc=jnp.zeros(5), scale=1.0, name="x",
   )
   ```
+
+- **Repeated nutpie fits reuse compiled models.** Stan programs without includes
+  reuse an unbound compilation across datasets, keyed by the source contents,
+  file path, and compile arguments. Each fit binds its own data. PyMC fits
+  reuse compilation for the same builder at unchanged bound and observed
+  values; changed data compile a fresh model. The process-local cache holds
+  at most 16 compilations. Posterior provenance records `compile_seconds`,
+  `sampling_seconds`, and the `backend_seed` sent to nutpie.
 
 ## [0.1.0] - 2025-03-21
 

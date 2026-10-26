@@ -16,11 +16,11 @@ construct a :class:`~probpipe.MinibatchedDistribution` to produce
 unbiased stochastic gradient estimates and feed it to the BlackJAX
 kernel via the ``grad_estimator(position, measure_key)`` closure
 convention — the per-step ``measure_key`` is passed through BlackJAX's
-opaque ``minibatch`` slot.
+opaque ``minibatch`` argument.
 
 Both methods require ``batch_size=`` to be passed, so SGMCMC applies only
 when the user has opted into minibatching, as in
-``condition_on(likelihood * prior, y=y, method="blackjax_sgld", batch_size=…)``.
+``condition_on(likelihood & prior, y=y, method="blackjax_sgld", batch_size=…)``.
 ``blackjax_sgld`` is registered at priority 45 and ``blackjax_sghmc`` is
 opt-in-only; the method classes state why.
 """
@@ -37,17 +37,19 @@ import jax.numpy as jnp
 from ..core._dispatch import Feasibility
 from ..custom_types import Array, PRNGKey
 from ..distributions._capabilities import SupportsLogProb
+from ..distributions._distribution import Distribution
 from ..distributions._empirical import EmpiricalDistribution
 from ..families._random_functions import RandomMeasure
-from ..operations._condition import InferenceMethod, _UnnormalizedConditional
+from ..operations._condition import InferenceMethod
+from ..operations._inference_target import (
+    InferenceTarget,
+    _described,
+    _flat_unflatten,
+)
 from ._approximate_distribution import make_posterior
 from ._inference_utils import (
-    as_prng_key,
-    described,
-    flat_unflatten,
     get_init_state,
     model_factors,
-    run_seed,
     unfactored_model_reason,
 )
 from ._minibatch import MinibatchedDistribution, _reads_observations, _subset_scoring_reason
@@ -65,7 +67,7 @@ def _build_grad_estimator(measure: RandomMeasure, unflatten: Callable[[Array], A
 
     BlackJAX's SGMCMC kernels take a callable
     ``grad_estimator(position, *opaque)`` and pass whatever the user
-    provides in the ``minibatch`` slot opaquely. We exploit that by
+    provides in the ``minibatch`` argument opaquely. We exploit that by
     passing a fresh PRNG key per step; the random measure samples its
     own minibatch internally via
     :meth:`~probpipe.MinibatchedDistribution._random_unnormalized_log_prob`.
@@ -105,22 +107,27 @@ _SGMCMC_OPTIONS = (
 class _BlackJAXSGMCMCMethod(InferenceMethod):
     """Base for the two BlackJAX SGMCMC methods.
 
-    Subclasses define ``_method_name``, ``_method_priority``, and
-    override :meth:`_build_algorithm` to plug in the specific BlackJAX
+    Subclasses define ``_method_name``, ``_method_priority``,
+    ``_method_description``, and override :meth:`_build_algorithm` to plug in the specific BlackJAX
     kernel constructor (``blackjax.sgld`` or ``blackjax.sghmc``) with
     method-specific kwargs.
     """
 
     _method_name: str = ""
     _method_priority: int | None = None
+    _method_description: str = ""
     _method_options = _SGMCMC_OPTIONS
 
     @property
     def name(self) -> str:
         return self._method_name
 
+    @property
+    def description(self) -> str:
+        return self._method_description
+
     def supported_types(self) -> tuple[type, ...]:
-        return (_UnnormalizedConditional,)
+        return (Distribution,)
 
     @property
     def priority(self) -> int | None:
@@ -138,7 +145,7 @@ class _BlackJAXSGMCMCMethod(InferenceMethod):
                 feasible=False,
                 description=(
                     f"the prior must have a log-density (SupportsLogProb); got "
-                    f"{described(factors.prior)}"
+                    f"{_described(factors.prior)}"
                 ),
             )
         if not _reads_observations(factors.likelihood):
@@ -156,16 +163,17 @@ class _BlackJAXSGMCMCMethod(InferenceMethod):
 
     # -- execution -----------------------------------------------------------
 
-    def execute(self, target: Any, /, **kwargs: Any) -> EmpiricalDistribution:
+    def execute(
+        self, target: InferenceTarget, /, *, key: PRNGKey, **options: Any
+    ) -> EmpiricalDistribution:
         """Run the SGMCMC kernel; return an :class:`~probpipe.EmpiricalDistribution`."""
-        self._check_options(kwargs)
+        self._check_options(options)
         factors = model_factors(target)
-        batch_size: int = kwargs["batch_size"]
-        num_results: int = kwargs.get("num_results", 1000)
-        num_warmup: int = kwargs.get("num_warmup", 0)
-        step_size: float = kwargs.get("step_size", 1e-3)
-        random_seed: PRNGKey = run_seed(self.name)
-        with_replacement: bool = kwargs.get("with_replacement", False)
+        batch_size: int = options["batch_size"]
+        num_results: int = options.get("num_results", 1000)
+        num_warmup: int = options.get("num_warmup", 0)
+        step_size: float = options.get("step_size", 1e-3)
+        with_replacement: bool = options.get("with_replacement", False)
 
         # The minibatched random measure supplies the stochastic gradients from
         # the prior and likelihood factors ``check()`` validated.
@@ -179,16 +187,16 @@ class _BlackJAXSGMCMCMethod(InferenceMethod):
         )
 
         # The chain moves in the prior's flat coordinates.
-        grad_estimator = _build_grad_estimator(measure, flat_unflatten(factors.prior))
-        algorithm = self._build_algorithm(grad_estimator, **kwargs)
-        init = get_init_state(factors.prior, kwargs.get("init"), random_seed=random_seed)
+        grad_estimator = _build_grad_estimator(measure, _flat_unflatten(factors.prior))
+        algorithm = self._build_algorithm(grad_estimator, **options)
+        init = get_init_state(factors.prior, options.get("init"), random_seed=key)
         state = algorithm.init(init)
 
         # Iterate. The kernel itself jits within run_loop's step closure.
         positions = _run_sgmcmc_loop(
             algorithm,
             state,
-            as_prng_key(random_seed),
+            key,
             step_size,
             num_warmup,
             num_results,
@@ -196,11 +204,10 @@ class _BlackJAXSGMCMCMethod(InferenceMethod):
 
         chain = jnp.stack(positions, axis=0)
         return make_posterior(
+            target,
             [chain],
-            parents=(target,),
             method=self._method_name,
             annotations=None,
-            event_spec=target.event_spec,
             num_results=num_results,
             num_warmup=num_warmup,
             num_chains=1,
@@ -267,6 +274,7 @@ class BlackJAXSGLDMethod(_BlackJAXSGMCMCMethod):
 
     _method_name = "blackjax_sgld"
     _method_priority = 45
+    _method_description = "Stochastic gradient Langevin dynamics through BlackJAX, on minibatches."
 
     def _build_algorithm(self, grad_estimator, **kwargs: Any):
         return blackjax.sgld(grad_estimator)
@@ -292,6 +300,7 @@ class BlackJAXSGHMCMethod(_BlackJAXSGMCMCMethod):
 
     _method_name = "blackjax_sghmc"
     _method_priority = None
+    _method_description = "Stochastic gradient HMC through BlackJAX, on minibatches."
     _method_options = (*_SGMCMC_OPTIONS, "alpha", "beta", "num_integration_steps")
 
     def _build_algorithm(self, grad_estimator, **kwargs: Any):

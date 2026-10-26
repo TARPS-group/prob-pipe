@@ -38,15 +38,14 @@ def pytest_collection_modifyitems(config, items):
 
 
 @pytest.fixture(autouse=True)
-def _reset_provenance_config():
-    """Always restore provenance_config and notation_config to defaults after each test.
+def _reset_settings():
+    """Always restore every section of ``probpipe.config`` to its defaults after each test.
 
     Under pytest-xdist, a test that sets a setting and raises before its own
     cleanup would otherwise leak it into subsequent tests on that worker.
     """
     yield
-    probpipe.provenance_config.reset()
-    probpipe.notation_config.reset()
+    probpipe.config.reset()
 
 
 @pytest.fixture(autouse=True, scope="module")
@@ -66,7 +65,7 @@ def _clear_jax_caches():
 @pytest.fixture
 def full_provenance_mode():
     """Switch to FULL provenance mode for the duration of a test."""
-    probpipe.provenance_config.mode = ProvenanceMode.FULL
+    probpipe.config.provenance.mode = ProvenanceMode.FULL
     yield
 
 
@@ -88,7 +87,7 @@ def simple_samples():
 
 @pytest.fixture
 def empirical(simple_samples, key):
-    return EmpiricalDistribution(simple_samples, component="empirical")
+    return EmpiricalDistribution(simple_samples, output_name="empirical")
 
 
 @pytest.fixture
@@ -144,3 +143,20 @@ def _stan_toolchain(tmp_path_factory):
         bridgestan.StanModel(str(probe), make_args=list(_BRIDGESTAN_MAKE_ARGS))
     except Exception as exc:
         pytest.skip(f"Stan compilation unavailable: {exc}")
+
+
+@pytest.fixture
+def probe_attempts(monkeypatch):
+    """Whether each attempt of a JAX traceability probe traced, recorded as the probe runs it."""
+    from probpipe.core import _execution_claims
+
+    attempts: list[bool] = []
+    trace_once = _execution_claims._trace_once
+
+    def recording_trace_once(traced_function, probe_arguments, label):
+        attempt = trace_once(traced_function, probe_arguments, label)
+        attempts.append(attempt.traces)
+        return attempt
+
+    monkeypatch.setattr(_execution_claims, "_trace_once", recording_trace_once)
+    return attempts

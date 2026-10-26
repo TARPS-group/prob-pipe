@@ -85,10 +85,10 @@ def standard():
 
 class TestTheLinearPushforward:
     @pytest.mark.pending(reason="the pushforward's event is the operator's output type")
-    def test_the_event_is_the_operator_output_under_its_own_component(self, base, op):
+    def test_the_event_is_the_operator_output_under_its_own_name(self, base, op):
         pushed = LinearPushforwardDistribution("y", base, op)
-        assert list(pushed.event_spec.components) == ["y"]
-        assert pushed.event_spec.spec.shape == (3,)
+        assert list(pushed.event_spec.outputs) == ["y"]
+        assert pushed.event_spec.term_spec.shape == (3,)
 
     @pytest.mark.pending(reason="the pushforward's moments delegate exactly")
     def test_the_moments_delegate_through_the_operator(self, base, op):
@@ -123,7 +123,7 @@ class TestTheBijectorTransform:
             )
 
     def test_a_base_drawing_records_raises(self, standard):
-        joint = standard * Normal("z", 0.0, 1.0)
+        joint = standard & Normal("z", 0.0, 1.0)
         with pytest.raises(TypeError, match="needs a base that draws numeric arrays, but"):
             BijectorTransformedDistribution("y", joint, tfb.Exp())
 
@@ -146,16 +146,16 @@ class TestTheBijectorTransform:
 
     def test_the_log_density_matches_the_backend_transform(self, standard):
         transformed = BijectorTransformedDistribution("td", standard, tfb.Exp())
-        reference = tfd.TransformedDistribution(distribution=standard.raw(), bijector=tfb.Exp())
+        reference = tfd.TransformedDistribution(distribution=standard.raw, bijector=tfb.Exp())
         ys = jnp.array([0.1, 1.0, 5.0])
         np.testing.assert_allclose(
             transformed._log_prob(ys), reference.log_prob(ys), rtol=1e-5, atol=1e-6
         )
 
-    def test_the_component_names_the_event_and_the_base_is_its_parent(self, standard):
+    def test_the_output_names_the_event_and_the_base_is_its_parent(self, standard):
         transformed = BijectorTransformedDistribution("log_normal", standard, tfb.Exp())
         assert transformed.label == "BijectorTransformedDistribution"
-        assert list(transformed.event_spec.components) == ["log_normal"]
+        assert list(transformed.event_spec.outputs) == ["log_normal"]
         assert transformed.base is standard
         assert transformed.provenance.operation == "transform"
         assert transformed.provenance.parents[0].label == "Normal"
@@ -235,7 +235,7 @@ class TestSampling:
     def test_an_empirical_base(self, key):
         atoms = jax.random.normal(key, (50, 2))
         transformed = BijectorTransformedDistribution(
-            "td", EmpiricalDistribution(atoms, component="x"), tfb.Exp()
+            "td", EmpiricalDistribution(atoms, output_name="x"), tfb.Exp()
         )
         draws = jnp.asarray(transformed._sample(key, (10,)))
         assert draws.shape == (10, 2)
@@ -297,8 +297,8 @@ class TestReplay:
         difference = Function(
             replayable_difference,
             label="replayable_difference",
-            n_broadcast_samples=8,
-            dispatch="sequential",
+            max_evaluations=8,
+            executor="sequential",
             output_spec=OutputSpec(replayable_difference=None),
         )
 
@@ -314,7 +314,7 @@ class TestReplay:
         with replay_run(original.provenance):
             replayed = difference(**operands())
         np.testing.assert_array_equal(
-            np.asarray(replayed.atoms.values), np.asarray(original.atoms.values)
+            np.asarray(replayed.atoms.raw), np.asarray(original.atoms.raw)
         )
 
 
@@ -325,7 +325,7 @@ class TestTheCapabilities:
         )
 
     def test_a_base_without_a_density_gives_none(self):
-        empirical = EmpiricalDistribution(jnp.array([1.0, 2.0, 3.0]), component="x")
+        empirical = EmpiricalDistribution(jnp.array([1.0, 2.0, 3.0]), output_name="x")
         transformed = BijectorTransformedDistribution("td", empirical, tfb.Exp())
         assert isinstance(transformed, SupportsSampling)
         assert not isinstance(transformed, SupportsLogProb)
@@ -338,7 +338,7 @@ class TestTheCapabilities:
     def test_the_mean_of_a_nonlinear_map_is_estimated(self, key):
         atoms = jax.random.normal(key, (50, 2))
         transformed = BijectorTransformedDistribution(
-            "td", EmpiricalDistribution(atoms, component="x"), tfb.Exp()
+            "td", EmpiricalDistribution(atoms, output_name="x"), tfb.Exp()
         )
         assert jnp.all(jnp.isfinite(mean(transformed)))
 

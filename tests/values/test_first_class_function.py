@@ -24,6 +24,7 @@ from probpipe import (
     Distribution,
     DistributionBatch,
     DistributionSpec,
+    EvaluationError,
     Function,
     FunctionSpec,
     Gamma,
@@ -41,6 +42,7 @@ from probpipe import (
     Record,
     RecordBatch,
     RecordSpec,
+    ResultSchemaError,
     TrackedTerm,
     function,
     mean,
@@ -50,6 +52,12 @@ from probpipe import (
     simplex,
     workflow_run,
 )
+
+#: The executor controls a lift runs under in these tests. ``jax`` maps a
+#: traceable function, and ``sequential`` evaluates a function that claims
+#: ``traceable=False`` one evaluation point at a time.
+_JAX = pytest.param({"executor": "jax"}, id="jax")
+_SEQUENTIAL = pytest.param({"traceable": False, "executor": "sequential"}, id="sequential")
 
 
 class TestFunctionValueContract:
@@ -215,7 +223,7 @@ class TestApplyContract:
         result = structured()
 
         assert result is not returned
-        assert result.raw("y") is value
+        assert result["y"].raw is value
         assert result.event_template == template
         assert returned.event_template != template
 
@@ -226,7 +234,7 @@ class TestApplyContract:
             {"y": jnp.asarray([1.0, 2.0], dtype=jnp.float32)},
             level_names="draw",
             axes_per_level=(1,),
-            element_spec=intrinsic,
+            element=intrinsic,
             label="batch",
         )
         wrapped = Function(
@@ -256,7 +264,7 @@ class TestApplyContract:
             {"y": jnp.ones((*batch_shape, 2))},
             level_names="draw",
             axes_per_level=(len(batch_shape),),
-            element_spec=template,
+            element=template,
             label="batch",
         )
         wrapped = Function(
@@ -277,7 +285,7 @@ class TestApplyContract:
             {"y": jnp.ones((2, 3))},
             level_names="draw",
             axes_per_level=(1,),
-            element_spec=RecordSpec(y=(3,)),
+            element=RecordSpec(y=(3,)),
             label="batch",
         )
         wrapped = Function(
@@ -295,7 +303,7 @@ class TestApplyContract:
             {"y": jnp.asarray([1.0, 2.0], dtype=jnp.float32)},
             level_names="draw",
             axes_per_level=(1,),
-            element_spec=RecordSpec(y=()),
+            element=RecordSpec(y=()),
             label="batch",
         )
 
@@ -311,7 +319,7 @@ class TestApplyContract:
             {"y": jnp.asarray([1.0, -2.0])},
             level_names="draw",
             axes_per_level=(1,),
-            element_spec=RecordSpec(y=()),
+            element=RecordSpec(y=()),
             label="batch",
         )
 
@@ -338,20 +346,21 @@ class TestApplyContract:
         actual_dtype,
         declared_dtype,
     ):
-        value = np.asarray(3, dtype=actual_dtype)
-        template = RecordSpec(y=NumericArraySpec((), dtype=declared_dtype))
+        with jax.enable_x64(True):
+            value = np.asarray(3, dtype=actual_dtype)
+            template = RecordSpec(y=NumericArraySpec((), dtype=declared_dtype))
 
-        Function(
-            lambda: value, label="function", output_spec=OutputSpec(**template.children)
-        ).apply()
-        Function(
-            lambda: Record(
-                {"y": value},
-                label="returned",
-            ),
-            label="function",
-            output_spec=template,
-        ).apply()
+            Function(
+                lambda: value, label="function", output_spec=OutputSpec(**template.children)
+            ).apply()
+            Function(
+                lambda: Record(
+                    {"y": value},
+                    label="returned",
+                ),
+                label="function",
+                output_spec=template,
+            ).apply()
 
     @pytest.mark.parametrize("structured", [False, True])
     def test_cross_kind_output_dtype_is_rejected(self, structured):
@@ -499,7 +508,7 @@ class TestApplyContract:
         result = wrapped()
 
         assert result is not returned
-        assert result.event_spec.spec is intrinsic
+        assert result.event_spec.term_spec is intrinsic
 
     def test_distribution_output_uses_spec_unification_for_metadata(self):
         class _Undtyped(Distribution):
@@ -545,10 +554,10 @@ class TestApplyContract:
                 label="law",
             ).apply()
 
-    def test_returned_law_with_nested_components_matches_distribution_spec(self):
-        law = (Normal("a", 0, 1) * Normal("b", 0, 1)).with_path_names(
+    def test_returned_law_with_nested_outputs_matches_distribution_spec(self):
+        law = (Normal("a", 0, 1) & Normal("b", 0, 1)).rename(
             {"a": "params/a", "b": "params/b"}
-        ) * Normal("s", 0, 1)
+        ) & Normal("s", 0, 1)
         nested = RecordSpec(params=RecordSpec(a=(), b=()), s=())
         assert (
             Function(
@@ -604,8 +613,8 @@ class TestApplyContract:
             lambda x: x,
             label="function",
             input_spec=InputSpec(RecordSpec(x=NumericArraySpec((), support=positive)).children),
-            dispatch="sequential",
-            n_broadcast_samples=5,
+            executor="sequential",
+            max_evaluations=5,
             output_spec=OutputSpec(function=None),
         )
 
@@ -633,8 +642,8 @@ class TestApplyContract:
             lambda v: v,
             label="function",
             input_spec=InputSpec(RecordSpec(v=(3,)).children),
-            dispatch="sequential",
-            n_broadcast_samples=5,
+            executor="sequential",
+            max_evaluations=5,
         )
         with pytest.raises(ApplicabilityError, match=r"accepts NumericArraySpec.*RecordSpec"):
             wrapped(v=law)
@@ -672,7 +681,7 @@ class TestApplyContract:
                 NumericArrayBatch(
                     jnp.arange(3.0),
                     "row",
-                    element_spec=NumericArraySpec(()),
+                    element=NumericArraySpec(()),
                     label="rows",
                 ),
                 RecordSpec(v=()),
@@ -697,7 +706,7 @@ class TestApplyContract:
                 NumericRecordBatch(
                     {"x": jnp.arange(3.0)},
                     "row",
-                    element_spec=RecordSpec(x=()),
+                    element=RecordSpec(x=()),
                     label="rows",
                 ),
                 RecordSpec(v=RecordSpec(x=())),
@@ -708,7 +717,7 @@ class TestApplyContract:
                 lambda v: 1.0,
                 label="f",
                 input_spec=InputSpec(input_template.children),
-                dispatch="sequential",
+                executor="sequential",
             )
 
             result = wrapped(v=operand)
@@ -721,22 +730,22 @@ class TestApplyContract:
         rows = NumericRecordBatch(
             {"x": jnp.arange(3.0)},
             "row",
-            element_spec=RecordSpec(x=()),
+            element=RecordSpec(x=()),
             label="rows",
         )
         wrapped = Function(
             lambda v: 1.0,
             label="f",
             input_spec=InputSpec(RecordSpec(v=()).children),
-            dispatch="sequential",
+            executor="sequential",
         )
 
         with pytest.raises(ApplicabilityError, match=r"accepts NumericArraySpec.*RecordSpec"):
             wrapped(v=rows)
 
-    @pytest.mark.parametrize("dispatch", ["sequential", "jax"])
+    @pytest.mark.parametrize("execution", [_SEQUENTIAL, _JAX])
     @pytest.mark.parametrize("reverse", [False, True])
-    def test_lifted_and_raw_inputs_share_dimension_bindings(self, dispatch, reverse):
+    def test_lifted_and_raw_inputs_share_dimension_bindings(self, execution, reverse):
         fields = [("x", RecordSpec(value=("n",))), ("offset", NumericArraySpec(("n",)))]
         if reverse:
             fields.reverse()
@@ -745,13 +754,13 @@ class TestApplyContract:
             label="shift",
             input_spec=InputSpec(RecordSpec(dict(fields)).children),
             output_spec=OutputSpec(**RecordSpec(result=("n",)).children),
-            dispatch=dispatch,
+            **execution,
         )
         data = jnp.arange(6.0).reshape(2, 3)
         rows = NumericRecordBatch(
             {"value": data},
             "row",
-            element_spec=RecordSpec(value=(3,)),
+            element=RecordSpec(value=(3,)),
             label="rows",
         )
 
@@ -760,8 +769,8 @@ class TestApplyContract:
         assert result.level_names == ("row",)
         assert result.batch_shape == (2,)
         assert isinstance(result, NumericArrayBatch)
-        assert result.element_spec == NumericArraySpec((3,), dtype="float32")
-        np.testing.assert_allclose(result.values, np.asarray(data) + 1, rtol=0, atol=0)
+        assert result.element_spec.term_spec == NumericArraySpec((3,), dtype="float32")
+        np.testing.assert_allclose(result.raw, np.asarray(data) + 1, rtol=0, atol=0)
         assert wrapped.input_spec.free_dims == {"n"}
         with pytest.raises(ApplicabilityError, match="already bound"):
             wrapped(x=rows, offset=jnp.ones(4))
@@ -784,14 +793,14 @@ class TestApplyContract:
                 ).children
             ),
             output_spec=OutputSpec(**RecordSpec(y=("n", "z", "a")).children),
-            dispatch="sequential",
+            executor="sequential",
         )
         # Output-only dimensions bind from the returned array on each call.
         result = getattr(wrapped, entrypoint)(np.zeros(2), lambda: None)
         assert result.shape == (2, 3, 4)
         assert len(calls) == 1
         assert wrapped.input_spec.free_dims == {"n", "z", "a"}
-        assert wrapped.output_spec.spec.free_dims == {"n", "z", "a"}
+        assert wrapped.output_spec.term_spec.free_dims == {"n", "z", "a"}
 
     def test_a_mismatched_element_kind_names_both_specs(self):
         from probpipe import OpaqueBatch
@@ -800,7 +809,7 @@ class TestApplyContract:
             lambda v: 1.0,
             label="f",
             input_spec=InputSpec(RecordSpec(v=()).children),
-            dispatch="sequential",
+            executor="sequential",
         )
 
         with pytest.raises(ApplicabilityError, match=r"accepts NumericArraySpec.*OpaqueSpec"):
@@ -864,17 +873,17 @@ class TestApplyContract:
         wrapped = Function(
             lambda x: matching,
             label="function",
-            output_spec=OutputSpec.default(matching.spec, component="function"),
+            output_spec=OutputSpec.default(matching.spec, output_name="function"),
         )
 
         assert wrapped.apply(1) is matching
 
         mismatching = Normal("other", 0, 1)
-        with pytest.raises(ValueError, match=r"declares the component 'draw'.*'other'"):
+        with pytest.raises(ValueError, match=r"declares the output 'draw'.*'other'"):
             Function(
                 lambda x: mismatching,
                 label="function",
-                output_spec=OutputSpec.default(matching.spec, component="function"),
+                output_spec=OutputSpec.default(matching.spec, output_name="function"),
             ).apply(1)
 
     def test_a_returned_function_keeps_its_kind(self, full_provenance_mode):
@@ -946,7 +955,7 @@ class TestTemplateDeclarationContract:
         [RecordSpec(x=()), RecordSpec(x=(), y=(), z=())],
     )
     def test_signature_template_requires_total_bijection(self, template):
-        with pytest.raises(ValueError, match="exactly match signature parameters"):
+        with pytest.raises(ValueError, match="but its signature has the parameters"):
             Function(lambda x, y: x + y, label="function", input_spec=InputSpec(template.children))
 
     @pytest.mark.parametrize(
@@ -1012,9 +1021,9 @@ class TestTemplateDeclarationContract:
             label="identity",
         )
         result = wrapped(jnp.ones(3))
-        # The declaration leaves the dtype open, so completion takes the produced one (II.2).
+        # The output spec leaves the dtype open, so completion takes the produced one (II.2).
         assert result.spec == NumericArraySpec((3,), dtype="float32")
-        assert wrapped.output_spec.spec.free_dims == {"new"}
+        assert wrapped.output_spec.term_spec.free_dims == {"new"}
 
     def test_type_errors_for_non_templates(self):
         with pytest.raises(TypeError, match="input_spec"):
@@ -1029,7 +1038,7 @@ class TestSymbolicCalls:
             label="function",
             input_spec=InputSpec(RecordSpec(X=("obs", "p"), p=("p",)).children),
             output_spec=OutputSpec(**RecordSpec(y=("obs",)).children),
-            dispatch="sequential",
+            executor="sequential",
         )
 
     def test_joint_input_output_binding_and_declaration_immutability(self, regression_function):
@@ -1051,7 +1060,7 @@ class TestSymbolicCalls:
             identity,
             label="identity",
             input_spec=InputSpec(RecordSpec(x=()).children),
-            dispatch="sequential",
+            executor="sequential",
         )
         values = DistributionBatch(
             [Normal("x", 0, 1), Normal("x", 1, 1)],
@@ -1083,8 +1092,8 @@ class TestSymbolicCalls:
         with pytest.raises(ValueError, match="output/y"):
             wrapped(np.ones((4,)))
 
-    @pytest.mark.parametrize("dispatch", ["sequential", "jax"])
-    def test_sweep_preserves_concrete_declared_output_template(self, dispatch):
+    @pytest.mark.parametrize("execution", [_SEQUENTIAL, _JAX])
+    def test_sweep_preserves_concrete_declared_output_template(self, execution):
         rows = NumericRecordBatch.stack(
             [
                 NumericRecord(
@@ -1100,35 +1109,35 @@ class TestSymbolicCalls:
             label="function",
             input_spec=InputSpec(RecordSpec(row=RecordSpec(value=("p",))).children),
             output_spec=OutputSpec(**RecordSpec(prediction=("p",)).children),
-            dispatch=dispatch,
+            **execution,
         )
 
         result = wrapped(rows)
 
         assert isinstance(result, NumericArrayBatch)
-        assert result.element_spec == NumericArraySpec((2,), dtype="float32")
+        assert result.element_spec.term_spec == NumericArraySpec((2,), dtype="float32")
         assert result.batch_shape == (3,)
         np.testing.assert_allclose(
-            result.values,
+            result.raw,
             np.asarray([[1.0, 1.0], [2.0, 2.0], [3.0, 3.0]]),
         )
 
-    @pytest.mark.parametrize("dispatch", ["sequential", "jax"])
-    def test_distribution_broadcast_declares_the_output_template(self, dispatch):
+    @pytest.mark.parametrize("execution", [_SEQUENTIAL, _JAX])
+    def test_distribution_broadcast_declares_the_output_template(self, execution):
         wrapped = Function(
             lambda x: jnp.stack((x, x + 1)),
             label="function",
             input_spec=InputSpec(RecordSpec(x=()).children),
             output_spec=OutputSpec(**RecordSpec(pair=(2,)).children),
-            dispatch=dispatch,
-            n_broadcast_samples=8,
+            **execution,
+            max_evaluations=8,
         )
 
         with workflow_run(seed=4):
             result = wrapped(Normal("x", 0, 1))
 
-        assert list(result.event_spec.components) == ["pair"]
-        assert result.event_spec.spec.shape == (2,)
+        assert list(result.event_spec.outputs) == ["pair"]
+        assert result.event_spec.term_spec.shape == (2,)
         assert result.num_atoms == 8
         pairs = np.asarray(result._rows)
         assert pairs.shape == (8, 2)
@@ -1153,11 +1162,12 @@ class TestSymbolicCalls:
             label="function",
             input_spec=InputSpec(RecordSpec(row=RecordSpec(size=())).children),
             output_spec=OutputSpec(**RecordSpec(value=(2,)).children),
-            dispatch="sequential",
+            executor="sequential",
         )
 
-        with pytest.raises(ValueError, match="output/value"):
+        with pytest.raises(EvaluationError, match="output/value") as raised:
             wrapped(rows)
+        assert isinstance(raised.value.__cause__, ResultSchemaError)
 
     def test_every_sweep_cell_is_validated_against_output_support(self):
         rows = NumericRecordBatch.stack(
@@ -1180,7 +1190,7 @@ class TestSymbolicCalls:
             output_spec=OutputSpec(
                 **RecordSpec(value=NumericArraySpec((), support=positive)).children
             ),
-            dispatch="sequential",
+            executor="sequential",
         )
 
         with pytest.raises(ValueError, match=r"output/value.*support positive"):
@@ -1193,16 +1203,15 @@ class TestSymbolicCalls:
             label="function",
             input_spec=InputSpec(RecordSpec(x=()).children),
             output_spec=OutputSpec(**RecordSpec(y=NumericArraySpec((), support=positive)).children),
-            dispatch="auto",
-            n_broadcast_samples=8,
+            max_evaluations=8,
         )
 
         with workflow_run(seed=11):
             result = wrapped(Normal("x", 0, 1))
 
-        assert result.provenance.metadata["dispatch"] == "jax"
-        assert list(result.event_spec.components) == ["y"]
-        assert result.event_spec.spec.support == positive
+        assert result.provenance.metadata["evaluations"][0]["executor"] == "jax"
+        assert list(result.event_spec.outputs) == ["y"]
+        assert result.event_spec.term_spec.support == positive
         assert bool(jnp.all(result._rows > 0))
 
     @pytest.mark.parametrize(
@@ -1214,8 +1223,8 @@ class TestSymbolicCalls:
             label="function",
             input_spec=InputSpec(RecordSpec(x=()).children),
             output_spec=OutputSpec(**RecordSpec(y=NumericArraySpec((), support=positive)).children),
-            dispatch="jax",
-            n_broadcast_samples=8,
+            executor="jax",
+            max_evaluations=8,
         )
 
         with workflow_run(seed=11):
@@ -1242,14 +1251,15 @@ class TestSymbolicCalls:
             label="function",
             input_spec=InputSpec(RecordSpec(row=RecordSpec(value=())).children),
             output_spec=OutputSpec(**template.children),
-            dispatch="auto",
         )
 
         result = wrapped(rows)
 
-        # The declaration leaves the dtype open, so completion takes the produced one (II.2).
-        assert result.element_spec == NumericArraySpec((), dtype="float32", support=positive)
-        np.testing.assert_allclose(result.values, np.arange(3.0) + 1)
+        # The output spec leaves the dtype open, so completion takes the produced one (II.2).
+        assert result.element_spec.term_spec == NumericArraySpec(
+            (), dtype="float32", support=positive
+        )
+        np.testing.assert_allclose(result.raw, np.arange(3.0) + 1)
 
     @pytest.mark.parametrize(("shift", "holds"), [(1.0, True), (-5.0, False)])
     def test_support_pinned_sweep_explicit_jax_checks_the_stacked_results(self, shift, holds):
@@ -1268,17 +1278,17 @@ class TestSymbolicCalls:
             label="function",
             input_spec=InputSpec(RecordSpec(row=RecordSpec(value=())).children),
             output_spec=OutputSpec(**RecordSpec(y=NumericArraySpec((), support=positive)).children),
-            dispatch="jax",
+            executor="jax",
         )
 
         if holds:
-            np.testing.assert_allclose(wrapped(rows).values, np.arange(3.0) + shift)
+            np.testing.assert_allclose(wrapped(rows).raw, np.arange(3.0) + shift)
         else:
             with pytest.raises(ValueError, match=r"output/y.*support positive"):
                 wrapped(rows)
 
-    @pytest.mark.parametrize("dispatch", ["sequential", "jax"])
-    def test_nested_mapping_sweep_preserves_declared_structure(self, dispatch):
+    @pytest.mark.parametrize("execution", [_SEQUENTIAL, _JAX])
+    def test_nested_mapping_sweep_preserves_declared_structure(self, execution):
         rows = NumericRecordBatch.stack(
             [
                 NumericRecord(
@@ -1300,7 +1310,7 @@ class TestSymbolicCalls:
                 prediction=(),
                 stats=RecordSpec(doubled=()),
             ),
-            dispatch=dispatch,
+            **execution,
         )
 
         result = wrapped(rows)
@@ -1313,8 +1323,8 @@ class TestSymbolicCalls:
         np.testing.assert_allclose(result["prediction"], np.arange(3.0) + 1)
         np.testing.assert_allclose(result["stats/doubled"], np.arange(3.0) * 2)
 
-    @pytest.mark.parametrize("dispatch", ["sequential", "jax"])
-    def test_nested_mapping_distribution_broadcast_declares_the_nested_record(self, dispatch):
+    @pytest.mark.parametrize("execution", [_SEQUENTIAL, _JAX])
+    def test_nested_mapping_distribution_broadcast_declares_the_nested_record(self, execution):
         wrapped = Function(
             lambda x: {"stats": {"value": x, "doubled": x * 2}},
             label="function",
@@ -1322,26 +1332,26 @@ class TestSymbolicCalls:
             output_spec=RecordSpec(
                 stats=RecordSpec(value=(), doubled=()),
             ),
-            dispatch=dispatch,
-            n_broadcast_samples=8,
+            **execution,
+            max_evaluations=8,
         )
 
         with workflow_run(seed=7):
             result = wrapped(Normal("x", 0, 1))
 
-        assert result.event_spec.spec.leaf_shapes == {"stats/value": (), "stats/doubled": ()}
+        assert result.event_spec.term_spec.leaf_shapes == {"stats/value": (), "stats/doubled": ()}
         assert result.atoms["stats/value"].shape == (8,)
         np.testing.assert_allclose(
             result.atoms["stats/doubled"],
-            result.atoms["stats/value"].raw() * 2,
+            result.atoms["stats/value"].raw * 2,
         )
         averaged = mean(result)
         assert averaged.event_template == RecordSpec(
-            **{"mean(stats)": RecordSpec(value=(), doubled=())},
+            **{"stats": RecordSpec(value=(), doubled=())},
         )
         np.testing.assert_allclose(
-            averaged["mean(stats)/doubled"],
-            averaged["mean(stats)/value"] * 2,
+            averaged["stats/doubled"],
+            averaged["stats/value"] * 2,
         )
 
     def test_distribution_outputs_keep_their_declaration_through_broadcast(self):
@@ -1350,15 +1360,15 @@ class TestSymbolicCalls:
             label="function",
             input_spec=InputSpec(RecordSpec(x=()).children),
             output_spec=OutputSpec(function=DistributionSpec(OutputSpec(y=NumericArraySpec(())))),
-            dispatch="sequential",
-            n_broadcast_samples=8,
+            executor="sequential",
+            max_evaluations=8,
         )
 
         with workflow_run(seed=3):
             joint = wrapped.using(include_inputs=True)(Normal("x", 0, 1))
         laws = joint._rows["function"]
 
-        assert joint.event_spec.components["function"] == DistributionSpec(
+        assert joint.event_spec.outputs["function"] == DistributionSpec(
             OutputSpec(y=NumericArraySpec((), jnp.asarray(0.0).dtype, real))
         )
         assert joint.num_atoms == 8
@@ -1373,15 +1383,17 @@ class TestSymbolicCalls:
             output_spec=OutputSpec(
                 function=DistributionSpec(OutputSpec(y=NumericArraySpec((), dtype="int32")))
             ),
-            dispatch="sequential",
-            n_broadcast_samples=8,
+            traceable=False,
+            executor="sequential",
+            max_evaluations=8,
         )
 
         with pytest.raises(
-            ValueError,
+            EvaluationError,
             match="which cannot be cast to the declared",
-        ):
+        ) as raised:
             wrapped(Normal("x", 0, 1))
+        assert isinstance(raised.value.__cause__, ResultSchemaError)
 
     def test_distribution_outputs_keep_their_declaration_through_sweep(self):
         rows = NumericRecordBatch.stack(
@@ -1399,7 +1411,7 @@ class TestSymbolicCalls:
             label="function",
             input_spec=InputSpec(RecordSpec(row=RecordSpec(value=())).children),
             output_spec=OutputSpec(function=DistributionSpec(OutputSpec(y=NumericArraySpec(())))),
-            dispatch="sequential",
+            executor="sequential",
         )
 
         result = wrapped(rows)
@@ -1431,15 +1443,15 @@ class TestSymbolicCalls:
                 ).children
             ),
             output_spec=RecordSpec(prediction=()),
-            dispatch="sequential",
-            n_broadcast_samples=8,
+            executor="sequential",
+            max_evaluations=8,
         )
 
         with workflow_run(seed=5):
             result = wrapped(rows, Normal("noise", 0, 1))
 
         assert isinstance(result, DistributionBatch)
-        assert result.event_spec.spec.fields == ("prediction",)
+        assert result.event_spec.term_spec.fields == ("prediction",)
 
 
 @dataclass(frozen=True)
@@ -1470,7 +1482,7 @@ class TestDynamicImplementation:
             label="dynamic_add",
             input_spec=InputSpec(RecordSpec(x=()).children),
             output_spec=OutputSpec(**RecordSpec(y=()).children),
-            dispatch="sequential",
+            executor="sequential",
         )
 
         assert type(wrapped) is Function
@@ -1613,12 +1625,12 @@ class TestDynamicImplementation:
 
 class TestReentrancyAndProvenance:
     def test_seeded_runs_are_repeatable_across_sequential_and_concurrent_calls(self):
-        probpipe.provenance_config.mode = ProvenanceMode.OFF
+        probpipe.config.provenance.mode = ProvenanceMode.OFF
         wrapped = Function(
             lambda x: x + 1,
             label="function",
-            n_broadcast_samples=12,
-            dispatch="sequential",
+            max_evaluations=12,
+            executor="sequential",
             output_spec=OutputSpec(function=None),
         )
         source = Normal("x", 0, 1)
@@ -1634,7 +1646,7 @@ class TestReentrancyAndProvenance:
         assert jnp.array_equal(sequential[0], sequential[1])
         assert all(jnp.array_equal(sequential[0], value) for value in concurrent)
         assert not hasattr(wrapped, "_key")
-        assert not hasattr(wrapped, "_resolved_dispatch")
+        assert not hasattr(wrapped, "_execution_choice")
 
     def test_plain_result_provenance_starts_with_function_then_tracked_inputs(
         self, full_provenance_mode
@@ -1706,7 +1718,7 @@ class TestReentrancyAndProvenance:
             assert "result" not in stored.annotations
 
     def test_off_mode_still_copies_a_tracked_return(self):
-        probpipe.provenance_config.mode = ProvenanceMode.OFF
+        probpipe.config.provenance.mode = ProvenanceMode.OFF
         stored = NumericRecord(
             {"value": 1.0},
             label="stored",
@@ -1723,7 +1735,7 @@ class TestReentrancyAndProvenance:
 
     @pytest.mark.parametrize("mode", [ProvenanceMode.FULL, ProvenanceMode.LIGHTWEIGHT])
     def test_dynamic_training_lineage_is_reachable_through_function_parent(self, mode):
-        probpipe.provenance_config.mode = mode
+        probpipe.config.provenance.mode = mode
         training_data = Record(
             {"x": 1.0},
             label="training",
@@ -1743,7 +1755,7 @@ class TestReentrancyAndProvenance:
         assert [ancestor.label for ancestor in ancestors] == ["fitted", "training"]
 
     def test_off_mode_attaches_no_call_provenance(self):
-        probpipe.provenance_config.mode = ProvenanceMode.OFF
+        probpipe.config.provenance.mode = ProvenanceMode.OFF
 
         result = Function(
             lambda x: x + 1,
@@ -1758,8 +1770,8 @@ class TestVariadicPlanning:
         wrapped = Function(
             lambda *items: items[0] + items[1],
             label="function",
-            dispatch="sequential",
-            n_broadcast_samples=8,
+            executor="sequential",
+            max_evaluations=8,
             output_spec=OutputSpec(function=None),
         )
 
@@ -1768,7 +1780,7 @@ class TestVariadicPlanning:
 
         assert isinstance(result, Distribution)
         assert result.num_atoms == 8
-        assert list(result.event_spec.components) == ["*items[0]", "function"]
+        assert list(result.event_spec.outputs) == ["*items[0]", "function"]
         assert result.provenance.metadata["broadcast_args"] == ["*items[0]"]
 
     def test_record_batch_in_varargs_is_swept(self):
@@ -1790,7 +1802,7 @@ class TestVariadicPlanning:
         result = wrapped(rows, 2.0)
 
         assert result.batch_shape == (3,)
-        np.testing.assert_allclose(result.values, np.arange(3.0) + 2)
+        np.testing.assert_allclose(result.raw, np.arange(3.0) + 2)
 
     def test_record_batch_in_any_varargs_is_swept(self):
         rows = NumericRecordBatch.stack(
@@ -1813,7 +1825,7 @@ class TestVariadicPlanning:
         )(rows)
 
         assert result.batch_shape == (3,)
-        np.testing.assert_allclose(result.values, np.arange(3.0) * 2)
+        np.testing.assert_allclose(result.raw, np.arange(3.0) * 2)
 
     def test_record_batch_in_any_varkwargs_is_swept(self):
         rows = NumericRecordBatch.stack(
@@ -1836,7 +1848,7 @@ class TestVariadicPlanning:
         )(rows=rows)
 
         assert result.batch_shape == (3,)
-        np.testing.assert_allclose(result.values, np.arange(3.0) * 2)
+        np.testing.assert_allclose(result.raw, np.arange(3.0) * 2)
 
     def test_tracked_varargs_are_provenance_parents(self, full_provenance_mode):
         first = NumericRecord(
@@ -1906,7 +1918,7 @@ class TestVariadicPlanning:
             second_extra,
         ]
 
-    def test_plain_inputs_keep_resolved_variadic_slots(self, full_provenance_mode):
+    def test_plain_inputs_keep_resolved_variadic_inputs(self, full_provenance_mode):
         tracked = NumericRecord(
             {"value": 1.0},
             label="tracked",
@@ -1972,8 +1984,8 @@ class TestVariadicPlanning:
             lambda *items: items[0] + items[1],
             label="function",
             bind={"items": (Normal("x", 0, 1), 2.0)},
-            dispatch="sequential",
-            n_broadcast_samples=8,
+            executor="sequential",
+            max_evaluations=8,
             output_spec=OutputSpec(function=None),
         )
 
@@ -1987,8 +1999,8 @@ class TestVariadicPlanning:
         wrapped = Function(
             lambda **extras: extras["x"] + extras["offset"],
             label="function",
-            dispatch="sequential",
-            n_broadcast_samples=8,
+            executor="sequential",
+            max_evaluations=8,
             output_spec=OutputSpec(function=None),
         )
 
@@ -2011,7 +2023,7 @@ class TestDeclaredSupportOnABatchedOutput:
         valid = NumericRecordBatch(
             {"a": jnp.ones(3), "b": jnp.ones(3) * 2},
             "draw",
-            element_spec=RecordSpec(a=(), b=()),
+            element=RecordSpec(a=(), b=()),
             label="batch",
         )
 
@@ -2032,7 +2044,7 @@ class TestDeclaredSupportOnABatchedOutput:
         invalid = NumericRecordBatch(
             {"a": jnp.ones(3), "b": jnp.asarray([1.0, -2.0, 3.0])},
             "draw",
-            element_spec=RecordSpec(a=(), b=()),
+            element=RecordSpec(a=(), b=()),
             label="batch",
         )
 

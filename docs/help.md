@@ -1,5 +1,3 @@
-> **AI-generated.** An AI assistant drafted this page, and no maintainer has reviewed it yet. Please report errors on the issue tracker.
-
 # Help & Community
 
 ## Questions and bug reports
@@ -27,3 +25,5 @@ coding conventions.
 ProbPipe is developed by the [TARPS group](https://github.com/TARPS-group)
 at Boston University. For collaboration inquiries that don't fit a GitHub
 issue, contact Jonathan Huggins (huggins@bu.edu).
+
+> **Human-validated** by Jonathan Huggins on 2026-10-25.

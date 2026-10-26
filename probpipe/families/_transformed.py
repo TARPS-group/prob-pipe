@@ -23,6 +23,7 @@ import jax.numpy as jnp
 from ..core._dispatch import ResolutionError
 from ..core._fingerprint import fingerprint
 from ..core._spec_base import NumericArraySpec
+from ..core._specs import _has_record_outputs
 from ..core.provenance import Provenance
 from ..custom_types import Array, ArrayLike, PRNGKey
 from ..distributions._capabilities import (
@@ -52,15 +53,15 @@ class LinearPushforwardDistribution(Distribution):
     """The law of ``op @ X`` for ``X ~ base``, represented lazily.
 
     The event type is ``op``'s output type, under the pushforward's own
-    component. Sampling pushes the base's draws through ``op``. The mean and
+    output name. Sampling pushes the base's draws through ``op``. The mean and
     the covariance delegate exactly, ``𝔼[A X] = A 𝔼[X]`` and ``Cov(A X) = A
     Cov(X) Aᵀ``, lazily through the operator algebra. The log-density exists
     only when ``op`` is invertible, by change of variables.
 
     Parameters
     ----------
-    component : str
-        The component of the pushforward's event.
+    output_name : str
+        The name of the pushforward's one output, which names its draws.
     base : Distribution
         The law of ``X``, whose numeric event is ``op``'s input.
     op : LinOp
@@ -75,7 +76,7 @@ class LinearPushforwardDistribution(Distribution):
     """
 
     def __init__(
-        self, component: str, base: Distribution, op: LinOp, *, label: str | None = None
+        self, output_name: str, base: Distribution, op: LinOp, *, label: str | None = None
     ) -> None:
         raise NotImplementedError("LinearPushforwardDistribution is not implemented yet")
 
@@ -109,7 +110,7 @@ def _not_invertible(f: Any) -> str | None:
 
 
 def _event_rank(law: Distribution) -> int:
-    return len(law.event_spec.spec.shape)
+    return len(law.event_spec.term_spec.shape)
 
 
 def _forward(bijector: Function) -> Callable[[Array], Array]:
@@ -119,7 +120,7 @@ def _forward(bijector: Function) -> Callable[[Array], Array]:
     engine refuses inside ``replay_run``, so a transformed law builds, samples,
     and pushes its moments forward in a replayed call as in the recorded one.
     """
-    return bijector.raw()
+    return bijector.raw
 
 
 def _per_point(function: Any, value: Array, rank: int) -> Array:
@@ -167,7 +168,7 @@ def _transformed_unnormalized_log_prob(
 
 def _affine_jacobian(self: BijectorTransformedDistribution) -> Array:
     """The constant Jacobian of the affine forward map over the flattened events."""
-    base_shape = self._base.event_spec.spec.shape
+    base_shape = self._base.event_spec.term_spec.shape
     point = jnp.reshape(jnp.asarray(self._base._mean()), (-1,))
     forward = _forward(self._bijector)
 
@@ -191,7 +192,7 @@ def _transformed_cov(self: BijectorTransformedDistribution) -> LinOp:
 def _transformed_variance(self: BijectorTransformedDistribution) -> Array:
     """The diagonal of the pushed covariance, shaped like one draw."""
     diagonal = jnp.diagonal(_transformed_cov(self).to_dense())
-    return jnp.reshape(diagonal, self.event_spec.spec.shape)
+    return jnp.reshape(diagonal, self.event_spec.term_spec.shape)
 
 
 def _claimed(base: Distribution, bijector: Function) -> list[type]:
@@ -227,13 +228,13 @@ class BijectorTransformedDistribution(Distribution):
     estimate the others by their Monte Carlo fallback.
 
     One draw is an array whose shape and dtype are those of the bijector's
-    output at a draw of the base, declared as a whole term under *component*;
+    output at a draw of the base, declared as a whole term under *output_name*;
     its support is the one the bijector maps onto when that is known.
 
     Parameters
     ----------
-    component : str
-        The component of the transformed law's event.
+    output_name : str
+        The name of the transformed law's one output, which names its draws.
     base : Distribution
         The law of ``X``, whose draws are arrays.
     bijector : Function
@@ -246,11 +247,11 @@ class BijectorTransformedDistribution(Distribution):
     Raises
     ------
     TypeError
-        If *base* is not a ``Distribution`` whose draws are arrays, *component*
+        If *base* is not a ``Distribution`` whose draws are arrays, *output_name*
         is not a string, *label* is not a non-empty string, or *bijector* is
         neither a ``Function`` nor a backend bijector.
     ValueError
-        If *component* is not a valid component name.
+        If *output_name* is not a valid output name.
     ResolutionError
         If *bijector* does not claim ``SupportsInverse``, or its guard
         rejects, or it does not claim ``SupportsLogDetJacobian``.
@@ -267,7 +268,7 @@ class BijectorTransformedDistribution(Distribution):
 
     def __new__(
         cls,
-        component: str,
+        output_name: str,
         base: Distribution,
         bijector: Function | Any,
         *,
@@ -278,7 +279,7 @@ class BijectorTransformedDistribution(Distribution):
 
     def __init__(
         self,
-        component: str,
+        output_name: str,
         base: Distribution,
         bijector: Function | Any,
         *,
@@ -291,9 +292,9 @@ class BijectorTransformedDistribution(Distribution):
                 f"base of BijectorTransformedDistribution must be a Distribution, got "
                 f"{type(base).__name__}"
             )
-        base_kind = base.event_spec.spec
+        base_kind = base.event_spec.term_spec
         if not isinstance(base_kind, NumericArraySpec):
-            drawn = "records" if base.event_spec.exposes_record else type(base_kind).__name__
+            drawn = "records" if _has_record_outputs(base.event_spec) else type(base_kind).__name__
             raise TypeError(
                 f"BijectorTransformedDistribution needs a base that draws numeric arrays, but "
                 f"{base.label!r} draws {drawn}"
@@ -313,14 +314,14 @@ class BijectorTransformedDistribution(Distribution):
                 f"BijectorTransformedDistribution {label!r} needs an invertible bijector with a "
                 f"log-det Jacobian, but {bijector.label!r} {reason}"
             )
-        base_spec = base.event_spec.spec
+        base_spec = base.event_spec.term_spec
         point = jax.ShapeDtypeStruct(tuple(base_spec.shape), base_spec.dtype or jnp.float32)
         image = jax.eval_shape(_forward(bijector), point)
         object.__setattr__(self, "_base", base)
         object.__setattr__(self, "_bijector", bijector)
         image_spec = NumericArraySpec(tuple(image.shape), image.dtype, _image(bijector))
         super().__init__(
-            _whole_term_event(component, image_spec, None, owner),
+            _whole_term_event(output_name, image_spec, None, owner),
             label=label,
         )
         self.with_provenance(

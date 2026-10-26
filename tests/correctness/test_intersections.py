@@ -4,7 +4,7 @@
   eight-schools model as ``population/mu``, ``population/tau``, and
   ``groups/theta_tilde``, is conditioned on its data through a method and
   checked at the nested paths against the quadrature reference.
-- An inference result keeps its target's event declaration, packaging and
+- An inference result keeps its target's event spec, form and
   nested paths included, and its views, marginals, and moments read it at the
   target's paths.
 - Each model family conditions to a posterior over record-valued parameters:
@@ -40,8 +40,8 @@ from probpipe import (
 from probpipe.distributions._factored import _raw_record
 from probpipe.families import GaussianFamily, PyMCModel, glm_likelihood
 from tests._ops import (
+    CoupledMarginal,
     EmpiricalDistribution,
-    FieldView,
     condition_on,
     convert,
     inference_method_registry,
@@ -72,7 +72,7 @@ def _from_draws(posterior, target) -> EmpiricalDistribution:
     """The posterior's draws as an EmpiricalDistribution on the levels ``chain`` and ``draw``.
 
     The draws are read in the target's layout, so the law declares the
-    target's record whatever declaration the result itself carries.
+    target's record whatever event spec the result itself carries.
     """
     raw = _raw_record(flat_draws(posterior))
     chains = num_chains(posterior)
@@ -84,7 +84,7 @@ def _from_draws(posterior, target) -> EmpiricalDistribution:
     batch = NumericRecordBatch(
         jax.tree.map(split, raw),
         ("chain", "draw"),
-        element_spec=target.event_spec.spec,
+        element=target.event_spec.term_spec,
         axes_per_level=(1, 1),
         label="draws",
     )
@@ -146,18 +146,18 @@ class TestNestedHierarchicalModel:
 
     def test_a_view_at_a_nested_path_reads_the_posterior(self, schools):
         _, _, posterior = schools
-        view = FieldView(posterior, "population/tau")
+        view = CoupledMarginal(posterior, "population/tau")
         draws = _raw_record(flat_draws(posterior))
         assert float(mean.using(raw=True)(view)) == pytest.approx(
             float(np.mean(draws["population"]["tau"])), rel=1e-5
         )
 
-    def test_the_tracked_mean_names_each_component_of_the_targets_schema(self, schools):
+    def test_the_tracked_mean_takes_the_targets_schema(self, schools):
         _, target, posterior = schools
         result = mean(posterior)
         assert isinstance(result, NumericRecord)
-        children = target.event_spec.spec.children
-        assert result.spec == RecordSpec({f"mean({name})": spec for name, spec in children.items()})
+        children = target.event_spec.term_spec.children
+        assert result.spec == RecordSpec(dict(children))
 
     def test_draws_of_the_posterior_keep_the_nested_paths(self, schools):
         _, _, posterior = schools
@@ -173,7 +173,7 @@ class TestNestedHierarchicalModel:
 
 
 # ---------------------------------------------------------------------------
-# The declaration an inference result keeps
+# The event spec an inference result keeps
 # ---------------------------------------------------------------------------
 
 
@@ -183,9 +183,8 @@ def _glm_with_dispersion():
     X = jnp.asarray(case.stan_data["X"], jnp.float32)
     joint = (
         glm_likelihood("y", GaussianFamily(), X=X)
-        * MultivariateNormal("beta", jnp.zeros(X.shape[1]), cov=4.0 * jnp.eye(X.shape[1]))
-        * HalfNormal("dispersion", 2.0)
-    )
+        & MultivariateNormal("beta", jnp.zeros(X.shape[1]), cov=4.0 * jnp.eye(X.shape[1]))
+    ) & HalfNormal("dispersion", 2.0)
     return joint, case.data
 
 
@@ -407,7 +406,7 @@ class TestFamiliesWithRecordParameters:
                 law, EmpiricalDistribution
             )
         assert normalized.event_spec == law.event_spec
-        assert set(leaf_paths(normalized.event_spec.spec)) == {"theta/a", "theta/b"}
+        assert set(leaf_paths(normalized.event_spec.term_spec)) == {"theta/a", "theta/b"}
 
     def test_the_converted_nested_law_has_the_gaussian_moments_at_its_paths(self):
         law = distribution(
@@ -429,28 +428,27 @@ class TestFamiliesWithRecordParameters:
                 law, EmpiricalDistribution
             )
         parent_mean = mean.using(raw=True)(normalized)
-        view = FieldView(normalized, "theta/b")
+        view = CoupledMarginal(normalized, "theta/b")
         group = marginal(normalized, "theta")
         np.testing.assert_allclose(
             np.asarray(mean.using(raw=True)(view)),
-            np.asarray(parent_mean["mean(theta)"]["b"]),
+            np.asarray(parent_mean["theta"]["b"]),
         )
         assert group.event_spec == OutputSpec(theta=_NESTED.children["theta"])
         np.testing.assert_allclose(
             np.asarray(variance.using(raw=True)(group)["a"]),
-            np.asarray(variance.using(raw=True)(normalized)["variance(theta)"]["a"]),
+            np.asarray(variance.using(raw=True)(normalized)["theta"]["a"]),
         )
 
     def test_a_density_over_a_nested_record_reads_an_interior_path(self):
-        """A user's density reads a nested field by its key or through the interior node's view."""
+        """A user's density reads a nested field by its path or through its group's record."""
         value = Record(
             {"theta": {"a": jnp.ones(2), "b": jnp.array(2.0)}},
             label="value",
         )
         np.testing.assert_allclose(np.asarray(value["theta/a"]), np.ones(2))
+        np.testing.assert_allclose(np.asarray(value["theta"]["a"]), np.ones(2))
         np.testing.assert_allclose(np.asarray(value.at_path("theta")["a"]), np.ones(2))
-        with pytest.raises(KeyError):
-            value["theta"]
 
 
 def _schools(params, key):
@@ -466,7 +464,7 @@ class TestLearnedKernelOverANestedRecord:
     def test_the_amortized_posterior_of_a_nested_prior_draws_the_nested_record(self):
         """An amortized posterior trained on the nested eight-schools prior yields laws over that record.
 
-        Training is brief, since only the declaration and the draws' paths are
+        Training is brief, since only the event spec and the draws' paths are
         checked; it takes about ten seconds.
         """
         import os
@@ -476,7 +474,7 @@ class TestLearnedKernelOverANestedRecord:
         from probpipe.inference import learn_amortized_posterior
         from tests.correctness._laws import Groups, Population
 
-        prior = Groups() * Population()
+        prior = Groups() & Population()
         with workflow_run(seed=0):
             kernel = learn_amortized_posterior(
                 prior,

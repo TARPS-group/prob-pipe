@@ -77,8 +77,8 @@ class TestPyMCModel:
         assert isinstance(model, PyMCModel)
         assert model.label == "test_pymc"
 
-    def test_the_components_are_the_free_variables(self, model):
-        assert tuple(model.event_spec.components) == ("mu", "sigma", "y")
+    def test_the_outputs_are_the_free_variables(self, model):
+        assert tuple(model.event_spec.outputs) == ("mu", "sigma", "y")
 
     def test_repr(self, model):
         r = repr(model)
@@ -92,17 +92,17 @@ class TestPyMCModel:
 
     def test_a_draw_is_a_record_of_the_declared_parameters(self, model):
         draw = model._sample(jax.random.PRNGKey(0), sample_shape=())
-        assert model.event_spec.spec.is_valid(draw)
-        assert all(np.shape(draw[name]) == () for name in model.event_spec.components)
+        assert model.event_spec.term_spec.is_valid(draw)
+        assert all(np.shape(draw[name]) == () for name in model.event_spec.outputs)
 
     def test_batched_draws_carry_the_sample_axes_before_each_field(self, model):
         draws = model._sample(jax.random.PRNGKey(0), sample_shape=(5,))
-        assert all(np.shape(draws[name]) == (5,) for name in model.event_spec.components)
+        assert all(np.shape(draws[name]) == (5,) for name in model.event_spec.outputs)
 
     def test_the_sample_operation_returns_a_draw_of_the_declaration(self, model):
         from probpipe import sample
 
-        assert model.event_spec.spec.is_valid(sample(model))
+        assert model.event_spec.term_spec.is_valid(sample(model))
 
     def test_pymc_model_no_data(self, model):
         m = model._pymc_model()
@@ -272,7 +272,7 @@ class TestRecordSpec:
                 pm.Normal("y", 0, 1, observed=y)
             return m
 
-        tpl = PyMCModel(model_fn, label="model").event_spec.spec
+        tpl = PyMCModel(model_fn, label="model").event_spec.term_spec
         assert tpl.fields == ("intercept", "slope", "y")
         assert tpl["intercept"] == NumericArraySpec((), _FLOAT, real)
         assert tpl["slope"] == NumericArraySpec((3,), _FLOAT, real)
@@ -309,32 +309,32 @@ class TestRecordSpec:
                 pm.Normal("y", 0, 1, observed=y)
             return m
 
-        tpl = PyMCModel(model_fn, label="model").event_spec.spec
+        tpl = PyMCModel(model_fn, label="model").event_spec.term_spec
         assert tpl.fields == ("mu", "y")
         assert tpl["y"] == NumericArraySpec((), _FLOAT, real)
 
     def test_data_dependent_shape_reflects_conditioned_build(self):
         """``_parameter_record_for(model)`` reports the data-conditioned
         shape for an RV whose shape depends on data size, while the
-        declaration reports the declared (no-data) shape.
+        event spec reports the declared (no-data) shape.
 
         The inference paths call ``_parameter_record_for`` with the model
         they build from data, so the parameter record matches the chain.
-        The declaration cannot know the conditioned shape without data, so it
+        The event spec cannot know the conditioned shape without data, so it
         stays at the declared sentinel — and, crucially, holds no
         per-call mutable state, so concurrent inference on one instance
         can't race.
         """
         kernel = PyMCModel(per_observation_effect_model_fn, label="model")
-        # X is a covariate, a given slot, so the event's shapes are symbolic.
-        tpl = kernel.event_spec.spec
+        # X is a covariate, an input, so the event's shapes are symbolic.
+        tpl = kernel.event_spec.term_spec
         assert tpl.fields == ("intercept", "alpha", "y")
         assert tpl["alpha"] == NumericArraySpec(("alpha_0",), _FLOAT, real)
 
         # Binding X, then building at the data, picks up the real shape.
         N = 50
         model = kernel._condition_on({"X": np.zeros(N, dtype=np.float32)})
-        assert model.event_spec.spec["alpha"] == NumericArraySpec((N,), _FLOAT, real)
+        assert model.event_spec.term_spec["alpha"] == NumericArraySpec((N,), _FLOAT, real)
         conditioned = model._pymc_model(data={"y": np.zeros(N, dtype=np.float32)})
         names = model._conditioned_param_names(conditioned)
         tpl_c = model._parameter_record_for(conditioned, names)
@@ -391,11 +391,11 @@ class TestRecordSpec:
             )
         assert isinstance(result, FactoredDistribution)
         assert method_of(result) == "pymc_advi"
-        assert tuple(result.event_spec.components) == ("intercept", "alpha")
+        assert tuple(result.event_spec.outputs) == ("intercept", "alpha")
         with workflow_run(seed=0):
             draws = sample(result, sample_shape=(25,))
-        assert jnp.asarray(draws["intercept"].values).shape == (25,)
-        assert jnp.asarray(draws["alpha"].values).shape == (25, 3)
+        assert jnp.asarray(draws["intercept"].raw).shape == (25,)
+        assert jnp.asarray(draws["alpha"].raw).shape == (25, 3)
 
     def test_the_mean_field_family_is_the_fitted_approximation(self):
         """The family's density is the fitted Gaussian at PyMC's unconstrained value
@@ -417,7 +417,7 @@ class TestRecordSpec:
             trace = approx.sample(3, random_seed=2)
         names = [rv.name for rv in model.free_RVs]
         family = _mean_field_family(approx, model, names)
-        assert tuple(family.event_spec.components) == tuple(names)
+        assert tuple(family.event_spec.outputs) == tuple(names)
         group, mean, std = approx.groups[0], approx.mean.eval(), approx.std.eval()
 
         def evaluated(x):
@@ -464,8 +464,8 @@ class TestRecordSpec:
     def test_fullrank_advi_draws_realign_by_name(self):
         """Full-rank ADVI's draws are realigned to the template by name.
 
-        Its trace comes from ``approx.sample`` rather than a NUTS run, so it
-        exercises ``posterior_var_order`` on a distinct trace source, where a
+        Its trace comes from ``approx.sample`` rather than a NUTS run, so the
+        draws are extracted by name from a distinct trace source, where a
         positional split would shape-scramble the fields.
         """
         from probpipe import condition_on
@@ -505,7 +505,7 @@ class TestRecordSpec:
             return m
 
         model = PyMCModel(model_fn, label="model")
-        assert "ghost" in model.event_spec.components
+        assert "ghost" in model.event_spec.outputs
         conditioned = model._pymc_model(data={"y": np.zeros(5, dtype=np.float32)})
         with pytest.raises(ValueError, match="free random variables must not change with the data"):
             model._conditioned_param_names(conditioned)
@@ -529,7 +529,7 @@ class TestRecordSpec:
             return m
 
         model = PyMCModel(model_fn, label="model")
-        assert tuple(model.event_spec.components) == ("mu", "y")  # extra absent at construction
+        assert tuple(model.event_spec.outputs) == ("mu", "y")  # extra absent at construction
         conditioned = model._pymc_model(data={"y": np.zeros(5, dtype=np.float32)})
         with pytest.raises(ValueError, match="free random variables must not change with the data"):
             model._conditioned_param_names(conditioned)
@@ -553,7 +553,7 @@ class TestRecordSpec:
 
         model = PyMCModel(model_fn, label="model")
         # Both observed variables are fields of the joint law.
-        assert tuple(model.event_spec.components) == ("mu", "X", "y")
+        assert tuple(model.event_spec.outputs) == ("mu", "X", "y")
 
         # Condition on y only — X is left free and should be inferred.
         conditioned = model._pymc_model(data={"y": np.zeros(5, dtype=np.float32)})
@@ -616,11 +616,10 @@ class TestRecordSpec:
         assert float(jnp.mean(jnp.asarray(draws["mu"]))) > 50.0  # ~ +100
         assert float(jnp.mean(jnp.asarray(draws["X"]))) < -50.0  # ~ -100
 
-    def test_pymc_nuts_multiparam_field_order_realigned(self):
-        """End-to-end check of the name-keyed wiring: the
-        pymc_nuts path extracts in the trace's alphabetical ``data_vars``
-        order, and ``field_order`` realigns columns to the declared
-        (template) order by name.
+    def test_pymc_nuts_multiparam_draws_follow_the_targets_order(self):
+        """End-to-end check of the name-keyed wiring: the pymc_nuts path
+        extracts each parameter by name, in the target's order, whatever the
+        order of the trace's ``data_vars``.
 
         ``zeta``, ``alpha``, ``mu`` are declared non-alphabetically with
         distinct tight priors and a near-flat likelihood. The posterior
@@ -702,9 +701,9 @@ class TestRecordSpec:
                 pm.Normal("y", 0, 1, observed=y)
             return m
 
-        # The declaration holds a symbolic dimension.
+        # The event spec holds a symbolic dimension.
         model = PyMCModel(model_fn, label="model")
-        assert model.event_spec.spec["z"].shape == ("z_0",)
+        assert model.event_spec.term_spec["z"].shape == ("z_0",)
 
 
 class TestRecordDataUnpacking:
@@ -729,7 +728,7 @@ class TestRecordDataUnpacking:
         return m
 
     def test_record_input_unpacked_by_field_name(self):
-        """A ``Record({"X": ..., "y": ...}, label=...)`` populates both observed slots."""
+        """A ``Record({"X": ..., "y": ...}, label=...)`` populates both data arguments."""
         from probpipe import Record
 
         rng = np.random.RandomState(0)

@@ -5,9 +5,11 @@ from __future__ import annotations
 import copy
 import functools
 import pickle
+from math import prod
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 import pytest
 import tensorflow_probability.substrates.jax.distributions as tfd
 
@@ -21,6 +23,7 @@ from probpipe import (
     KDEDistribution,
     Normal,
     NumericArray,
+    NumericArrayBatch,
     NumericArraySpec,
     NumericRecordBatch,
     Opaque,
@@ -34,19 +37,23 @@ from probpipe import (
     conditional_distribution,
     convert,
     distribution,
+    mean,
     positive,
     workflow_run,
 )
+from probpipe.core import _repr as repr_module
 from probpipe.core._dispatch import MethodInfo
 from probpipe.core._repr import (
     WIDTH,
     format_default,
     format_notation,
     format_signature,
+    format_value,
     grouped_label,
     is_compound,
     is_product,
 )
+from probpipe.core.tracked import TrackedTerm
 from probpipe.distributions._batches import DistributionBatch
 from probpipe.families import BernoulliFamily, MixtureDistribution, glm_likelihood
 from probpipe.linalg import DenseLinOp, DiagonalLinOp
@@ -79,22 +86,15 @@ def _two_fields() -> NumericRecordBatch:
 
 class TestValuesAndBatches:
     def test_an_array_reads_by_its_label_shape_and_dtype(self):
-        assert repr(
-            NumericArray(
-                jnp.zeros(3),
-                label="x",
-            )
-        ) == ("NumericArray('x', shape=(3,), dtype=float32)")
+        assert repr(NumericArray(jnp.zeros(3), label="x")) == (
+            "NumericArray('x', shape=(3,), dtype=float32)\n  [0. 0. 0.]"
+        )
 
     def test_a_declared_support_is_shown(self):
         spec = NumericArraySpec((), jnp.float32, positive)
-        assert repr(
-            NumericArray(
-                jnp.asarray(1.0),
-                spec=spec,
-                label="tau",
-            )
-        ) == ("NumericArray('tau', shape=(), dtype=float32, support=positive)")
+        assert repr(NumericArray(jnp.asarray(1.5), spec=spec, label="tau")) == (
+            "NumericArray('tau', shape=(), dtype=float32, support=positive)\n  1.5"
+        )
 
     def test_an_opaque_value_reads_by_its_type(self):
         assert (
@@ -130,11 +130,212 @@ class TestValuesAndBatches:
             "DistributionBatch(\n"
             "    'laws',\n"
             "    levels={'law': 2},\n"
-            "    element_spec=DistributionSpec(\n"
+            "    element=DistributionSpec(\n"
             "        event_spec=OutputSpec(a=NumericArraySpec(shape=(), dtype=float32, "
             "support=real)),\n"
             "    ),\n"
             ")"
+        )
+
+
+class TestANumericTermShowsItsValues:
+    """A numeric term shows its values below its summary, formatted by NumPy's printing (II.4)."""
+
+    def test_a_scalar_shows_its_value(self):
+        m = mean(Normal("mu", 0.25, 1.0, label="prior"))
+
+        assert repr(m) == (
+            "NumericArray('𝔼[mu ~ prior]', shape=(), dtype=float32, support=real)\n  0.25"
+        )
+        assert str(m) == "0.25"
+
+    def test_each_line_of_an_array_is_indented_as_a_records_lines_are(self):
+        m = NumericArray(jnp.arange(6.0).reshape(2, 3), label="m")
+
+        assert repr(m) == (
+            "NumericArray('m', shape=(2, 3), dtype=float32)\n  [[0. 1. 2.]\n   [3. 4. 5.]]"
+        )
+        assert str(m) == "[[0. 1. 2.]\n [3. 4. 5.]]"
+
+    def test_a_vector_shows_its_entries(self):
+        v = NumericArray(jnp.array([1.0, 2.5, -3.0]), label="v")
+
+        assert repr(v) == "NumericArray('v', shape=(3,), dtype=float32)\n  [ 1.   2.5 -3. ]"
+
+    def test_numpys_print_options_set_the_precision_and_the_shortening(self):
+        third = NumericArray(jnp.asarray(1.0 / 3.0), label="third")
+        ten = NumericArray(jnp.arange(10), label="ten")
+
+        with np.printoptions(precision=3):
+            assert str(third) == "0.333"
+        with np.printoptions(threshold=5, edgeitems=2):
+            assert str(ten) == "[0 1 ... 8 9]"
+
+    def test_a_long_array_is_shortened_and_reads_only_the_entries_shown(self, monkeypatch):
+        values = np.arange(20000.0, dtype=np.float32).reshape(400, 50)
+        read = []
+        to_numpy = repr_module._to_numpy_array
+
+        def recording(value):
+            read.append(tuple(value.shape))
+            return to_numpy(value)
+
+        monkeypatch.setattr(repr_module, "_to_numpy_array", recording)
+        text = repr(NumericArray(jnp.asarray(values), label="x"))
+
+        assert text == (
+            "NumericArray('x', shape=(400, 50), dtype=float32)\n  "
+            + np.array2string(values, prefix="  ")
+        )
+        assert "..." in text
+        # Three entries at each end of both axes, and one more that NumPy shows as "...".
+        assert sum(prod(shape) for shape in read) == 7 * 7
+
+    def test_a_record_shows_one_path_per_line(self):
+        record = Record(
+            {"population": {"mu": 0.5, "tau": 1.25}, "y": jnp.array([2.0, 2.5])},
+            label="r",
+        )
+
+        assert repr(record) == (
+            "NumericRecord('r')\n"
+            "  population/mu    0.5\n"
+            "  population/tau   1.25\n"
+            "  y                [2.  2.5]"
+        )
+        assert str(record) == (
+            "population/mu    0.5\npopulation/tau   1.25\ny                [2.  2.5]"
+        )
+
+    def test_a_shortened_field_ends_with_its_shape(self):
+        record = Record({"a": 1.0, "y": jnp.arange(2000.0)}, label="r")
+
+        assert repr(record) == (
+            "NumericRecord('r')\n"
+            "  a   1.\n"
+            "  y   [0.000e+00 1.000e+00 2.000e+00 ... 1.997e+03 1.998e+03 1.999e+03]"
+            "   shape=(2000,)"
+        )
+
+    def test_a_field_of_several_lines_stays_in_its_column(self):
+        record = Record({"m": jnp.eye(2)}, label="r")
+
+        assert repr(record) == "NumericRecord('r')\n  m   [[1. 0.]\n       [0. 1.]]"
+
+    def test_a_batch_of_arrays_shows_its_levels_then_its_stored_entries(self):
+        batch = NumericArrayBatch(jnp.arange(6.0).reshape(2, 3), ("chain", "draw"), label="theta")
+
+        assert repr(batch) == (
+            "NumericArrayBatch(\n"
+            "    'theta',\n"
+            "    levels={'chain': 2, 'draw': 3},\n"
+            "    element=NumericArraySpec(shape=(), dtype=float32),\n"
+            ")\n"
+            "  [[0. 1. 2.]\n"
+            "   [3. 4. 5.]]"
+        )
+        assert str(batch) == "[[0. 1. 2.]\n [3. 4. 5.]]"
+
+    def test_a_batch_of_records_shows_its_levels_then_one_column_per_line(self):
+        assert repr(_two_fields()) == (
+            "NumericRecordBatch('rows', levels={'row': 2})\n  a   [0. 1.]\n  b   [1. 3.]"
+        )
+        assert str(_two_fields()) == "a   [0. 1.]\nb   [1. 3.]"
+
+    def test_inside_a_trace_each_kind_shows_its_summary_alone(self):
+        shown = []
+
+        def show(term):
+            shown.append((repr(term), str(term), term._repr_summary()))
+            return term
+
+        terms = [
+            NumericArray(jnp.arange(3.0), label="x"),
+            Record({"population": {"mu": 0.5}, "y": jnp.arange(2.0)}, label="r"),
+            NumericArrayBatch(jnp.arange(4.0), "draw", label="b"),
+            _two_fields(),
+        ]
+        for term in terms:
+            jax.jit(show)(term)
+
+        for text, as_str, summary in shown:
+            assert text == as_str == summary
+            assert "Traced" not in text
+        assert shown[1][0] == "NumericRecord('<no description>', fields=('population/mu', 'y'))"
+
+    def test_inside_a_trace_a_record_has_no_table(self):
+        tables = []
+
+        def show(term):
+            tables.append(term._repr_html_())
+            return term
+
+        jax.jit(show)(Record({"y": jnp.arange(2.0)}, label="r"))
+        jax.jit(show)(_two_fields())
+
+        assert tables == [None, None]
+
+    def test_a_term_whose_entries_cannot_be_read_shows_its_summary_alone(self):
+        stored = jnp.arange(3.0)
+        terms = [
+            NumericArray(stored, label="x"),
+            Record({"y": stored}, label="r"),
+            NumericArrayBatch(stored, "draw", label="b"),
+            NumericRecordBatch({"y": stored}, "draw", label="rows"),
+        ]
+        stored.delete()
+
+        for term in terms:
+            assert repr(term) == str(term) == term._repr_summary()
+        assert repr(terms[1]) == "NumericRecord('r', fields=('y',))"
+        assert terms[1]._repr_html_() is None
+        assert terms[3]._repr_html_() is None
+
+    def test_a_record_with_no_fields_shows_its_summary(self):
+        record = Record({}, label="e")
+
+        assert repr(record) == str(record) == "NumericRecord('e', fields=())"
+        assert record._repr_html_() is None
+
+    def test_a_record_displays_as_a_table_of_paths_and_values_in_a_notebook(self):
+        record = Record({"population": {"mu": 0.5}, "y": jnp.array([2.0, 2.5])}, label="a<b")
+
+        html = record._repr_html_()
+
+        assert html.startswith(
+            '<div><code style="white-space: pre">NumericRecord(&#x27;a&lt;b&#x27;)</code>'
+        )
+        assert "<th>path</th><th>value</th>" in html
+        assert html.count("<tr>") == 3
+        assert "<code>population/mu</code>" in html
+        assert ">[2.  2.5]</code>" in html
+        assert "<th>path</th><th>value</th>" in _two_fields()._repr_html_()
+
+    def test_a_term_inside_another_repr_shows_its_summary_alone(self):
+        atoms = NumericArrayBatch(jnp.arange(3.0), "draw", label="draws")
+        law = EmpiricalDistribution(atoms, output_name="theta")
+
+        assert repr(law) == (
+            "EmpiricalDistribution(\n"
+            "    atoms=NumericArrayBatch(\n"
+            "        'draws',\n"
+            "        levels={'draw': 3},\n"
+            "        element=NumericArraySpec(shape=(), dtype=float32),\n"
+            "    ),\n"
+            "    output_name='theta',\n"
+            ")"
+        )
+
+    def test_the_error_of_a_second_provenance_shows_the_summary(self):
+        x = NumericArray(jnp.arange(3.0), label="x")
+        x.with_provenance(probpipe.Provenance("op"))
+
+        with pytest.raises(RuntimeError) as raised:
+            x.with_provenance(probpipe.Provenance("op"))
+
+        assert str(raised.value) == (
+            "provenance of NumericArray('x', shape=(3,), dtype=float32) is already set; "
+            "it can be set only once"
         )
 
 
@@ -151,11 +352,11 @@ class TestSpecs:
         )
 
     def test_names_that_are_no_identifiers_read_as_one_mapping(self):
-        """A derived component such as mean(theta) cannot be a keyword, so the call maps it."""
-        output = OutputSpec(**{"mean(theta)": NumericArraySpec(())})
-        assert repr(output) == "OutputSpec(**{'mean(theta)': NumericArraySpec(shape=())})"
-        record = RecordSpec({"mean(mu)": (), "mean(tau)": ()})
-        assert repr(record) == "NumericRecordSpec(**{'mean(mu)': (), 'mean(tau)': ()})"
+        """An output such as ``my model`` cannot be a keyword, so the call maps it."""
+        output = OutputSpec(**{"my model": NumericArraySpec(())})
+        assert repr(output) == "OutputSpec(**{'my model': NumericArraySpec(shape=())})"
+        record = RecordSpec({"my model": (), "tau": ()})
+        assert repr(record) == "NumericRecordSpec(**{'my model': (), 'tau': ()})"
         assert eval(repr(output)) == output
 
     def test_a_batch_spec_names_its_levels(self):
@@ -210,13 +411,13 @@ class TestDistributions:
         assert repr(labeled).endswith(",\n    label='q',\n)")
 
     def test_a_law_under_the_label_p_leaves_the_label_out(self):
-        law = EmpiricalDistribution(jnp.arange(3.0), component="theta")
+        law = EmpiricalDistribution(jnp.arange(3.0), output_name="theta")
         assert repr(law).startswith("EmpiricalDistribution(\n    atoms=")
-        assert repr(law).endswith("    component='theta',\n)")
+        assert repr(law).endswith("    output_name='theta',\n)")
         drawn = distribution(
             sample=lambda key: jax.random.normal(key),
             event_spec=NumericArraySpec(()),
-            component="z",
+            output_name="z",
         )
         assert repr(drawn).startswith("Distribution(\n    'z',\n    sample=")
 
@@ -237,12 +438,12 @@ class TestDistributions:
             "Normal('y', loc=0.5, scale=1.0, label='lik', fixed=('mu',))"
         )
 
-    def test_a_partly_bound_kernel_shows_its_fixed_slots(self):
-        def two_slot(beta, sigma):
+    def test_a_partly_bound_kernel_shows_its_fixed_inputs(self):
+        def two_input(beta, sigma):
             return Normal("y", beta, sigma)
 
         kernel = conditional_distribution(
-            two_slot,
+            two_input,
             label="glm",
             given_spec={"beta": NumericArraySpec(()), "sigma": NumericArraySpec(())},
         )
@@ -255,8 +456,8 @@ class TestDistributions:
         likelihood = conditional_distribution(
             lambda mu: Normal("y", mu, 1.0), label="lik", given_spec={"mu": NumericArraySpec(())}
         )
-        prior = EmpiricalDistribution(jnp.linspace(-1.0, 1.0, 5), component="mu", label="prior")
-        model = (likelihood * prior).with_label("model")
+        prior = EmpiricalDistribution(jnp.linspace(-1.0, 1.0, 5), output_name="mu", label="prior")
+        model = (likelihood & prior).with_label("model")
         with workflow_run(seed=0):
             posterior = condition_on(model, {"y": 0.5})
         text = repr(posterior)
@@ -274,31 +475,31 @@ class TestDistributions:
         kernel = conditional_distribution(y_given_mu, given_spec={"mu": NumericArraySpec(())})
         assert repr(kernel) == ("ConditionalDistribution('y', given=('mu',), label='y_given_mu')")
 
-    def test_a_whole_term_event_shows_its_component_and_no_declaration(self):
+    def test_a_whole_term_event_shows_its_output_and_no_declaration(self):
         law = Normal("beta", 0.0, 1.0, label="prior")
         assert repr(law).startswith("Normal('beta', ")
         assert "event_spec=" not in repr(law)
 
-    def test_a_field_view_reads_as_a_call_of_its_constructor(self):
-        joint = Normal("a", 0.0, 1.0) * Normal("b", 0.0, 1.0)
+    def test_a_coupled_marginal_reads_as_a_call_of_its_constructor(self):
+        joint = Normal("a", 0.0, 1.0) & Normal("b", 0.0, 1.0)
         nested = repr(joint).replace("\n", "\n    ")
-        assert repr(joint["a"]) == f"FieldView(\n    {nested},\n    path='a',\n)"
+        assert repr(joint["a"]) == f"CoupledMarginal(\n    {nested},\n    path='a',\n)"
         assert repr(joint["a"].with_label("x")) == repr(joint["a"]) + ".with_label('x')"
 
     def test_a_regrouped_rename_reads_as_a_factored_joint(self):
-        joint = Normal("a", 0.0, 1.0, label="a") * Normal("b", 0.0, 1.0, label="b")
-        renamed = repr(joint.with_path_names({"a": "g/a"}))
+        joint = Normal("a", 0.0, 1.0, label="a") & Normal("b", 0.0, 1.0, label="b")
+        renamed = repr(joint.rename({"a": "g/a"}))
         assert renamed.startswith("FactoredMultivariateGaussian(\n    factors=(")
         assert "label='a·b'" not in renamed
         assert "_Renamed" not in renamed
 
     def test_an_empirical_law_reads_by_its_atoms(self):
-        law = EmpiricalDistribution(jnp.arange(5.0), component="e", label="draws")
+        law = EmpiricalDistribution(jnp.arange(5.0), output_name="e", label="draws")
         assert repr(law).startswith("EmpiricalDistribution(\n    atoms=NumericArrayBatch(")
-        assert repr(law).endswith("    component='e',\n    label='draws',\n)")
+        assert repr(law).endswith("    output_name='e',\n    label='draws',\n)")
 
     def test_a_renamed_empirical_law_reads_by_its_renamed_atoms(self):
-        renamed = EmpiricalDistribution(_two_fields(), label="e").with_path_names({"a": "g/a"})
+        renamed = EmpiricalDistribution(_two_fields(), label="e").rename({"a": "g/a"})
         assert repr(renamed) == (
             "EmpiricalDistribution(\n"
             "    atoms=NumericRecordBatch('rows', levels={'row': 2}, fields=('b', 'g/a')),\n"
@@ -309,29 +510,30 @@ class TestDistributions:
     def test_a_rename_that_holds_its_law_reads_as_that_law_renamed(self):
         """A kernel density estimate does not rebuild itself, so its rename holds it."""
         kde = KDEDistribution(_two_fields(), label="kde")
-        renamed = kde.with_path_names({"a": "g/a"})
-        assert repr(renamed) == repr(kde) + ".with_path_names({'a': 'g/a'})"
+        renamed = kde.rename({"a": "g/a"})
+        assert repr(renamed) == repr(kde) + ".rename({'a': 'g/a'})"
         assert repr(renamed.with_label("other")) == repr(renamed) + ".with_label('other')"
 
-    def test_a_reordered_marginal_reads_as_the_joint_under_its_declaration(self):
-        """No rename states a reorder, so the repr shows the reordered declaration.
-
-        The kernel ``y`` conditions on ``a``, so no product lists ``a`` first.
-        """
+    def test_a_marginal_at_a_list_of_paths_keeps_the_joint_order(self):
+        """The kernel ``y`` conditions on ``a``, and the marginal lists the factors as the joint does."""
         likelihood = conditional_distribution(
             lambda a: Normal("y", a, 1.0), given_spec={"a": NumericArraySpec(())}, label="y"
         )
-        joint = likelihood * Normal("a", 0.0, 1.0, label="a")
-        reordered = repr(joint._marginal(("a", "y")))
-        assert reordered.startswith("FactoredDistribution(\n    factors=(")
-        assert "label='y·a'" not in reordered
-        assert reordered.index("a=NumericArraySpec") < reordered.index("y=NumericArraySpec")
+        joint = likelihood & Normal("a", 0.0, 1.0, label="a")
+        assert repr(joint._marginal(("a", "y"))) == (
+            "FactoredDistribution(\n"
+            "    factors=(\n"
+            "        ConditionalDistribution('y', given=('a',), label='y'),\n"
+            "        Normal('a', loc=0.0, scale=1.0, label='a'),\n"
+            "    ),\n"
+            ")"
+        )
 
-    def test_a_marginal_in_another_product_order_reads_as_that_product(self):
-        joint = Normal("a", 0.0, 1.0) * Gamma("b", 2.0, 1.0)
+    def test_a_marginal_named_out_of_order_reads_as_the_joint_product(self):
+        joint = Normal("a", 0.0, 1.0) & Gamma("b", 2.0, 1.0)
         assert repr(joint._marginal(("b", "a"))) == (
             "FactoredDistribution(\n"
-            "    factors=(Gamma('b', concentration=2.0, rate=1.0), Normal('a', loc=0.0, scale=1.0)),\n"
+            "    factors=(Normal('a', loc=0.0, scale=1.0), Gamma('b', concentration=2.0, rate=1.0)),\n"
             ")"
         )
 
@@ -371,7 +573,7 @@ def test_the_repr_of_a_law_that_holds_paths_fixed_follows_the_call_with_them():
 
 
 def _product() -> probpipe.Distribution:
-    return Normal("y", 0.0, 1.0, label="lik") * Gamma("mu", 2.0, 1.0, label="prior")
+    return Normal("y", 0.0, 1.0, label="lik") & Gamma("mu", 2.0, 1.0, label="prior")
 
 
 def _mixture() -> MixtureDistribution:
@@ -423,7 +625,7 @@ class TestADerivedLabel:
         assert eval(repr(given), _namespace()).label == given.label
 
     def test_a_marginal_of_one_factor_leaves_the_label_of_that_factor_out(self):
-        joint = Normal("a", 0.0, 1.0, label="a") * Normal("b", 0.0, 1.0, label="b")
+        joint = Normal("a", 0.0, 1.0, label="a") & Normal("b", 0.0, 1.0, label="b")
         marginal = joint._marginal(("a",))
         assert repr(marginal) == (
             "FactoredMultivariateGaussian(factors=(Normal('a', loc=0.0, scale=1.0, label='a'),))"
@@ -442,7 +644,7 @@ class TestACarriedLabel:
 
     @pytest.mark.parametrize("target", [EmpiricalDistribution, KDEDistribution])
     def test_a_law_converted_from_a_product_shows_the_products_label(self, target):
-        product = Normal("x", 0.0, 1.0, label="a") * Normal("y", 1.0, 2.0, label="b")
+        product = Normal("x", 0.0, 1.0, label="a") & Normal("y", 1.0, 2.0, label="b")
         with workflow_run(seed=0):
             law = convert(product, target)
         assert law.label == "a·b"
@@ -452,9 +654,9 @@ class TestACarriedLabel:
         likelihood = conditional_distribution(
             lambda mu: Normal("y", mu, 1.0), label="lik", given_spec={"mu": NumericArraySpec(())}
         )
-        prior = EmpiricalDistribution(jnp.linspace(-1.0, 1.0, 5), component="mu", label="prior")
+        prior = EmpiricalDistribution(jnp.linspace(-1.0, 1.0, 5), output_name="mu", label="prior")
         with workflow_run(seed=0):
-            posterior = condition_on(likelihood * prior, {"y": 0.5})
+            posterior = condition_on((likelihood & prior), {"y": 0.5})
         assert posterior.label == "lik·prior"
         assert repr(posterior).endswith("    label='lik·prior',\n    fixed=('y',),\n)")
 
@@ -510,14 +712,28 @@ class TestFunctionsAndOperators:
         info = MethodInfo(True, method_name="closed_form", exact=True)
         assert repr(info) == "MethodInfo(True, method_name='closed_form', exact=True)"
 
+    def test_a_term_reads_by_its_repr_without_computing_its_raw_form(self):
+        class Unresolvable(TrackedTerm):
+            def __init__(self):
+                self._init_tracked("unresolvable")
+
+            @property
+            def raw(self):
+                raise RuntimeError("no exact marginal")
+
+            def __repr__(self):
+                return "Unresolvable()"
+
+        assert format_value(Unresolvable()) == "Unresolvable()"
+
 
 class TestLayout:
     @pytest.mark.parametrize(
         "term",
         [
             _schools(),
-            Normal("a", 0.0, 1.0) * Normal("b", 0.0, 1.0),
-            EmpiricalDistribution(jnp.arange(5.0), component="e"),
+            (Normal("a", 0.0, 1.0) & Normal("b", 0.0, 1.0)),
+            EmpiricalDistribution(jnp.arange(5.0), output_name="e"),
         ],
         ids=["batch", "joint", "empirical"],
     )
@@ -580,10 +796,10 @@ class TestGrouping:
 class TestSignatureAndNotation:
     """The signature states what a term is over, and the notation is ``label(signature)``."""
 
-    def test_a_signature_joins_the_components(self):
+    def test_a_signature_joins_the_outputs(self):
         assert format_signature(["y", "mu"]) == "y, mu"
 
-    def test_given_slots_follow_a_bar(self):
+    def test_inputs_follow_a_bar(self):
         assert format_signature(["y"], ["beta", "sigma"]) == "y | beta, sigma"
 
     def test_fixed_paths_follow_a_semicolon(self):
@@ -605,7 +821,7 @@ class TestSignatureAndNotation:
         assert format_default(jnp.zeros(3)) == "…"
         assert format_default({"a": 1}) == "…"
 
-    def test_a_signature_of_no_components_is_empty(self):
+    def test_a_signature_of_no_outputs_is_empty(self):
         assert format_signature([]) == ""
 
     @pytest.mark.parametrize(

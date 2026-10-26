@@ -20,10 +20,15 @@ import numpy as np
 import pytest
 
 from probpipe import (
+    DistributionBatch,
+    FunctionSpec,
+    InputSpec,
     Normal,
+    NumericArrayBatch,
     NumericArraySpec,
     NumericRecordBatch,
     OpaqueSpec,
+    OutputSpec,
     RecordSpec,
     TermSpec,
     sample,
@@ -31,8 +36,11 @@ from probpipe import (
 from probpipe.core._batch import Batch, BatchSpec
 from probpipe.core._expression import Named
 from probpipe.core._fingerprint import fingerprint
+from probpipe.core._spec_base import _unify_specs
 from probpipe.core.provenance import Provenance
 from probpipe.core.tracked import TrackedTerm
+from probpipe.distributions._conditional import ConditionalDistributionSpec
+from probpipe.values._function_base import _complete_output_metadata
 
 # The doubles' element type is neither a Record, a Distribution, nor a Function,
 # so no term spec fits it: OpaqueSpec is the honest element spec, and doubles as
@@ -40,9 +48,9 @@ from probpipe.core.tracked import TrackedTerm
 _ELEMENT_SPEC = OpaqueSpec()
 
 
-def _spec(axis_groups, level_names, element_spec=_ELEMENT_SPEC):
+def _spec(axis_groups, level_names, element=_ELEMENT_SPEC):
     """A ``BatchSpec`` over the doubles' element type, from aligned axis groups and names."""
-    return BatchSpec._from_groups(element_spec, axis_groups, level_names)
+    return BatchSpec._from_groups(element, axis_groups, level_names)
 
 
 class _Leaf(TrackedTerm):
@@ -54,6 +62,7 @@ class _Leaf(TrackedTerm):
         object.__setattr__(self, "value", value)
         self._init_tracked(label)
 
+    @property
     def raw(self):
         return self.value
 
@@ -67,6 +76,7 @@ class _ListBatch(Batch[_Leaf]):
         object.__setattr__(self, "_store", list(store))
         self._init_batch(spec, label=label)
 
+    @property
     def raw(self):
         return self._store
 
@@ -111,18 +121,18 @@ class _BareBatch(_ListBatch):
 
 
 class _FieldBatch(_ListBatch):
-    """A batch that answers a named key, as a batch of records will.
+    """A batch that answers a path, as a batch of records will.
 
-    The elements here have one field, ``value``, and a name reaches it across the
-    whole batch. Supplying the field side of ``[]`` is all a concrete batch does;
-    what a *position* means stays the ABC's.
+    The elements here have one field, ``value``, and its path reaches it across
+    the whole batch. Supplying the path side of ``[]`` is all a concrete batch
+    does; what a *position* means stays the ABC's.
     """
 
     __slots__ = ()
 
-    def _at_fields(self, path):
-        if path != ("value",):
-            raise KeyError(f"{path!r} is not a field of these elements")
+    def _at_paths(self, paths, *, tuple_given=False):
+        if paths != "value":
+            raise KeyError(f"{paths!r} is not a field of these elements")
         return tuple(self._store)
 
 
@@ -151,6 +161,7 @@ class _ViewBatch(Batch[_Leaf]):
         )
         self._init_batch(spec, label=label)
 
+    @property
     def raw(self):
         return self._root_store
 
@@ -211,6 +222,7 @@ class _StoringBatch(Batch[_Leaf]):
         object.__setattr__(self, "_store", list(elements))
         self._init_batch(spec, label=label)
 
+    @property
     def raw(self):
         return self._store
 
@@ -236,6 +248,7 @@ class _StringSlotsBatch(Batch[int]):
         object.__setattr__(self, "_store", list(store))
         self._init_batch(spec, label=label)
 
+    @property
     def raw(self):
         return self._store
 
@@ -362,11 +375,11 @@ class TestShapeAndLevels:
             BatchSpec(_ELEMENT_SPEC, levels={"draw": 3})
 
     def test_a_level_may_spell_a_parameter_name(self):
-        """The element spec and the mapping are positional-only, so any name is a level."""
-        spec = BatchSpec(_ELEMENT_SPEC, element_spec=2, levels=3)
+        """The element and the mapping are positional-only, so any name is a level."""
+        spec = BatchSpec(_ELEMENT_SPEC, element=2, levels=3)
 
-        assert spec.level_names == ("element_spec", "levels")
-        assert spec.element_spec == _ELEMENT_SPEC
+        assert spec.level_names == ("element", "levels")
+        assert spec.element_spec.term_spec == _ELEMENT_SPEC
 
     def test_the_levels_mapping_rebuilds_the_spec(self, nested):
         levels = nested.spec.levels
@@ -393,13 +406,13 @@ class TestSpec:
         )
 
     def test_the_spec_names_the_batch_not_the_element(self, nested):
-        assert nested.spec != nested.element_spec
-        assert nested.element_spec == _ELEMENT_SPEC
+        assert nested.spec != nested.element_spec.term_spec
+        assert nested.element_spec.term_spec == _ELEMENT_SPEC
 
     def test_an_element_spec_naming_no_kind_is_well_formed(self):
         """The case ``BatchSpec`` exists to cover: a batch of raw values."""
         bare = _BareBatch(range(3), _spec([(3,)], ["draw"], NumericArraySpec(shape=())))
-        assert bare.element_spec == NumericArraySpec(shape=())
+        assert bare.element_spec.term_spec == NumericArraySpec(shape=())
         assert isinstance(bare.spec, BatchSpec)
 
     def test_axis_groups_are_normalized_to_tuples(self):
@@ -431,7 +444,7 @@ class TestSpec:
 
     def test_a_sub_batch_view_keeps_the_element_spec_over_surviving_levels(self, nested):
         inner = nested[1]
-        assert inner.element_spec == nested.element_spec
+        assert inner.element_spec.term_spec == nested.element_spec.term_spec
         assert inner.spec == _spec([(3,)], ["draw"])
 
     def test_a_sliced_view_narrows_the_axis_in_its_spec(self, nested):
@@ -455,6 +468,156 @@ class TestSpec:
 
     def test_a_batch_spec_is_a_term_spec(self, flat):
         assert isinstance(flat.spec, TermSpec)
+
+
+class TestElementSpec:
+    """``element_spec`` is the output spec of one element, whose ``term_spec`` is the element's spec."""
+
+    @pytest.mark.parametrize(
+        ("element", "expected"),
+        [
+            (NumericArraySpec(()), OutputSpec(element=NumericArraySpec(()))),
+            (OpaqueSpec(), OutputSpec(element=OpaqueSpec())),
+            (RecordSpec(a=()), OutputSpec(RecordSpec(a=()))),
+            (Normal("mu", 0.0, 1.0).spec, OutputSpec(Normal("mu", 0.0, 1.0).spec)),
+            (
+                ConditionalDistributionSpec(
+                    InputSpec(mu=NumericArraySpec(())), OutputSpec(y=NumericArraySpec(()))
+                ),
+                OutputSpec(
+                    ConditionalDistributionSpec(
+                        InputSpec(mu=NumericArraySpec(())), OutputSpec(y=NumericArraySpec(()))
+                    )
+                ),
+            ),
+            (
+                BatchSpec(RecordSpec(a=()), draw=2),
+                OutputSpec(BatchSpec(RecordSpec(a=()), draw=2)),
+            ),
+            # The positional form refuses these until a function's and a batch of
+            # single values' outputs are defined, so they keep the keyword form.
+            (FunctionSpec(), OutputSpec(element=FunctionSpec())),
+            (
+                BatchSpec(NumericArraySpec(()), draw=2),
+                OutputSpec(element=BatchSpec(NumericArraySpec(()), draw=2)),
+            ),
+        ],
+        ids=[
+            "array",
+            "opaque",
+            "record",
+            "law",
+            "kernel",
+            "batch-of-records",
+            "function",
+            "batch-of-arrays",
+        ],
+    )
+    def test_a_bare_spec_takes_the_raw_default(self, element, expected):
+        spec = BatchSpec(element, sample=3)
+        assert spec.element_spec == expected
+        assert spec.element_spec.term_spec == element
+
+    def test_an_output_spec_is_kept_as_given(self):
+        named = OutputSpec(x=NumericArraySpec(()))
+        assert BatchSpec(named, sample=4).element_spec is named
+
+    def test_the_raw_default_given_explicitly_is_the_same_spec(self):
+        explicit = BatchSpec(OutputSpec(element=NumericArraySpec(())), sample=4)
+        bare = BatchSpec(NumericArraySpec(()), sample=4)
+        assert explicit == bare
+        assert hash(explicit) == hash(bare)
+
+    def test_specs_whose_elements_differ_only_in_their_name_are_unequal(self):
+        assert BatchSpec(OutputSpec(x=NumericArraySpec(())), sample=4) != BatchSpec(
+            NumericArraySpec(()), sample=4
+        )
+
+    def test_an_output_spec_whose_spec_is_not_known_is_refused(self):
+        with pytest.raises(TypeError, match="not known yet"):
+            BatchSpec(OutputSpec(x=None), sample=4)
+
+    def test_the_repr_leaves_out_the_raw_default_and_shows_a_given_name(self):
+        assert repr(BatchSpec(NumericArraySpec(()), sample=4)) == (
+            "BatchSpec(NumericArraySpec(shape=()), sample=4)"
+        )
+        named = repr(BatchSpec(OutputSpec(x=NumericArraySpec(())), sample=4))
+        assert named == "BatchSpec(OutputSpec(x=NumericArraySpec(shape=())), sample=4)"
+
+    def test_replacing_the_element_spec_reads_it_as_the_constructor_does(self):
+        """``copy.replace`` calls ``__replace__``, which exists before Python 3.13 too."""
+        spec = BatchSpec(NumericArraySpec(()), sample=4)
+        replaced = spec.__replace__(element_spec=RecordSpec(a=()))
+        assert replaced.element_spec == OutputSpec(RecordSpec(a=()))
+        assert replaced.levels == spec.levels
+
+    def test_binding_a_dimension_keeps_the_element_name(self):
+        spec = BatchSpec(OutputSpec(x=NumericArraySpec(("n",))), sample=4)
+        assert spec.with_dim_sizes(n=3).element_spec == OutputSpec(x=NumericArraySpec((3,)))
+
+    def test_conformance_binds_through_the_elements_spec_and_ignores_their_name(self):
+        declared = BatchSpec(OutputSpec(x=NumericArraySpec(("n",))), sample=4)
+        bindings: dict[str, int] = {}
+        _unify_specs(declared, BatchSpec(NumericArraySpec((3,)), sample=4), bindings, "draws")
+        assert bindings == {"n": 3}
+        assert declared.free_dims == {"n"}
+
+    def test_is_valid_compares_the_elements_spec_and_not_their_name(self):
+        named = BatchSpec(OutputSpec(x=NumericArraySpec((), dtype=jnp.float32)), sample=4)
+        assert named.is_valid(NumericArrayBatch(jnp.zeros(4), "sample", label="draws"))
+        assert not named.is_valid(NumericArrayBatch(jnp.zeros((4, 2)), "sample", label="draws"))
+
+    def test_a_batch_spec_has_the_outputs_of_its_element_spec(self):
+        positional = BatchSpec(RecordSpec(a=(), b=()), sample=4)
+        assert list(OutputSpec(positional).outputs) == list(positional.element_spec.outputs)
+        assert list(OutputSpec(positional).outputs) == ["a", "b"]
+        named = BatchSpec(OutputSpec(params=RecordSpec(a=(), b=())), sample=4)
+        assert list(OutputSpec(named).outputs) == ["params"]
+
+    def test_renaming_the_outputs_of_a_batch_spec_renames_its_element_spec(self):
+        spec = OutputSpec(BatchSpec(RecordSpec(a=(), b=()), sample=4))
+        renamed = spec.rename({"a": "z"})
+        assert renamed.term_spec.element_spec == OutputSpec(RecordSpec(z=(), b=()))
+
+    def test_completing_a_declared_batch_keeps_its_element_name(self):
+        declared = BatchSpec(OutputSpec(x=NumericArraySpec(())), sample=4)
+        produced = BatchSpec(NumericArraySpec((), dtype=jnp.float32), sample=4)
+        completed = _complete_output_metadata(declared, produced)
+        assert completed.element_spec == OutputSpec(x=NumericArraySpec((), dtype=jnp.float32))
+
+    def test_the_fingerprint_of_a_spec_leaves_out_the_element_name(self):
+        named = BatchSpec(OutputSpec(x=NumericArraySpec(())), sample=4)
+        assert fingerprint(named) == fingerprint(BatchSpec(NumericArraySpec(()), sample=4))
+
+    def test_a_batch_of_arrays_names_its_elements_element_and_its_repr_hides_it(self):
+        values = jnp.arange(4.0)
+        batch = NumericArrayBatch(values, "sample", label="samples")
+        assert list(batch.spec.element_spec.outputs) == ["element"]
+        assert batch.spec.element_spec.term_spec == NumericArraySpec((), dtype=values.dtype)
+        assert batch.element_spec is batch.spec.element_spec
+        assert "OutputSpec" not in repr(batch)
+        assert "OutputSpec" not in repr(batch.spec)
+
+    def test_a_batch_of_records_has_its_fields_as_outputs(self):
+        draws = sample((Normal("a", 0.0, 1.0) & Normal("b", 0.0, 1.0)), sample_shape=3)
+        assert list(draws.element_spec.outputs) == ["a", "b"]
+        assert list(OutputSpec(draws.spec).outputs) == ["a", "b"]
+
+    def test_a_batch_of_laws_reads_its_event_spec_through_the_term_spec(self):
+        laws = DistributionBatch([Normal("mu", 0.0, 1.0), Normal("mu", 1.0, 1.0)], "law")
+        assert laws.event_spec == laws.spec.element_spec.term_spec.event_spec
+        assert laws.spec.element_spec.term_spec == Normal("mu", 0.0, 1.0).spec
+        assert laws.element_spec == OutputSpec(Normal("mu", 0.0, 1.0).spec)
+
+    def test_a_batch_constructor_takes_the_elements_spec_as_element(self):
+        batch = NumericArrayBatch(
+            jnp.zeros((3, 2)), "sample", label="draws", element=NumericArraySpec((2,))
+        )
+        assert batch.element_spec.term_spec == NumericArraySpec((2,))
+        with pytest.raises(TypeError, match="element must be a NumericArraySpec"):
+            NumericArrayBatch(
+                jnp.zeros(3), "sample", label="draws", element=OutputSpec(x=NumericArraySpec(()))
+            )
 
 
 class TestLevelNames:
@@ -534,7 +697,7 @@ class TestLevelNames:
 
     @pytest.mark.parametrize("name", ["my level", "mean(mu)", "[model] | y", "3"])
     def test_a_level_name_is_any_non_empty_string_without_a_slash(self, name):
-        """A level name follows the rule for component names."""
+        """A level name follows the rule for output names."""
         assert _spec([(2,)], [name]).level_names == (name,)
 
     def test_a_level_name_containing_a_slash_raises(self):
@@ -1238,7 +1401,7 @@ class TestTheBatchLabelIsGroupedBeforeTheSelection:
 
     def test_draws_of_a_product_group_their_label(self):
         draws = sample(
-            Normal("x", 0.0, 1.0, label="x") * Normal("y", 0.0, 1.0, label="y"), sample_shape=6
+            (Normal("x", 0.0, 1.0, label="x") & Normal("y", 0.0, 1.0, label="y")), sample_shape=6
         )
         assert draws.label == "(x, y) ~ x·y"
         assert draws[0:2].label == "((x, y) ~ x·y)[sample=0:2]"
@@ -1391,7 +1554,7 @@ class TestABatchOfBatches:
         return _NestedBatch(laws, BatchSpec(inner_spec, law=2), label="outer")
 
     def test_the_element_spec_is_itself_a_batch_spec(self, outer):
-        assert isinstance(outer.element_spec, BatchSpec)
+        assert isinstance(outer.element_spec.term_spec, BatchSpec)
         assert outer.spec.is_valid(outer)
 
     def test_an_element_is_the_inner_batch(self, outer):
@@ -1410,51 +1573,85 @@ class TestABatchOfBatches:
 
 
 class TestIndexingDispatchesOnTheKeyType:
-    """A name addresses a field within the elements, a position addresses the axes.
+    """A path addresses the elements, a position addresses the axes.
 
-    The two namespaces never collide, an axis having no name and a field no
+    The two namespaces never collide, an axis having no name and a path no
     position, which is what lets one ``[]`` serve both.
     """
 
-    def test_a_name_reaches_the_elements_rather_than_an_axis(self, flat):
-        with pytest.raises(TypeError, match="its elements have no named fields"):
+    def test_a_path_reaches_the_elements_rather_than_an_axis(self, flat):
+        with pytest.raises(TypeError, match="since its elements are single values with no paths"):
             flat["x"]
 
-    def test_a_path_of_names_reaches_the_elements_too(self, flat):
+    def test_a_list_of_paths_reaches_the_elements_too(self, flat):
         with pytest.raises(
-            TypeError, match=r"by \('outer', 'a'\): its elements have no named fields"
+            TypeError,
+            match=r"by \('outer', 'a'\), since its elements are single values with no paths",
         ):
             flat["outer", "a"]
 
-    def test_the_refusal_says_where_the_axes_are_addressed(self, flat):
-        with pytest.raises(TypeError, match=r"or at_levels\(\) to index by level name"):
+    def test_the_refusal_says_the_batch_holds_the_values(self, flat):
+        with pytest.raises(TypeError, match=r"Read the values with \.raw"):
             flat["x"]
 
-    def test_a_batch_whose_elements_have_fields_answers_a_name(self):
+    def test_a_batch_whose_elements_have_fields_answers_a_path(self):
         fields = _FieldBatch(range(6), _spec([(2,), (3,)], ["chain", "draw"]))
         assert fields["value"] == (0, 1, 2, 3, 4, 5)
         with pytest.raises(KeyError, match="not a field of these elements"):
             fields["nope"]
 
-    def test_supplying_the_field_side_leaves_the_axis_side_alone(self):
+    def test_supplying_the_path_side_leaves_the_axis_side_alone(self):
         fields = _FieldBatch(range(6), _spec([(2,), (3,)], ["chain", "draw"]))
         assert fields[1, 2].value == 5
         assert fields[1].level_names == ("draw",)
         assert fields[:, 1].label == "b[draw=1]"
 
-    def test_a_tuple_mixing_names_and_positions_addresses_neither(self, nested):
-        with pytest.raises(TypeError, match="cannot mix field names and axis indices"):
+    def test_a_tuple_mixing_paths_and_positions_addresses_neither(self, nested):
+        with pytest.raises(TypeError, match=r"cannot mix a path and a position in one \[\]"):
             nested[0, "x"]
 
     def test_a_mixed_tuple_is_blamed_on_the_mix_and_not_on_the_count(self, flat):
         # One axis and two entries, so a complaint about arity would fire first
-        # and blame the count rather than the name that indexes no axis.
-        with pytest.raises(TypeError, match="cannot mix field names"):
+        # and blame the count rather than the path that indexes no axis.
+        with pytest.raises(TypeError, match=r"cannot mix a path and a position in one \[\]"):
             flat[0, "x"]
 
-    def test_an_empty_tuple_selects_the_whole_batch(self, nested):
-        assert nested[()].batch_shape == (2, 3)
-        assert nested[()].label == "b"
+    def test_an_empty_tuple_names_no_paths(self, nested):
+        # ``batch[tuple(paths)]`` with no paths must not return everything.
+        with pytest.raises(ValueError, match="since it names no paths"):
+            nested[()]
+
+    def test_a_list_of_positions_is_refused(self, flat):
+        with pytest.raises(TypeError, match="cannot index a batch by a list of positions"):
+            flat[[0, 2]]
+
+    @pytest.mark.parametrize(
+        "positions", [np.array([0, 2]), jnp.array([0, 2])], ids=["numpy", "jax"]
+    )
+    def test_an_integer_array_is_refused(self, flat, positions):
+        with pytest.raises(TypeError, match="must be indexed by integers or slices"):
+            flat[positions]
+
+    @pytest.mark.parametrize("position", [np.int64(1), jnp.int32(1)], ids=["numpy", "jax"])
+    def test_an_integer_scalar_is_a_position(self, flat, position):
+        assert flat[position].label == flat[1].label
+
+    @pytest.mark.parametrize("key", [{"x"}, iter(["x"])], ids=["set", "iterator"])
+    def test_a_set_or_an_iterator_is_refused(self, flat, key):
+        with pytest.raises(TypeError, match="it must be a path, a list of paths, or a position"):
+            flat[key]
+
+    def test_an_ellipsis_is_refused(self, flat):
+        with pytest.raises(TypeError):
+            flat[...]
+
+    def test_a_path_is_never_a_member_of_a_batch_without_paths(self, flat):
+        assert "x" not in flat
+        assert 0 not in flat
+
+    def test_membership_tests_paths_and_never_elements(self):
+        fields = _FieldBatch(range(6), _spec([(2,), (3,)], ["chain", "draw"]))
+        assert 3 not in fields
 
 
 class TestNoneSpellsAWholeAxisByKeywordAlone:
@@ -1550,7 +1747,7 @@ class TestASubBatchCanBeAView:
             (slice(None), 1),
             (slice(None, None, -1), 0),
             (slice(1, 2), slice(None, None, -1)),
-            (),
+            slice(None),
         ],
     )
     def test_a_view_and_a_copy_agree_on_labels_and_elements(self, viewed, nested, index):
@@ -1575,19 +1772,15 @@ class TestRepr:
     """Design II.4: the label first, the levels as a mapping, and the element spec."""
 
     def test_the_repr_names_the_label_the_levels_and_the_element_spec(self, nested):
-        assert repr(nested) == (
-            "Batch('b', levels={'chain': 2, 'draw': 3}, element_spec=OpaqueSpec())"
-        )
+        assert repr(nested) == ("Batch('b', levels={'chain': 2, 'draw': 3}, element=OpaqueSpec())")
 
     def test_a_multi_axis_level_shows_its_axes(self, two_axis):
-        assert repr(two_axis) == "Batch('b', levels={'draw': (2, 3)}, element_spec=OpaqueSpec())"
+        assert repr(two_axis) == "Batch('b', levels={'draw': (2, 3)}, element=OpaqueSpec())"
 
     def test_a_view_reprs_under_the_label_it_derived(self, nested):
-        assert (
-            repr(nested[1]) == "Batch('b[chain=1]', levels={'draw': 3}, element_spec=OpaqueSpec())"
-        )
+        assert repr(nested[1]) == "Batch('b[chain=1]', levels={'draw': 3}, element=OpaqueSpec())"
         assert repr(nested.at_levels(draw=slice(0, 2))) == (
-            "Batch('b[draw=0:2]', levels={'chain': 2, 'draw': 2}, element_spec=OpaqueSpec())"
+            "Batch('b[draw=0:2]', levels={'chain': 2, 'draw': 2}, element=OpaqueSpec())"
         )
 
     def test_the_repr_reads_no_element(self):
@@ -1595,25 +1788,23 @@ class TestRepr:
         # must not, since with_provenance interpolates the batch into an error.
         unreadable = _ListBatch([], _spec([(2,), (3,)], ["chain", "draw"]))
         assert repr(unreadable) == (
-            "Batch('b', levels={'chain': 2, 'draw': 3}, element_spec=OpaqueSpec())"
+            "Batch('b', levels={'chain': 2, 'draw': 3}, element=OpaqueSpec())"
         )
         with pytest.raises(IndexError):
             unreadable[0, 0]
 
     def test_renaming_a_level_shows_in_both_the_levels_and_the_label(self, nested):
         renamed = nested[1].with_level_names(draw="step")
-        assert repr(renamed) == (
-            "Batch('b[chain=1]', levels={'step': 3}, element_spec=OpaqueSpec())"
-        )
+        assert repr(renamed) == ("Batch('b[chain=1]', levels={'step': 3}, element=OpaqueSpec())")
 
     def test_a_long_repr_shows_one_field_per_line(self):
         spec = RecordSpec({f"field_{index}": () for index in range(6)})
-        batch = _ListBatch([None] * 4, _spec([(4,)], ["draw"], element_spec=spec))
+        batch = _ListBatch([None] * 4, _spec([(4,)], ["draw"], element=spec))
         assert repr(batch) == (
             "Batch(\n"
             "    'b',\n"
             "    levels={'draw': 4},\n"
-            "    element_spec=NumericRecordSpec(\n"
+            "    element=NumericRecordSpec(\n"
             "        field_0=(),\n"
             "        field_1=(),\n"
             "        field_2=(),\n"
@@ -1626,19 +1817,19 @@ class TestRepr:
 
 
 class TestTheTwoWaysOfIndexingCompose:
-    """A name and a position address orthogonal things, so either can follow the other."""
+    """A path and a position address orthogonal things, so either can follow the other."""
 
     @pytest.fixture
     def fields(self):
         return _FieldBatch(range(6), _spec([(2,), (3,)], ["chain", "draw"]))
 
-    def test_a_name_addresses_the_fields_of_a_view(self, fields):
-        # The view is a _FieldBatch too, so it answers a name over just the
+    def test_a_path_addresses_the_fields_of_a_view(self, fields):
+        # The view is a _FieldBatch too, so it answers a path over just the
         # elements it selected.
         assert fields[1]["value"] == (3, 4, 5)
         assert fields[:, 1:]["value"] == (1, 2, 4, 5)
 
-    def test_a_name_addresses_the_fields_of_a_descending_view(self, fields):
+    def test_a_path_addresses_the_fields_of_a_descending_view(self, fields):
         assert fields.at_levels(draw=slice(None, None, -1))[0]["value"] == (2, 1, 0)
 
     def test_a_renamed_level_does_not_disturb_the_fields(self, fields):
@@ -1646,7 +1837,7 @@ class TestTheTwoWaysOfIndexingCompose:
 
     def test_a_mixed_tuple_is_refused_whichever_comes_first(self, fields):
         for key in [(0, "value"), ("value", 0)]:
-            with pytest.raises(TypeError, match="cannot mix field names and axis indices"):
+            with pytest.raises(TypeError, match=r"cannot mix a path and a position in one \[\]"):
                 fields[key]
 
 
@@ -1688,9 +1879,7 @@ class TestAViewOverSharedStorageBehavesLikeAnyBatch:
         assert renamed._root_store is viewed._root_store
 
     def test_a_private_class_shows_its_public_class(self, viewed):
-        assert repr(viewed) == (
-            "Batch('b', levels={'chain': 2, 'draw': 3}, element_spec=OpaqueSpec())"
-        )
+        assert repr(viewed) == ("Batch('b', levels={'chain': 2, 'draw': 3}, element=OpaqueSpec())")
 
 
 class TestAStoredElementKeepsItsOwnIdentity:
@@ -1926,8 +2115,8 @@ def _args_for(kind: str, *, shape: tuple[int, ...], levels):
         store[...] = (lambda: 1) if kind == "FunctionBatch" else "x"
         return (store, levels), {}
     if kind == "NumericArrayBatch":
-        return (jnp.zeros(shape), levels), {"element_spec": NumericArraySpec(())}
-    return ({"x": jnp.zeros(shape)}, levels), {"element_spec": RecordSpec(x=())}
+        return (jnp.zeros(shape), levels), {"element": NumericArraySpec(())}
+    return ({"x": jnp.zeros(shape)}, levels), {"element": RecordSpec(x=())}
 
 
 class TestTheConstructorSignatureContract:

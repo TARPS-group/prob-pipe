@@ -8,10 +8,6 @@ parameters, in order, with the declared kinds and defaults.
 
 from __future__ import annotations
 
-import importlib.util
-import sys
-from pathlib import Path
-
 import pytest
 
 import probpipe.distributions as distributions
@@ -26,13 +22,21 @@ from probpipe.distributions import (
     _from_functions,
     _views,
 )
-
-_ROOT = Path(__file__).resolve().parents[2]
-_TOOL = _ROOT / "scripts" / "design" / "design_blocks.py"
+from tests._design_conformance import (
+    DESIGN_IS_CHECKED_OUT,
+    NOT_IMPLEMENTED,
+    PendingMembers,
+    declaration_cases,
+    declared_name,
+    design_blocks,
+    findings_of_member,
+    module_resolver,
+    pending_member_cases,
+    unexpected_findings,
+)
 
 pytestmark = pytest.mark.skipif(
-    not (_ROOT / "design").is_dir() or not _TOOL.exists(),
-    reason="the design reference is not checked out",
+    not DESIGN_IS_CHECKED_OUT, reason="the design reference is not checked out"
 )
 
 #: The sections the distribution layer realizes, in the order the reference gives them.
@@ -63,67 +67,81 @@ _OTHER_PACKAGES = frozenset(
     }
 )
 
-#: Declarations the implementation does not match yet, with the change each awaits.
-_PENDING: dict[str, str] = {
-    "Converter": "check and execute take the converter options as keywords, as V.4 forwards them",
-    "ConverterRegistry": "convert takes the converter options as keywords, as V.4 forwards them",
+#: The members that differ from the design today, by finding name, each with
+#: the problem the check reports and the behavior it awaits. The rule is stated
+#: in ``tests/_design_conformance.py``.
+_PENDING: PendingMembers = {
+    "Distribution.output": (
+        NOT_IMPLEMENTED,
+        "the term at one output of a law, d.output(name), is not implemented",
+    ),
+    "Distribution.without": (
+        NOT_IMPLEMENTED,
+        "a law over its event without some paths, d.without(*paths), is not implemented",
+    ),
+    "ConditionalDistribution.__getitem__": (
+        NOT_IMPLEMENTED,
+        "the marginal kernel at paths, k[paths], is not implemented",
+    ),
+    "ConditionalDistribution.output": (
+        NOT_IMPLEMENTED,
+        "the term at one output of a kernel, k.output(name), is not implemented",
+    ),
+    "ConditionalDistribution.without": (
+        NOT_IMPLEMENTED,
+        "a kernel over its event without some paths, k.without(*paths), is not implemented",
+    ),
 }
 
 
-def _tool():
-    if "design_blocks" in sys.modules:
-        return sys.modules["design_blocks"]
-    spec = importlib.util.spec_from_file_location("design_blocks", _TOOL)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    sys.modules["design_blocks"] = module
-    spec.loader.exec_module(module)
-    return module
+_resolve_in_modules = module_resolver(_MODULES)
 
 
 def _resolve(name: str):
-    if name == "__mul__":
-        return _distribution.Distribution.__mul__
-    for module in _MODULES:
-        if hasattr(module, name):
-            return getattr(module, name)
-    return None
+    """Look a declared name up in the modules, where ``&``, ``*``, and ``bool`` resolve on ``Distribution``."""
+    if name in {"__and__", "__mul__", "__bool__"}:
+        return getattr(_distribution.Distribution, name)
+    return _resolve_in_modules(name)
 
 
-def _declared_name(declaration) -> str:
-    member = getattr(declaration, "member", None)
-    return member.name if member is not None else declaration.name
-
-
-def _cases() -> list:
-    if not _TOOL.exists():
+def _declarations() -> list:
+    """The declarations of the sections that this package realizes."""
+    if not DESIGN_IS_CHECKED_OUT:
         return []
-    tool = _tool()
-    cases = []
-    for declaration in tool.declarations(_SECTIONS):
-        name = _declared_name(declaration)
-        if name in _OTHER_PACKAGES:
-            continue
-        marks = ()
-        if name in _PENDING:
-            marks = pytest.mark.pending(reason=_PENDING[name], raises=AssertionError)
-        cases.append(pytest.param(declaration, id=f"{declaration.section}-{name}", marks=marks))
-    return cases
+    return [
+        declaration
+        for declaration in design_blocks().declarations(_SECTIONS)
+        if declared_name(declaration) not in _OTHER_PACKAGES
+    ]
+
+
+def _findings(declaration) -> list:
+    """The tool's findings for *declaration*."""
+    return design_blocks().check([declaration], _resolve)
 
 
 class TestDeclarationsAreImplemented:
-    @pytest.mark.parametrize("declaration", _cases())
+    @pytest.mark.parametrize("declaration", declaration_cases(_declarations()))
     def test_the_declaration_matches_the_implementation(self, declaration):
-        findings = _tool().check([declaration], _resolve)
-        assert not findings, "; ".join(f"{f.name} {f.problem}" for f in findings)
+        unexpected = unexpected_findings(_findings(declaration), _PENDING)
+        assert not unexpected, "; ".join(unexpected)
 
-    def test_a_kernel_composes_by_the_declared_signature(self):
-        tool = _tool()
-        (declaration,) = [d for d in tool.declarations(["IV.2"]) if _declared_name(d) == "__mul__"]
-        findings = tool.check(
-            [declaration],
+    @pytest.mark.parametrize("member_name", pending_member_cases(_PENDING))
+    def test_a_pending_member_matches_its_declaration(self, member_name):
+        findings = findings_of_member(member_name, _declarations(), _findings)
+        assert not findings, "; ".join(findings)
+
+    def test_a_kernel_merges_by_the_declared_signature(self):
+        design_blocks_tool = design_blocks()
+        (merge_declaration,) = [
+            declaration
+            for declaration in design_blocks_tool.declarations(["IV.2"])
+            if declared_name(declaration) == "__and__"
+        ]
+        findings = design_blocks_tool.check(
+            [merge_declaration],
             lambda name: (
-                _conditional.ConditionalDistribution.__mul__ if name == "__mul__" else None
+                _conditional.ConditionalDistribution.__and__ if name == "__and__" else None
             ),
         )
         assert not findings, findings
@@ -132,8 +150,10 @@ class TestDeclarationsAreImplemented:
 class TestExportsAreDeclared:
     def test_every_exported_distribution_kind_is_declared_or_derived_by_rule(self):
         """A public name the reference does not declare, or derive by its closure rule, is drift."""
-        tool = _tool()
-        declared = {_declared_name(d) for d in tool.declarations(_SECTIONS)}
+        design_blocks_tool = design_blocks()
+        declared = {
+            declared_name(declaration) for declaration in design_blocks_tool.declarations(_SECTIONS)
+        }
         # III.9 names three conditional twins and derives the rest from its closure rule.
         by_rule = {twin.__name__ for twin in _capabilities._CONDITIONAL_TWINS.values()}
         new_modules = (_views, _capabilities, _conditional, _batches, _factored)
@@ -149,11 +169,12 @@ class TestExportsAreDeclared:
         assert not undeclared, sorted(undeclared)
 
     def test_the_conditional_mirror_covers_every_unconditional_capability(self):
-        tool = _tool()
+        design_blocks_tool = design_blocks()
         protocols = {
-            _declared_name(d)
-            for d in tool.declarations(["III.8"])
-            if _declared_name(d).startswith("Supports") and "Conditioning" not in _declared_name(d)
+            declared_name(declaration)
+            for declaration in design_blocks_tool.declarations(["III.8"])
+            if declared_name(declaration).startswith("Supports")
+            and "Conditioning" not in declared_name(declaration)
         }
         mirrored = {protocol.__name__ for protocol in _capabilities._CONDITIONAL_TWINS}
         assert mirrored == protocols

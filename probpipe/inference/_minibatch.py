@@ -38,7 +38,8 @@ log-density of a subset of them is read through the kernel's
 from __future__ import annotations
 
 from collections.abc import Callable
-from math import prod
+from functools import partial
+from math import ceil, log1p, prod
 from typing import Any, ClassVar
 
 import jax
@@ -57,10 +58,10 @@ from ..distributions._capabilities import (
 )
 from ..distributions._conditional import ConditionalDistribution
 from ..distributions._distribution import Distribution, DistributionSpec
-from ..distributions._factored import _components_of
+from ..distributions._factored import _outputs_of
 from ..families._random_functions import RandomFunction, RandomMeasure
+from ..operations._inference_target import _described
 from ..values._function_base import FunctionSpec
-from ._inference_utils import described
 
 __all__ = ["MinibatchedDistribution"]
 
@@ -95,6 +96,7 @@ def _data_size(data: Any) -> int:
     return int(shape[0])
 
 
+@partial(jax.jit, static_argnames=("n", "batch_size", "with_replacement"))
 def _draw_indices(
     key: PRNGKey,
     n: int,
@@ -102,23 +104,107 @@ def _draw_indices(
     *,
     with_replacement: bool,
 ) -> Array:
-    """Draw ``batch_size`` indices uniformly from ``range(n)``."""
+    """Draw ordered indices uniformly from ``range(n)``.
+
+    Parameters
+    ----------
+    key : PRNGKey
+        The random key. Reusing it with the same arguments reproduces the draw.
+    n : int
+        Population size, positive and static for JAX.
+    batch_size : int
+        Number of indices, between one and *n*, static for JAX.
+    with_replacement : bool
+        Whether indices may repeat, static for JAX. Otherwise the indices
+        are distinct, with a uniformly random order.
+
+    Returns
+    -------
+    Array
+        Integer indices of shape ``(batch_size,)`` in ``[0, n)``.
+
+    Notes
+    -----
+    Sampling without replacement retains the first occurrences from batches
+    of independent candidates. If a batch supplies too few distinct indices,
+    further candidates supplement the retained indices. Sorting identifies
+    duplicates while preserving the original order of first occurrences.
+    Candidate arrays have size proportional to the smaller of ``batch_size``
+    and ``n - batch_size``. Their sizes depend only on these static dimensions.
+    Batches larger than half the population sample the excluded indices, then
+    shuffle their complement. The complement mask, output and permutation
+    still require O(n) space. A full batch is a population permutation.
+    """
     if with_replacement:
         return jax.random.randint(key, shape=(batch_size,), minval=0, maxval=n)
-    # Without replacement: random permutation, take first batch_size.
-    return jax.random.permutation(key, n)[:batch_size]
+    if batch_size == n:
+        return jax.random.permutation(key, n)
+    if batch_size <= n // 2:
+        return _sample_unique_indices(key, n, batch_size)
+    subset_key, order_key = jax.random.split(key)
+    excluded = _sample_unique_indices(subset_key, n, n - batch_size)
+    included = jnp.ones((n,), dtype=bool).at[excluded].set(False)
+    indices = jnp.nonzero(included, size=batch_size)[0]
+    return jax.random.permutation(order_key, indices)
 
 
-def _parameter_declaration(prior: Any, component: str) -> OutputSpec:
-    """The declaration of the parameters *prior* is a law over.
+def _unique_prefix(candidates: Array, size: int, n: int) -> Array:
+    """The first *size* distinct candidates, padded with the sentinel *n*.
+
+    Candidates form a one-dimensional array of at least *size* integers in
+    ``[0, n]``. The sentinel is ignored when identifying first occurrences.
+    The returned array has shape ``(size,)``
+    and retains the candidates' original order.
+    """
+    count = candidates.shape[0]
+    values, positions = jax.lax.sort_key_val(candidates, jnp.arange(count), is_stable=True)
+    first = jnp.concatenate((jnp.ones((1,), dtype=bool), values[1:] != values[:-1]))
+    positions = jnp.sort(jnp.where(first & (values < n), positions, count))[:size]
+    padded = jnp.concatenate((candidates, jnp.full((1,), n, dtype=candidates.dtype)))
+    return padded[positions]
+
+
+def _candidate_count(n: int, size: int) -> int:
+    """Candidate allocation for static dimensions ``1 <= size <= n // 2``."""
+    # N log(N / (N - size)) estimates the draws needed to collect size values.
+    # The surplus limits retries even near half the population; its maximum
+    # remains proportional to size. Retaining first occurrences makes every
+    # ordered subset equally likely, regardless of this allocation choice.
+    return max(size + 16, ceil(-1.25 * n * log1p(-size / n)))
+
+
+def _sample_unique_indices(key: PRNGKey, n: int, size: int) -> Array:
+    """Draw *size* distinct indices in uniform random order using bounded arrays.
+
+    The static dimensions satisfy ``1 <= size <= n // 2``. The returned
+    integer array has shape ``(size,)`` with values in ``[0, n)``.
+    Reusing a key and dimensions reproduces the draw on the same backend.
+    """
+    if size == 1:
+        return jax.random.randint(key, (1,), 0, n)
+    count = _candidate_count(n, size)
+    key, subkey = jax.random.split(key)
+    selected = _unique_prefix(jax.random.randint(subkey, (count,), 0, n), size, n)
+
+    def supplement(state: tuple[PRNGKey, Array]) -> tuple[PRNGKey, Array]:
+        key, selected = state
+        key, subkey = jax.random.split(key)
+        candidates = jnp.concatenate((selected, jax.random.randint(subkey, (count,), 0, n)))
+        return key, _unique_prefix(candidates, size, n)
+
+    return jax.lax.while_loop(lambda state: state[1][-1] == n, supplement, (key, selected))[1]
+
+
+def _parameter_declaration(prior: Any, output_name: str) -> OutputSpec:
+    """The event spec of the parameters *prior* is a law over.
 
     A prior that is not a distribution declares nothing, so its parameters are
-    opaque under *component*.
+    opaque under *output_name*.
     """
     try:
         return prior.event_spec
     except AttributeError:
-        return OutputSpec(**{component: OpaqueSpec()})
+        return OutputSpec(**{output_name: OpaqueSpec()})
 
 
 def _reads_observations(likelihood: Any) -> bool:
@@ -132,14 +218,14 @@ def _subset_scoring_reason(likelihood: Any) -> str:
     """Why *likelihood*, which :func:`_reads_observations` rejects, cannot be minibatched."""
     return (
         "the likelihood must be a ConditionalDistribution that can score a subset of its "
-        f"observations, such as one from glm_likelihood; got {described(likelihood)}"
+        f"observations, such as one from glm_likelihood; got {_described(likelihood)}"
     )
 
 
 def _likelihood_given(prior: Any, likelihood: ConditionalDistribution, theta: Any) -> dict:
     """The likelihood's given values at *theta*, a draw of *prior*."""
-    components = _components_of(prior.event_spec, theta)
-    return {slot: components[slot] for slot in likelihood.given_spec}
+    outputs = _outputs_of(prior.event_spec, theta)
+    return {input_name: outputs[input_name] for input_name in likelihood.given_spec}
 
 
 # ---------------------------------------------------------------------------
@@ -192,8 +278,9 @@ class MinibatchedDistribution(
         ``minibatch(prior(beta), lik(y | beta), batch_size=40)``. A prior that
         is not a ``Distribution`` has no label to show, so it requires one.
     with_replacement : bool, default False
-        Sample minibatch indices with replacement. Default is
-        without-replacement (uniform permutation, take first ``b``).
+        Sample minibatch indices with replacement. By default each draw
+        selects a uniform size-``b`` subset in random order. Different draws
+        may reuse observations.
 
     Raises
     ------
@@ -207,8 +294,8 @@ class MinibatchedDistribution(
         ``[1, len(data)]``.
     """
 
-    #: The constructor takes no component, so the repr shows none.
-    _repr_component: ClassVar[str | None] = None
+    #: The constructor takes no output name, so the repr shows none.
+    _repr_output_name: ClassVar[str | None] = None
 
     def __init__(
         self,
@@ -222,8 +309,8 @@ class MinibatchedDistribution(
     ):
         if not isinstance(prior, SupportsLogProb):
             raise TypeError(
-                f"MinibatchedDistribution: prior must have a log-density (SupportsLogProb); "
-                f"got {described(prior)}"
+                f"MinibatchedDistribution: prior must have a log-density (SupportsLogProb), "
+                f"got {_described(prior)}"
             )
         if not _reads_observations(likelihood):
             raise TypeError(f"MinibatchedDistribution: {_subset_scoring_reason(likelihood)}")
@@ -256,7 +343,7 @@ class MinibatchedDistribution(
         # declares them.
         self._draw_event_spec = _parameter_declaration(prior, "parameters")
 
-        # A draw is one fixed-minibatch target, the measure's one component.
+        # A draw is one fixed-minibatch target, the measure's one output.
         super().__init__("target", DistributionSpec(self._draw_event_spec), label=label)
         if expression is not None:
             self._store_expression(expression)

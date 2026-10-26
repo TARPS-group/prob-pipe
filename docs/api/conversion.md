@@ -2,7 +2,7 @@
 
 # Conversion
 
-A conversion moves a law to the representation that a distribution class or a capability protocol names, and it keeps the law's event declaration.
+A conversion moves a law to the representation that a distribution class or a capability protocol names, and it keeps the law's event spec.
 This page documents the `convert` operation and the converter registry it selects from, and `Converter`, which a new converter subclasses, is on [Registries for extensions](extending.md).
 
 ## Converting a law

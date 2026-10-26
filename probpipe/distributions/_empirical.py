@@ -36,8 +36,8 @@ from ..core._record_batch import RecordBatch, _batch_class_for
 from ..core._record_spec import NumericRecordSpec, RecordSpec
 from ..core._repr import format_value
 from ..core._spec_base import NumericArraySpec, NumericSpec, TermSpec
-from ..core._specs import OutputSpec
-from ..core.named_tree import _unflatten_paths
+from ..core._specs import OutputSpec, _root_output_name
+from ..core.named_tree import _PATH_SEP, _last_name, _unflatten_paths
 from ..linalg import DenseLinOp
 from ._capabilities import (
     SupportsCovariance,
@@ -50,12 +50,10 @@ from ._capabilities import (
     _capability_subclass,
 )
 from ._distribution import (
-    _EMPTY_SELECTION,
     DEFAULT_LABEL,
     Distribution,
     _constructor_label,
-    _shared_final_names,
-    _whole_term_component,
+    _read_event_paths,
     _whole_term_event,
 )
 from ._factored import _raw_record, _stacked
@@ -68,13 +66,12 @@ if TYPE_CHECKING:
 
 __all__ = ["EmpiricalDistribution"]
 
-_PATH_SEP = "/"
 
 #: The moments an instance claims when its event is numeric.
 _NUMERIC_MOMENTS = (SupportsMean, SupportsVariance, SupportsCovariance, SupportsQuantile)
 
 #: A requested event path, its segments within one atom, and its node's spec.
-type _Selected = tuple[str, tuple[str, ...], TermSpec]
+type _RequestedNode = tuple[str, tuple[str, ...], TermSpec]
 
 
 # ---------------------------------------------------------------------------
@@ -89,7 +86,7 @@ def _numeric_atoms(atoms: Any) -> bool:
     is numeric too.
     """
     if isinstance(atoms, Batch):
-        return isinstance(atoms.element_spec, NumericSpec)
+        return isinstance(atoms.element_spec.term_spec, NumericSpec)
     return _is_numeric_array(atoms)
 
 
@@ -102,14 +99,14 @@ def _atom_spec(atoms: Any, event_spec: OutputSpec | None = None) -> TermSpec:
         The atoms in the event's batch form, or an array of array atoms along its
         leading axis.
     event_spec : OutputSpec or None
-        The event declaration, whose batch levels belong to each atom.
+        The event spec, whose batch levels belong to each atom.
 
     Returns
     -------
     TermSpec
         The spec of one complete event. A batch-valued event includes its
         trailing levels in a ``BatchSpec``; otherwise this is the stored batch's
-        ``element_spec`` or the array's trailing shape and dtype.
+        ``element_spec.term_spec`` or the array's trailing shape and dtype.
 
     Raises
     ------
@@ -125,7 +122,7 @@ def _atom_spec(atoms: Any, event_spec: OutputSpec | None = None) -> TermSpec:
                 f"atoms must be a NumericArrayBatch, a RecordBatch, or a batch of objects; got "
                 f"{type(atoms).__name__}"
             )
-        event = getattr(event_spec, "spec", None)
+        event = getattr(event_spec, "term_spec", None)
         if isinstance(event, BatchSpec):
             n_event = len(event.level_names)
             if len(atoms.level_names) <= n_event:
@@ -135,11 +132,13 @@ def _atom_spec(atoms: Any, event_spec: OutputSpec | None = None) -> TermSpec:
             if tuple(atoms.level_names[-n_event:]) != tuple(event.level_names):
                 raise ValueError("The event levels must be the trailing levels of the stored atoms")
             actual = BatchSpec._from_groups(
-                atoms.element_spec, atoms.axis_groups[-n_event:], atoms.level_names[-n_event:]
+                atoms.element_spec.term_spec,
+                atoms.axis_groups[-n_event:],
+                atoms.level_names[-n_event:],
             )
             count = prod(atoms.batch_shape[: len(atoms.batch_shape) - len(actual.batch_shape)])
         else:
-            actual, count = atoms.element_spec, atoms.batch_size
+            actual, count = atoms.element_spec.term_spec, atoms.batch_size
         if count == 0:
             raise ValueError(
                 f"EmpiricalDistribution needs at least one atom, but {atoms.label!r} is empty"
@@ -156,7 +155,7 @@ def _atom_spec(atoms: Any, event_spec: OutputSpec | None = None) -> TermSpec:
                 f"EmpiricalDistribution needs at least one atom, but atoms has shape "
                 f"{tuple(atoms.shape)}"
             )
-        event = getattr(event_spec, "spec", None)
+        event = getattr(event_spec, "term_spec", None)
         if isinstance(event, BatchSpec):
             rank = len(event.batch_shape)
             shape = tuple(atoms.shape[1:])
@@ -252,15 +251,10 @@ def _flat_rows(atoms: Batch, event_spec: TermSpec | None = None) -> Any:
         return _flattened(atoms.as_jax(), count, rank)
     if isinstance(atoms, RecordBatch):
         columns = atoms._raw_columns()
-        return {path: _flattened(columns[path], count, rank) for path in atoms.element_spec}
+        return {
+            path: _flattened(columns[path], count, rank) for path in atoms.element_spec.term_spec
+        }
     return _flattened(atoms._store, count, rank)
-
-
-def _stored_values(atoms: Batch) -> Any:
-    """The storage of array or object atoms, with the batch axes leading."""
-    if isinstance(atoms, NumericArrayBatch):
-        return atoms.values
-    return atoms._store
 
 
 def _taken(column: Any, index: Any) -> Any:
@@ -316,19 +310,19 @@ def _batch_form(label: str, raw: Any, level: str, spec: TermSpec) -> Batch:
             )
         levels += tuple(spec.level_names)
         ranks += tuple(len(group) for group in spec.axis_groups)
-        spec = spec.element_spec
+        spec = spec.element_spec.term_spec
     if isinstance(spec, RecordSpec):
         return _batch_class_for(spec)(
             _raw_record(raw),
             levels,
-            element_spec=spec,
+            element=spec,
             axes_per_level=ranks,
             label=label,
         )
     batch_class = batch_class_for_spec(spec)
     if batch_class is None:
         raise TypeError(f"cannot store values declared as {type(spec).__name__} as atoms")
-    return batch_class(raw, levels, element_spec=spec, axes_per_level=ranks, label=label)
+    return batch_class(raw, levels, element=spec, axes_per_level=ranks, label=label)
 
 
 # ---------------------------------------------------------------------------
@@ -465,57 +459,57 @@ _MOMENT_CAPABILITIES: dict[type, dict[str, Callable[..., Any]]] = {
 
 def _atoms_declaration(
     atom_spec: TermSpec,
-    component: str | None,
+    output_name: str | None,
     event_spec: OutputSpec | None,
     owner: str = "EmpiricalDistribution",
 ) -> OutputSpec | TermSpec:
-    """The event declaration of atoms of type *atom_spec*, under *component* or *event_spec*.
+    """The event spec of atoms of type *atom_spec*, under *output_name* or *event_spec*.
 
     Parameters
     ----------
     atom_spec : TermSpec
         The type of one atom.
-    component : str or None
-        The component of a whole-term event, which atoms that are not records
-        require unless *event_spec* names it.
+    output_name : str or None
+        The name of a whole-term event's output, which atoms that are not
+        records require unless *event_spec* names it.
     event_spec : OutputSpec or None
-        A declaration that names the components and the packaging.
+        An event spec that names the outputs and their form.
     owner : str
         The constructor, as error messages name it.
 
     Returns
     -------
     OutputSpec or TermSpec
-        The declaration to complete: the bare ``RecordSpec`` of record atoms,
+        The event spec to complete: the bare ``RecordSpec`` of record atoms,
         or an ``OutputSpec``.
 
     Raises
     ------
     TypeError
-        If *component* comes with record atoms, neither *component* nor
+        If *output_name* comes with record atoms, neither *output_name* nor
         *event_spec* comes with other atoms, or as :func:`_whole_term_event`
         raises.
     ValueError
         As :func:`_whole_term_event` raises.
     """
     if isinstance(atom_spec, RecordSpec):
-        if component is not None:
+        if output_name is not None:
             raise TypeError(
-                f"{owner} of record atoms takes no component, since the records' fields are its "
-                f"components; got component={component!r}"
+                f"{owner} of record atoms takes no output, since the records' fields are its "
+                f"outputs, got output_name={output_name!r}"
             )
         if event_spec is None:
             return atom_spec
-    elif component is not None:
-        return _whole_term_event(component, atom_spec, event_spec, owner)
+    elif output_name is not None:
+        return _whole_term_event(output_name, atom_spec, event_spec, owner)
     elif event_spec is None:
         raise TypeError(
-            f"{owner} of atoms that are not records needs the component of its event, as "
-            f"component='theta'"
+            f"{owner} of atoms that are not records needs the output of its event, as "
+            f"output_name='theta'"
         )
     if not isinstance(event_spec, OutputSpec):
         raise TypeError(f"event_spec must be an OutputSpec; got {type(event_spec).__name__}")
-    return event_spec.with_spec(atom_spec)
+    return event_spec.with_term_spec(atom_spec)
 
 
 class EmpiricalDistribution(Distribution, SupportsSampling, SupportsExpectation, SupportsMarginals):
@@ -526,17 +520,18 @@ class EmpiricalDistribution(Distribution, SupportsSampling, SupportsExpectation,
     Every batch axis indexes atoms, in the row-major order positional indexing
     reads. A batch is stored as given and keeps its own levels, which
     ``with_level_names`` renames. An array is stored as a ``NumericArrayBatch``
-    labeled by the law's component, on one level named by *level*, which
-    defaults to the component. The weights are normalized and default to
+    labeled by the name of the law's output, on one level named by *level*,
+    which defaults to that name. The weights are normalized and default to
     uniform. The law's label is ``ℙ`` unless *label* gives another.
 
-    **The event declaration.** Record atoms expose their fields, which are the
-    law's components, and any other atoms form a whole-term event under
-    *component*. An *event_spec* names the components and the packaging in
-    place of *component*. ``OutputSpec.with_spec`` completes it with the atoms'
-    spec: a type hole takes that spec, and a declared type must unify with it.
+    **The event spec.** The fields of record atoms are the law's outputs, and
+    any other atoms form a whole-term event whose one output is named
+    *output_name*. An *event_spec* names the outputs and their form in place of
+    *output_name*. ``OutputSpec.with_term_spec`` completes it with the atoms'
+    spec: where its type is unspecified it takes that spec, and a declared type
+    must unify with it.
 
-    **Renaming.** For record atoms, ``with_path_names`` returns an
+    **Renaming.** For record atoms, ``rename`` returns an
     ``EmpiricalDistribution`` with the same label and weights, whose atoms are
     these atoms with each field at its new path, on the same levels and in the
     same order.
@@ -578,16 +573,16 @@ class EmpiricalDistribution(Distribution, SupportsSampling, SupportsExpectation,
         flat, one per atom in the row-major order of the atom axes, or shaped
         like those axes, excluding any event batch axes. A ``Weights`` object, which can be built from log
         weights, is adopted as it is.
-    component : str, optional
-        The component of a whole-term event, required for atoms that are not
-        records unless *event_spec* names it, and refused for record atoms.
+    output_name : str, optional
+        The name of a whole-term event's output, required for atoms that are
+        not records unless *event_spec* names it, and refused for record atoms.
     label : str, optional
         The law's label, ``ℙ`` by default.
     level : str, optional
         The name of the one level a plain array's atoms lie on. It defaults to
-        the law's component.
+        the name of the law's output.
     event_spec : OutputSpec, optional
-        The declaration of one draw, completed with the atoms' spec. For a
+        The output spec of one draw, completed with the atoms' spec. For a
         ``BatchSpec`` event, its named levels must trail the stored atom levels;
         only the preceding axes index atoms and weights. One draw retains the
         event's levels, including levels of size zero. Nested batches are
@@ -597,15 +592,16 @@ class EmpiricalDistribution(Distribution, SupportsSampling, SupportsExpectation,
     ------
     TypeError
         If *label* is not a non-empty string, *atoms* is neither a batch of a
-        stored kind nor a numeric array, *component* is missing for atoms that
+        stored kind nor a numeric array, *output_name* is missing for atoms that
         are not records or given for record atoms, *level* is not a string or
         is given with a batch of atoms, *event_spec* is not an ``OutputSpec``,
-        or *event_spec* exposes a record for atoms that are not records.
+        or the outputs of *event_spec* are a record's fields for atoms that are
+        not records.
     ValueError
         If *atoms* holds no atom or is a 0-d array, the weights do not number
-        one per atom or are negative or sum to zero, *component* is not a valid
-        component name, *level* is not a valid level name, or *event_spec* names
-        another component than *component* or declares a type that does not
+        one per atom or are negative or sum to zero, *output_name* is not a valid
+        output name, *level* is not a valid level name, or *event_spec* names
+        another output than *output_name* or declares a type that does not
         unify with the atoms' spec, or a batch-valued event's levels do not
         trail at least one atom level or include the level that array atoms
         lie on, or nested event batches repeat a level name.
@@ -614,9 +610,9 @@ class EmpiricalDistribution(Distribution, SupportsSampling, SupportsExpectation,
     --------
     >>> import jax.numpy as jnp
     >>> law = EmpiricalDistribution(
-    ...     jnp.array([0.0, 1.0, 3.0]), jnp.array([1.0, 1.0, 2.0]), component="theta"
+    ...     jnp.array([0.0, 1.0, 3.0]), jnp.array([1.0, 1.0, 2.0]), output_name="theta"
     ... )
-    >>> (law.label, list(law.event_spec.components))
+    >>> (law.label, list(law.event_spec.outputs))
     ('ℙ', ['theta'])
     >>> law.atoms.level_names
     ('theta',)
@@ -626,8 +622,8 @@ class EmpiricalDistribution(Distribution, SupportsSampling, SupportsExpectation,
 
     _capability_table = _MOMENT_CAPABILITIES
 
-    #: The constructor takes the atoms first and the component as a keyword.
-    _repr_component: ClassVar[str | None] = "keyword"
+    #: The constructor takes the atoms first and the output's name as a keyword.
+    _repr_output_name: ClassVar[str | None] = "keyword"
 
     #: Derived from the stored atoms rather than transported.
     _transient_state = ("_rows_cache",)
@@ -637,7 +633,7 @@ class EmpiricalDistribution(Distribution, SupportsSampling, SupportsExpectation,
         atoms: Batch | Array,
         weights: Array | Weights | None = None,
         *,
-        component: str | None = None,
+        output_name: str | None = None,
         label: str | None = None,
         level: str | None = None,
         event_spec: OutputSpec | None = None,
@@ -651,15 +647,15 @@ class EmpiricalDistribution(Distribution, SupportsSampling, SupportsExpectation,
         atoms: Batch | Array,
         weights: Array | Weights | None = None,
         *,
-        component: str | None = None,
+        output_name: str | None = None,
         label: str | None = None,
         level: str | None = None,
         event_spec: OutputSpec | None = None,
     ) -> None:
         if isinstance(atoms, str):
             raise TypeError(label_given_first("EmpiricalDistribution", "atoms", atoms))
-        if isinstance(event_spec, OutputSpec) and isinstance(event_spec.spec, BatchSpec):
-            event_spec = event_spec._with_spec(_flat_batch_spec(event_spec.spec))
+        if isinstance(event_spec, OutputSpec) and isinstance(event_spec.term_spec, BatchSpec):
+            event_spec = event_spec._with_term_spec(_flat_batch_spec(event_spec.term_spec))
         atom_spec = _atom_spec(atoms, event_spec)
         if level is not None and not isinstance(level, str):
             raise TypeError(f"level must be a string, got {type(level).__name__}")
@@ -670,18 +666,18 @@ class EmpiricalDistribution(Distribution, SupportsSampling, SupportsExpectation,
                 f"with_level_names"
             )
         super().__init__(
-            _atoms_declaration(atom_spec, component, event_spec),
+            _atoms_declaration(atom_spec, output_name, event_spec),
             label=_constructor_label(self, label, DEFAULT_LABEL),
         )
         if isinstance(atoms, Batch):
             stored = atoms
         else:
-            # An array's atoms form a whole-term event, whose component labels them
+            # An array's atoms form a whole-term event, whose output's name labels them
             # and names their level.
-            name = _whole_term_component(self.event_spec)
+            name = _root_output_name(self.event_spec)
             on_level = name if level is None else level
             stored = _batch_form(name, atoms, on_level, atom_spec)
-        atom_weights = _atom_weights(weights, stored, self.event_spec.spec)
+        atom_weights = _atom_weights(weights, stored, self.event_spec.term_spec)
         object.__setattr__(self, "_atoms", stored)
         object.__setattr__(self, "_w", atom_weights)
         # The weights the weighted helpers take, None when uniform. Read here, outside
@@ -704,7 +700,7 @@ class EmpiricalDistribution(Distribution, SupportsSampling, SupportsExpectation,
     @property
     def num_atoms(self) -> int:
         """The number of atoms."""
-        return prod(_atom_shape(self._atoms, self.event_spec.spec))
+        return prod(_atom_shape(self._atoms, self.event_spec.term_spec))
 
     @property
     def _rows(self) -> Any:
@@ -715,7 +711,7 @@ class EmpiricalDistribution(Distribution, SupportsSampling, SupportsExpectation,
         """
         cached = getattr(self, "_rows_cache", None)
         if cached is None:
-            cached = _flat_rows(self._atoms, self.event_spec.spec)
+            cached = _flat_rows(self._atoms, self.event_spec.term_spec)
             if not any(isinstance(leaf, jax.core.Tracer) for leaf in jax.tree.leaves(cached)):
                 object.__setattr__(self, "_rows_cache", cached)
         return cached
@@ -776,7 +772,7 @@ class EmpiricalDistribution(Distribution, SupportsSampling, SupportsExpectation,
         Array or pytree of arrays
             ``Σᵢ wᵢ f(xᵢ)``, which has the shape of the output of ``f``.
         """
-        spec = self.event_spec.spec
+        spec = self.event_spec.term_spec
         rows = self._rows
         if isinstance(spec, NumericArraySpec):
             values = jax.vmap(f)(rows)
@@ -788,21 +784,21 @@ class EmpiricalDistribution(Distribution, SupportsSampling, SupportsExpectation,
 
     # -- marginals --------------------------------------------------------------
 
-    def _marginal(self, path: str | tuple[str, ...]) -> EmpiricalDistribution:
-        """The empirical law of the atoms projected onto *path*, under the same weights.
+    def _marginal(self, paths: str | tuple[str, ...]) -> EmpiricalDistribution:
+        """The empirical law of the atoms projected onto *paths*, under the same weights.
 
-        A single event path yields the leaf or subtree at that path whole, under
-        a component named by the path's final segment. A tuple of event paths
-        yields an exposed record of the selected nodes keyed by their final
-        segments. Either way the result keeps this law's label, the projected
+        A single event path yields the leaf or group at that path whole, under
+        an output named by the path's last name. A list of event paths yields a
+        law over the record that keeps each node at its own path, in this law's
+        order. Either way the result keeps this law's label, the projected
         atoms keep the stored atoms' levels, and the result holds no reference
         to this law.
 
         Parameters
         ----------
-        path : str or tuple of str
-            An event path of this law, or a tuple of event paths to select
-            jointly.
+        paths : str or tuple of str
+            An event path of this law, or a list of event paths to select
+            jointly, as :func:`~probpipe.core._shapes._as_paths` reads them.
 
         Returns
         -------
@@ -815,79 +811,70 @@ class EmpiricalDistribution(Distribution, SupportsSampling, SupportsExpectation,
             If a path is not an event path of this law.
         TypeError
             If a path is not a string.
-        ValueError
-            If a selection names no path, or two of its paths share a final
-            segment.
         """
-        selected = self._selection(path)
-        if isinstance(path, str):
-            ((requested, segments, node),) = selected
+        requested_nodes = self._requested_nodes(paths)
+        if isinstance(paths, str):
+            ((requested, segments, node),) = requested_nodes
             atoms = self._projection(segments, node)
-            declaration = OutputSpec(**{requested.rsplit(_PATH_SEP, 1)[-1]: node})
+            declaration = OutputSpec(**{_last_name(requested): node})
         else:
-            atoms = self._selection_batch(selected)
-            declaration = OutputSpec(atoms.element_spec)
+            atoms = self._atoms_at_paths(requested_nodes)
+            declaration = OutputSpec(atoms.element_spec.term_spec)
         return EmpiricalDistribution(atoms, self._w, label=self.label, event_spec=declaration)
 
-    def _marginal_guard(self, path: str | tuple[str, ...]) -> Feasibility | bool:
-        """Whether *path* is an event path, or a selection of them with distinct final segments.
+    def _marginal_guard(self, paths: str | tuple[str, ...]) -> Feasibility | bool:
+        """Whether *paths* is an event path, or a list of them.
 
         The marginal is exact at every such path.
         """
         try:
-            self._selection(path)
+            self._requested_nodes(paths)
         except (KeyError, TypeError, ValueError) as error:
             return Feasibility(False, str(error.args[0]) if error.args else repr(error))
         return True
 
-    def _selection(self, path: str | tuple[str, ...]) -> tuple[_Selected, ...]:
+    def _requested_nodes(self, paths: str | tuple[str, ...]) -> tuple[_RequestedNode, ...]:
         """Each requested event path with its segments within one atom and its node's spec.
 
         Parameters
         ----------
-        path : str or tuple of str
-            An event path of this law, or a tuple of event paths to select
+        paths : str or tuple of str
+            An event path of this law, or a list of event paths to select
             jointly.
 
         Returns
         -------
-        tuple of _Selected
-            One ``(path, segments, spec)`` triple per requested path, in the order
-            requested. The segments leave out a whole term's component, so they
-            address the node within one atom.
+        tuple of _RequestedNode
+            One ``(path, segments, spec)`` triple per requested path, a list of
+            paths in this law's order. The segments leave out the name of a whole
+            term's output, so they address the node within one atom.
 
         Raises
         ------
         KeyError
-            If a path is not an event path of this law.
+            If this law is over a record and a path is not one of its paths.
         TypeError
-            If a path is not a string.
+            If a path is not a string, or this law is over a value with no
+            paths, such as an array.
         ValueError
-            If a selection names no path, or two of its paths share a final
-            segment.
+            If a path is malformed, or a list of paths names a path twice or a
+            path inside another.
         """
-        paths = (path,) if isinstance(path, str) else tuple(path)
-        if not paths:
-            raise ValueError(_EMPTY_SELECTION)
-        component = _whole_term_component(self.event_spec)
-        selected = []
-        for requested in paths:
-            if not isinstance(requested, str):
-                raise TypeError(f"a field path must be a string; got {type(requested).__name__}")
-            try:
-                node = _node_at(self.event_spec, requested)
-            except KeyError:
-                raise KeyError(
-                    f"{requested!r} is not an event path of {self.label!r}; its fields: "
-                    f"{list(self.event_spec.components)}"
-                ) from None
+        read_paths = _read_event_paths(
+            self.event_spec, self.label, paths, action=f"take the marginal of {self.label!r} at"
+        )
+        output_name = _root_output_name(self.event_spec)
+        requested_nodes = []
+        for requested in read_paths if isinstance(read_paths, tuple) else (read_paths,):
             segments = tuple(requested.split(_PATH_SEP))
-            selected.append((requested, segments if component is None else segments[1:], node))
-        if not isinstance(path, str):
-            finals = [requested.rsplit(_PATH_SEP, 1)[-1] for requested in paths]
-            if len(set(finals)) < len(finals):
-                raise ValueError(_shared_final_names(paths))
-        return tuple(selected)
+            requested_nodes.append(
+                (
+                    requested,
+                    segments if output_name is None else segments[1:],
+                    _node_at(self.event_spec, requested),
+                )
+            )
+        return tuple(requested_nodes)
 
     def _projection(self, segments: tuple[str, ...], node: TermSpec) -> Batch:
         """The atoms projected onto the node at *segments* within one atom, in its batch form."""
@@ -898,57 +885,58 @@ class EmpiricalDistribution(Distribution, SupportsSampling, SupportsExpectation,
         # the atoms' levels, and an interior node as the sub-batch beneath it.
         return atoms[_PATH_SEP.join(segments)]
 
-    def _selection_batch(self, selected: tuple[_Selected, ...]) -> RecordBatch:
-        """The atoms projected onto the selected nodes, one field per node under its final segment.
+    def _atoms_at_paths(self, requested_nodes: tuple[_RequestedNode, ...]) -> RecordBatch:
+        """The atoms projected onto the requested nodes, each node at its own path.
 
-        The batch's label is the stored atoms' label indexed by the selected
+        The batch's label is the stored atoms' label indexed by the requested
         paths, grouped as design II.4 states, as in ``(x·y)[('a', 'b')]``.
         """
         atoms = self._atoms
         expression = Indexed(
-            atoms._expression, repr(tuple(requested for requested, _, _ in selected))
+            atoms._expression, repr(tuple(requested for requested, _, _ in requested_nodes))
         )
-        if isinstance(self.event_spec.spec, BatchSpec):
-            shape = _atom_shape(atoms, self.event_spec.spec)
+        if isinstance(self.event_spec.term_spec, BatchSpec):
+            shape = _atom_shape(atoms, self.event_spec.term_spec)
             column = np.empty(shape, dtype=object)
             for index in np.ndindex(shape):
                 column[index] = atoms[index]
-            fields = {requested.rsplit(_PATH_SEP, 1)[-1]: node for requested, _, node in selected}
+            fields = {requested: node for requested, _, node in requested_nodes}
             batch = RecordBatch(
                 {name: column for name in fields},
-                atoms.level_names[: len(atoms.level_names) - len(self.event_spec.spec.level_names)],
-                element_spec=RecordSpec(fields),
+                atoms.level_names[
+                    : len(atoms.level_names) - len(self.event_spec.term_spec.level_names)
+                ],
+                element=RecordSpec(fields),
                 axes_per_level=_ranks(atoms)[
-                    : len(atoms.level_names) - len(self.event_spec.spec.level_names)
+                    : len(atoms.level_names) - len(self.event_spec.term_spec.level_names)
                 ],
                 label=expression.render_label(),
             )
             batch._store_expression(expression)
             return batch
-        is_record = isinstance(self.event_spec.spec, RecordSpec)
+        is_record = isinstance(self.event_spec.term_spec, RecordSpec)
         stored = atoms._raw_columns() if is_record else {}
         columns: dict[str, Any] = {}
         fields: dict[str, TermSpec] = {}
-        for requested, segments, node in selected:
-            final = requested.rsplit(_PATH_SEP, 1)[-1]
-            fields[final] = node
+        for requested, segments, node in requested_nodes:
+            fields[requested] = node
             if not is_record:
-                columns[final] = _stored_values(atoms)
+                columns[requested] = atoms.raw
                 continue
             prefix = _PATH_SEP.join(segments)
             for leaf, column in stored.items():
                 if not prefix:
-                    columns[f"{final}{_PATH_SEP}{leaf}"] = column
+                    columns[f"{requested}{_PATH_SEP}{leaf}"] = column
                 elif leaf == prefix:
-                    columns[final] = column
+                    columns[requested] = column
                 elif leaf.startswith(prefix + _PATH_SEP):
-                    columns[f"{final}{_PATH_SEP}{leaf[len(prefix) + 1 :]}"] = column
+                    columns[f"{requested}{_PATH_SEP}{leaf[len(prefix) + 1 :]}"] = column
         element = RecordSpec(fields)
         batch_class = NumericRecordBatch if isinstance(element, NumericRecordSpec) else RecordBatch
         batch = batch_class(
             columns,
             atoms.level_names,
-            element_spec=element,
+            element=element,
             axes_per_level=_ranks(atoms),
             label=expression.render_label(),
         )
@@ -965,14 +953,14 @@ class EmpiricalDistribution(Distribution, SupportsSampling, SupportsExpectation,
         key under the new paths. Atoms that are not records have no fields to
         move, which gives None.
         """
-        if not isinstance(self.event_spec.spec, RecordSpec):
+        if not isinstance(self.event_spec.term_spec, RecordSpec):
             return None
         atoms = event.draw(self._atoms)
         return EmpiricalDistribution(atoms, self._w, label=self.label, event_spec=event.renamed)
 
     def _repr_arguments(self) -> list[tuple[str, str]]:
         """The atoms as stored, and the weights when nonuniform."""
-        fields = [("atoms", repr(self._atoms))]
+        fields = [("atoms", format_value(self._atoms))]
         if self._p is not None:
             fields.append(("weights", format_value(self._p)))
         return fields

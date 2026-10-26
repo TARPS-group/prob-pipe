@@ -11,18 +11,18 @@ from probpipe.operations._mixture import mixture
 from ._laws import Gaussian, Kernel
 
 
-def test_mixture_is_derived_from_its_identity():
+def test_mixture_is_derived_from_its_formula():
     assert mixture.is_derived
-    assert mixture.identity == "pushforward(K * mixing, _kernel_output_projection(K))"
+    assert mixture.formula == "pushforward(K & mixing, _kernel_output_projection(K))"
 
 
-def test_the_result_carries_the_kernel_event_declaration():
+def test_the_result_carries_the_kernel_event_spec():
     kernel = Kernel("y", ("mu",))
     assert mixture.check(kernel, Gaussian("mu")).result == OutputSpec(
         DistributionSpec(kernel.event_spec)
     )
 
 
-@pytest.mark.pending(reason="the kernel output projection and pushforward realize the identity")
+@pytest.mark.pending(reason="the kernel output projection and pushforward realize the formula")
 def test_the_mixture_is_the_law_of_the_kernel_output():
     assert mixture(Kernel("y", ("mu",)), Gaussian("mu")).event_spec == Kernel().event_spec

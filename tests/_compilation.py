@@ -9,10 +9,11 @@ from __future__ import annotations
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
+from typing import Any
 
 from jax import monitoring
 
-__all__ = ["Compilations", "count_compilations"]
+__all__ = ["Compilations", "RecordingProgram", "count_compilations"]
 
 _COMPILE_EVENT = "/jax/core/compile/backend_compile_duration"
 
@@ -56,3 +57,31 @@ def count_compilations() -> Iterator[Compilations]:
         yield counter
     finally:
         _open.remove(counter)
+
+
+class RecordingProgram:
+    """A ``jax.jit`` object that records the arguments of each run, and of each trace.
+
+    Parameters
+    ----------
+    jitted : jax.jit object
+        The program it stands for.
+    runs : list
+        Gains the positional arguments of each run.
+    traces : list, optional
+        Gains the positional arguments of each call of ``trace``.
+    """
+
+    def __init__(self, jitted: Any, *, runs: list, traces: list | None = None) -> None:
+        self.jitted = jitted
+        self.runs = runs
+        self.traces = traces
+
+    def trace(self, *args: Any, **kwargs: Any) -> Any:
+        if self.traces is not None:
+            self.traces.append(args)
+        return self.jitted.trace(*args, **kwargs)
+
+    def __call__(self, *args: Any, **kwargs: Any) -> Any:
+        self.runs.append(args)
+        return self.jitted(*args, **kwargs)

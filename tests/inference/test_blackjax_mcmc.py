@@ -11,15 +11,18 @@ from probpipe import (
     Normal,
     NumericArraySpec,
     condition_on,
+    conditional_distribution,
     mean,
     variance,
     workflow_run,
 )
+from probpipe.diagnostics import add_mcmc_diagnostics
 from probpipe.distributions import FactoredDistribution
-from probpipe.inference import inference_method_registry
+from probpipe.inference import _blackjax_mcmc, inference_method_registry
 from probpipe.inference._inference_utils import observed_target
-from tests._posterior import arviz_data, flat_draws
+from tests._posterior import arviz_data, flat_chains, flat_draws
 from tests.inference._harness import validate_method
+from tests.inference._key_recorder import record_consumed_keys
 from tests.inference.canonical import ObservationKernel
 
 # TFP/JAX emit a deprecation warning during random-key construction
@@ -39,11 +42,11 @@ def _identity(prior, n=4):
     return (
         ObservationKernel(
             "y",
-            dict(prior.event_spec.components),
+            dict(prior.event_spec.outputs),
             NumericArraySpec((n,)),
             lambda **values: tfd.Independent(tfd.Normal(jnp.zeros(n), 1.0), 1),
         )
-        * prior
+        & prior
     )
 
 
@@ -56,17 +59,17 @@ def _gaussian_mean(prior, n=3):
     return (
         ObservationKernel(
             "y",
-            dict(prior.event_spec.components),
+            dict(prior.event_spec.outputs),
             NumericArraySpec((n,)),
             lambda mu: tfd.Independent(tfd.Normal(jnp.broadcast_to(mu, (n,)), 1.0), 1),
         )
-        * prior
+        & prior
     )
 
 
 @pytest.fixture
 def small_model():
-    prior = Normal("a", loc=1.0, scale=0.5) * Normal("b", loc=-2.0, scale=0.7)
+    prior = Normal("a", loc=1.0, scale=0.5) & Normal("b", loc=-2.0, scale=0.7)
     return _identity(prior)
 
 
@@ -102,8 +105,8 @@ class TestBlackJAXNuts:
                 },
             )(small_model, {"y": jnp.zeros((4,))})
         m = mean(posterior)
-        assert m["mean(a)"].shape == ()
-        assert m["mean(b)"].shape == ()
+        assert m["a"].shape == ()
+        assert m["b"].shape == ()
 
     def test_collapses_to_prior_under_identity_likelihood(self, small_model):
         # With an identity likelihood, the posterior is the prior.
@@ -118,8 +121,8 @@ class TestBlackJAXNuts:
             )(small_model, {"y": jnp.zeros((4,))})
         m = mean(posterior)
         # Observed across four workflow seeds: |mean error| 0.004-0.044.
-        np.testing.assert_allclose(float(jnp.squeeze(m["mean(a)"])), 1.0, atol=0.15)
-        np.testing.assert_allclose(float(jnp.squeeze(m["mean(b)"])), -2.0, atol=0.15)
+        np.testing.assert_allclose(float(jnp.squeeze(m["a"])), 1.0, atol=0.15)
+        np.testing.assert_allclose(float(jnp.squeeze(m["b"])), -2.0, atol=0.15)
 
     def test_closed_form_gaussian_target(self):
         """Single-parameter conjugate Gaussian: closed-form posterior recovery.
@@ -155,8 +158,8 @@ class TestBlackJAXNuts:
         analytic_mean = 1.5
         analytic_var = 0.25
         sigma_mc = (analytic_var / (2 * 2000)) ** 0.5
-        post_mean = float(jnp.squeeze(mean(posterior)["mean(mu)"]))
-        post_var = float(jnp.squeeze(variance(posterior)["variance(mu)"]))
+        post_mean = float(jnp.squeeze(mean(posterior)["mu"]))
+        post_var = float(jnp.squeeze(variance(posterior)["mu"]))
         np.testing.assert_allclose(post_mean, analytic_mean, atol=6 * sigma_mc)
         np.testing.assert_allclose(post_var, analytic_var, rtol=0.15)
 
@@ -180,8 +183,8 @@ class TestBlackJAXNuts:
                 },
             )(small_model, {"y": jnp.zeros((4,))})
         m = mean(posterior)
-        assert jnp.isfinite(m["mean(a)"]).all()
-        assert jnp.isfinite(m["mean(b)"]).all()
+        assert jnp.isfinite(m["a"]).all()
+        assert jnp.isfinite(m["b"]).all()
 
         # With no warmup, the kernel runs at exactly the user step size.
         step_size = arviz_data(posterior)["sample_stats"]["step_size"]
@@ -224,8 +227,8 @@ class TestBlackJAXHmc:
                 },
             )(small_model, {"y": jnp.zeros((4,))})
         m = mean(posterior)
-        assert m["mean(a)"].shape == ()
-        assert m["mean(b)"].shape == ()
+        assert m["a"].shape == ()
+        assert m["b"].shape == ()
 
     def test_closed_form_gaussian_target(self):
         """HMC analogue of the NUTS closed-form Gaussian recovery.
@@ -262,8 +265,8 @@ class TestBlackJAXHmc:
                 },
             )(model, {"y": y})
 
-        post_mean = float(jnp.squeeze(mean(posterior)["mean(mu)"]))
-        post_var = float(jnp.squeeze(variance(posterior)["variance(mu)"]))
+        post_mean = float(jnp.squeeze(mean(posterior)["mu"]))
+        post_var = float(jnp.squeeze(variance(posterior)["mu"]))
         np.testing.assert_allclose(post_mean, 1.5, atol=0.05)
         np.testing.assert_allclose(post_var, 0.25, rtol=0.10)
 
@@ -326,8 +329,8 @@ class TestBlackJAXHmc:
                     "num_integration_steps": 10,
                 },
             )(model, {"y": jnp.asarray([1.0, 2.0, 3.0])})
-        post_mean = float(jnp.squeeze(mean(posterior)["mean(mu)"]))
-        post_var = float(jnp.squeeze(variance(posterior)["variance(mu)"]))
+        post_mean = float(jnp.squeeze(mean(posterior)["mu"]))
+        post_var = float(jnp.squeeze(variance(posterior)["mu"]))
         # Observed across four workflow seeds: |mean error| 0.001-0.004,
         # variance error 0.8-4.8%.
         np.testing.assert_allclose(post_mean, 1.5, atol=0.05)
@@ -480,6 +483,169 @@ class TestCheckFeasibility:
         method = inference_method_registry.get_method("blackjax_nuts")
         info = method.check(observed_target(small_model, {"y": jnp.zeros((4,))}))
         assert info.feasible is True
+
+
+# ---------------------------------------------------------------------------
+# The NUTS options: target acceptance rate and maximum tree depth
+# ---------------------------------------------------------------------------
+
+
+def _nuts_posterior(model, data, seed=0, **options):
+    """The ``blackjax_nuts`` posterior of *model* at *data*, with a short run unless *options* set it."""
+    budget = {"num_results": 100, "num_warmup": 200, "num_chains": 2, **options}
+    with workflow_run(seed=seed):
+        return condition_on.using(method="blackjax_nuts", method_options=budget)(model, data)
+
+
+class TestNutsOptions:
+    """``target_accept_prob`` and ``max_tree_depth`` reach BlackJAX."""
+
+    def test_a_higher_target_adapts_a_smaller_step(self, small_model):
+        def step_size(target_accept_prob):
+            posterior = _nuts_posterior(
+                small_model, {"y": jnp.zeros((4,))}, target_accept_prob=target_accept_prob
+            )
+            return float(np.mean(np.asarray(arviz_data(posterior)["sample_stats"]["step_size"])))
+
+        # Observed across workflow seeds 0-3: step 0.65-0.72 at 0.95 and 1.13-1.51 at 0.6,
+        # a ratio of 0.47-0.57.
+        assert step_size(0.95) < 0.75 * step_size(0.6)
+
+    def test_the_maximum_tree_depth_caps_the_integration_steps(self, small_model):
+        posterior = _nuts_posterior(small_model, {"y": jnp.zeros((4,))}, max_tree_depth=2)
+        steps = np.asarray(arviz_data(posterior)["sample_stats"]["num_integration_steps"])
+        # Two doublings take at most three steps, and the default depth takes more here.
+        assert steps.max() == 2**2 - 1
+
+    def test_the_default_options_are_blackjaxs_defaults(self, small_model):
+        data = {"y": jnp.zeros((4,))}
+        unset = flat_chains(_nuts_posterior(small_model, data))
+        stated = flat_chains(
+            _nuts_posterior(small_model, data, target_accept_prob=0.8, max_tree_depth=10)
+        )
+        np.testing.assert_array_equal(np.asarray(unset), np.asarray(stated))
+
+    @pytest.mark.parametrize(
+        ("options", "error", "match"),
+        [
+            ({"target_accept_prob": 1.0}, ValueError, "strictly between 0 and 1, got 1.0"),
+            ({"target_accept_prob": "0.9"}, TypeError, "must be a number, got str"),
+            ({"max_tree_depth": 0}, ValueError, "positive integer, got 0"),
+            ({"max_tree_depth": 2.5}, TypeError, "positive integer, got float"),
+        ],
+    )
+    def test_an_inadmissible_value_raises(self, small_model, options, error, match):
+        with pytest.raises(error, match=f"inference method 'blackjax_nuts': .*{match}"):
+            _nuts_posterior(small_model, {"y": jnp.zeros((4,))}, **options)
+
+    def test_nuts_refuses_the_hmc_trajectory_length(self, small_model):
+        with pytest.raises(TypeError, match="unknown method option 'num_integration_steps'"):
+            _nuts_posterior(small_model, {"y": jnp.zeros((4,))}, num_integration_steps=5)
+
+    @pytest.mark.parametrize("option", ["target_accept_prob", "max_tree_depth"])
+    def test_hmc_refuses_the_nuts_options(self, small_model, option):
+        with pytest.raises(TypeError, match=f"unknown method option '{option}'"):
+            condition_on.using(method="blackjax_hmc", method_options={option: 0.9})(
+                small_model, {"y": jnp.zeros((4,))}
+            )
+
+
+# ---------------------------------------------------------------------------
+# The chains' starting points
+# ---------------------------------------------------------------------------
+
+
+def _first_draws(method, model, data, **options):
+    """The first draw of each chain of a run without warmup whose tiny step keeps it near its start.
+
+    A trajectory of at most 1023 steps of size 1e-6 moves a draw by about 0.002.
+    """
+    budget = {"num_results": 1, "num_warmup": 0, "num_chains": 4, "step_size": 1e-6, **options}
+    with workflow_run(seed=0):
+        posterior = condition_on.using(method=method, method_options=budget)(model, data)
+    return np.asarray(flat_chains(posterior))[:, 0, :]
+
+
+def _bimodal():
+    """``y ~ Normal(mu**2, 0.5)`` with ``mu ~ Normal(0, 3)``, which at ``y = 4`` has modes at -2 and 2."""
+    likelihood = conditional_distribution(
+        lambda mu: Normal("y", mu**2, 0.5), given_spec={"mu": NumericArraySpec(())}, label="y"
+    )
+    return likelihood & Normal("mu", 0.0, 3.0)
+
+
+def _distinct_rows(first):
+    """Whether every two rows of *first* differ by more than 0.1 in some coordinate."""
+    distances = np.abs(first[:, None, :] - first[None, :, :]).max(axis=-1)
+    return distances[~np.eye(len(first), dtype=bool)].min() > 0.1
+
+
+class TestDefaultChainStarts:
+    def test_nuts_starts_each_chain_from_its_own_draw(self, small_model):
+        data = {"y": jnp.zeros((4,))}
+        first = _first_draws("blackjax_nuts", small_model, data)
+        assert _distinct_rows(first)
+        per_chain = _first_draws("blackjax_nuts", small_model, data, init="per_chain")
+        np.testing.assert_array_equal(first, per_chain)
+
+    def test_hmc_starts_every_chain_from_one_point(self, small_model):
+        first = _first_draws("blackjax_hmc", small_model, {"y": jnp.zeros((4,))})
+        np.testing.assert_allclose(first, np.broadcast_to(first[0], first.shape), atol=0.01)
+
+
+@pytest.mark.parametrize("method", ["blackjax_nuts", "blackjax_hmc"])
+class TestChainStarts:
+    """``init`` gives every chain one starting point, or each chain its own."""
+
+    def test_one_state_starts_every_chain_from_it(self, method, small_model):
+        state = np.array([1.0, -2.0])
+        first = _first_draws(method, small_model, {"y": jnp.zeros((4,))}, init=state)
+        np.testing.assert_allclose(first, np.broadcast_to(state, first.shape), atol=0.01)
+
+    def test_per_chain_starts_each_chain_from_its_own_draw(self, method, small_model):
+        first = _first_draws(method, small_model, {"y": jnp.zeros((4,))}, init="per_chain")
+        assert _distinct_rows(first)
+
+    def test_one_state_per_chain_starts_each_chain_from_its_row(self, method, small_model):
+        rows = np.array([[1.0, -2.0], [2.0, -1.0], [0.5, -3.0], [1.5, -2.5]])
+        first = _first_draws(method, small_model, {"y": jnp.zeros((4,))}, init=rows)
+        np.testing.assert_allclose(first, rows, atol=0.01)
+
+    def test_a_per_chain_init_of_another_shape_raises(self, method, small_model):
+        with pytest.raises(ValueError, match=r"must have shape \(4, 2\), got shape \(3, 2\)"):
+            _first_draws(method, small_model, {"y": jnp.zeros((4,))}, init=np.zeros((3, 2)))
+
+    def test_an_unknown_init_name_raises(self, method, small_model):
+        with pytest.raises(ValueError, match="init must be None, an array, or 'per_chain'"):
+            _first_draws(method, small_model, {"y": jnp.zeros((4,))}, init="prior")
+
+
+@pytest.mark.parametrize("init", [None, "per_chain"])
+def test_the_initial_draws_consume_no_key_of_the_chains(monkeypatch, small_model, init):
+    """The keys of the per-chain draws are none of the keys the chains' warmup and sampling consume."""
+    budget = {"num_results": 3, "num_warmup": 3, "num_chains": 3, "init": init}
+    with record_consumed_keys(monkeypatch, _blackjax_mcmc, "_run_blackjax_chains") as keys:
+        _nuts_posterior(small_model, {"y": jnp.zeros((4,))}, **budget)
+    assert len(keys["init"]) >= 3
+    # Each chain's warmup and sampling consume at least one key per step.
+    assert len(keys["chains"]) >= 3 * (3 + 3)
+    # Both phases split the run's key, and they share no other key.
+    assert keys["init"] & keys["chains"] == keys["run"]
+
+
+def test_rhat_detects_unvisited_modes_with_the_default_starts():
+    """Chains that share a start stay in one mode, and R-hat misses the other."""
+
+    def rhat(**options):
+        posterior = _nuts_posterior(_bimodal(), {"y": jnp.asarray(4.0)}, num_chains=4, **options)
+        add_mcmc_diagnostics(posterior, metrics="rhat")
+        return posterior.diagnostics.rhat["mu"]
+
+    # Observed with per-chain starts: R-hat 1.55-1.81 at workflow seeds 0-2, 4, and 5,
+    # and 1.00 at seed 3.
+    # Chains that all start at mu = 2 stay in that mode.
+    assert rhat(init=np.array([2.0])) < 1.05
+    assert rhat() > 1.2
 
 
 # ---------------------------------------------------------------------------

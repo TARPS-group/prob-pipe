@@ -24,7 +24,7 @@ from probpipe.core.config import (
     PrefectConfig,
     WorkflowKind,
     _auto_detect_task_runner,
-    prefect_config,
+    config,
 )
 
 # ---------------------------------------------------------------------------
@@ -201,13 +201,13 @@ class TestEffectiveWorkflowKind:
 
         The env-var override is unset so ``reset()`` lands at the
         shipped default of ``OFF``; individual tests that need a
-        different starting state assign to ``prefect_config.workflow_kind``
+        different starting state assign to ``config.prefect.workflow_kind``
         explicitly.
         """
         monkeypatch.delenv(_WORKFLOW_KIND_ENV_VAR, raising=False)
-        prefect_config.reset()
+        config.prefect.reset()
         yield
-        prefect_config.reset()
+        config.prefect.reset()
 
     @pytest.fixture
     def prefect_available(self, monkeypatch):
@@ -226,12 +226,12 @@ class TestEffectiveWorkflowKind:
         def noop(x):
             return x
 
-        wf = Function(noop, label="noop", dispatch="sequential")
+        wf = Function(noop, label="noop", executor="sequential")
         assert wf.effective_workflow_kind is WorkflowKind.OFF
 
     def test_explicit_task_overrides_global(self, prefect_available):
         """Per-instance TASK beats global OFF."""
-        prefect_config.workflow_kind = WorkflowKind.OFF
+        config.prefect.workflow_kind = WorkflowKind.OFF
 
         from probpipe import Function
 
@@ -242,14 +242,14 @@ class TestEffectiveWorkflowKind:
             noop,
             label="noop",
             workflow_kind=WorkflowKind.TASK,
-            dispatch="sequential",
+            executor="sequential",
         )
 
         assert wf.effective_workflow_kind is WorkflowKind.TASK
 
     def test_explicit_off_overrides_global_task(self):
         """Per-instance OFF beats global TASK."""
-        prefect_config.workflow_kind = WorkflowKind.TASK
+        config.prefect.workflow_kind = WorkflowKind.TASK
 
         from probpipe import Function
 
@@ -260,7 +260,7 @@ class TestEffectiveWorkflowKind:
             noop,
             label="noop",
             workflow_kind=WorkflowKind.OFF,
-            dispatch="sequential",
+            executor="sequential",
         )
         assert wf.effective_workflow_kind is WorkflowKind.OFF
 
@@ -279,7 +279,7 @@ class TestEffectiveWorkflowKind:
             noop,
             label="noop",
             workflow_kind=WorkflowKind.TASK,
-            dispatch="sequential",
+            executor="sequential",
         )
         with pytest.warns(UserWarning, match="Prefect is not installed") as caught:
             kind = wf.effective_workflow_kind
@@ -292,27 +292,27 @@ class TestEffectiveWorkflowKind:
         monkeypatch.setattr(function_mod, "task", None)
         monkeypatch.setattr(function_mod, "flow", None)
 
-        prefect_config.workflow_kind = WorkflowKind.TASK
+        config.prefect.workflow_kind = WorkflowKind.TASK
 
         from probpipe import Function
 
         def noop(x):
             return x
 
-        wf = Function(noop, label="noop", dispatch="sequential")
+        wf = Function(noop, label="noop", executor="sequential")
         with pytest.warns(UserWarning, match="Prefect is not installed"):
             assert wf.effective_workflow_kind is WorkflowKind.OFF
 
     def test_global_flow_applies_to_default_instance(self, prefect_available):
         """Global FLOW → DEFAULT instance resolves to FLOW."""
-        prefect_config.workflow_kind = WorkflowKind.FLOW
+        config.prefect.workflow_kind = WorkflowKind.FLOW
 
         from probpipe import Function
 
         def noop(x):
             return x
 
-        wf = Function(noop, label="noop", dispatch="sequential")
+        wf = Function(noop, label="noop", executor="sequential")
 
         assert wf.effective_workflow_kind is WorkflowKind.FLOW
 
@@ -323,11 +323,11 @@ class TestEffectiveWorkflowKind:
         def noop(x):
             return x
 
-        wf = Function(noop, label="noop", dispatch="sequential")
-        prefect_config.workflow_kind = WorkflowKind.OFF
+        wf = Function(noop, label="noop", executor="sequential")
+        config.prefect.workflow_kind = WorkflowKind.OFF
         assert wf.effective_workflow_kind is WorkflowKind.OFF
 
-        prefect_config.workflow_kind = WorkflowKind.FLOW
+        config.prefect.workflow_kind = WorkflowKind.FLOW
 
         assert wf.effective_workflow_kind is WorkflowKind.FLOW
 
@@ -343,7 +343,7 @@ class TestEffectiveWorkflowKind:
         assert configured.effective_workflow_kind is WorkflowKind.TASK
         assert wf.effective_workflow_kind is WorkflowKind.OFF
         assert wf.options["workflow_kind"] is WorkflowKind.DEFAULT
-        prefect_config.workflow_kind = WorkflowKind.FLOW
+        config.prefect.workflow_kind = WorkflowKind.FLOW
         assert wf.effective_workflow_kind is WorkflowKind.FLOW
         assert configured.effective_workflow_kind is WorkflowKind.TASK
         with pytest.raises(AttributeError):
@@ -352,7 +352,7 @@ class TestEffectiveWorkflowKind:
     def test_both_defaults_resolve_to_off(self):
         from probpipe import Function
 
-        prefect_config.workflow_kind = WorkflowKind.DEFAULT
+        config.prefect.workflow_kind = WorkflowKind.DEFAULT
         assert (
             Function(
                 lambda x: x,
@@ -361,23 +361,27 @@ class TestEffectiveWorkflowKind:
             is WorkflowKind.OFF
         )
 
-    def test_a_call_runs_under_the_mode_the_property_reports(self, monkeypatch):
+    def test_a_call_runs_under_the_mode_its_resolved_control_selects(self, monkeypatch):
+        """A call selects its mode as the property does, from the call's resolved control."""
         from probpipe import Function
+        from probpipe.functions import _function as engine
 
-        calls = []
+        selected_from = []
 
-        def resolve(instance):
-            calls.append(instance)
+        def orchestration_mode(workflow_kind_control):
+            selected_from.append(workflow_kind_control)
             return WorkflowKind.OFF
 
-        monkeypatch.setattr(Function, "effective_workflow_kind", property(resolve))
+        monkeypatch.setattr(engine, "_orchestration_mode", orchestration_mode)
         wf = Function(
             lambda x: x + 1,
-            dispatch="sequential",
+            executor="sequential",
             label="increment",
+            workflow_kind=WorkflowKind.TASK,
         )
+        assert wf.effective_workflow_kind is WorkflowKind.OFF
         assert float(wf(2)) == 3
-        assert calls and all(instance is wf for instance in calls)
+        assert selected_from and all(control is WorkflowKind.TASK for control in selected_from)
 
 
 # ---------------------------------------------------------------------------
@@ -399,7 +403,7 @@ class TestWorkflowKindConstructorValidation:
                 noop,
                 label="noop",
                 workflow_kind="task",
-                dispatch="sequential",
+                executor="sequential",
             )
 
     def test_function_rejects_none(self):
@@ -413,7 +417,7 @@ class TestWorkflowKindConstructorValidation:
                 noop,
                 label="noop",
                 workflow_kind=None,
-                dispatch="sequential",
+                executor="sequential",
             )
 
 

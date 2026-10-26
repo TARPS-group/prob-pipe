@@ -3,7 +3,7 @@
 Steps 2 and 3 of the call stack: the arguments bind to the wrapped function's
 signature by Python's rules, and each bound argument is admitted against what
 its parameter accepts: the kinds its role names where the Function declares
-roles, as an operation does, and otherwise its input declaration and its
+roles, as an operation does, and otherwise its input spec and its
 annotation. A violation of the call contract raises
 :class:`ApplicabilityError`. The module also decides the form in which the body
 receives each argument (:func:`presented_arguments`).
@@ -21,6 +21,7 @@ from typing import Any, Literal
 from ..core._array_backend import _is_numeric_leaf
 from ..core._batch import Batch, BatchSpec
 from ..core._dispatch import MethodInfo
+from ..core._executors import ExecutionReport
 from ..core._repr import call_repr, format_names, mapping_repr, sequence_repr, type_name
 from ..core._specs import (
     InputSpec,
@@ -110,7 +111,7 @@ class CallReport:
     deferred : tuple of str
         The checks left to the return.
     result : OutputSpec or None
-        The planned result declaration, or ``None`` when only the return
+        The planned output spec of the result, or ``None`` when only the return
         settles it.
     lifted : tuple of str
         The parameters whose arguments lift or sweep.
@@ -121,6 +122,11 @@ class CallReport:
         order, keyed by the names of those routes joined by ``", "``. The
         routes' reports leave them out, so each registry's methods are listed
         once.
+    execution : ExecutionReport
+        How the call would run the evaluation points it asks for: one report
+        per callable, with the executor and the executors it rejected. The
+        repr shows it only when a callable is opaque or runs on an executor
+        other than ``jax``.
     """
 
     routes: tuple[MethodInfo, ...] = ()
@@ -130,6 +136,7 @@ class CallReport:
     lifted: tuple[str, ...] = ()
     conversions: Mapping[str, Any] = field(default_factory=lambda: MappingProxyType({}))
     methods: Mapping[str, tuple[str, ...]] = field(default_factory=lambda: MappingProxyType({}))
+    execution: ExecutionReport = field(default_factory=ExecutionReport)
 
     def __repr__(self) -> str:
         """The fields the report sets, as a call of its constructor (II.4)."""
@@ -150,6 +157,8 @@ class CallReport:
         if self.methods:
             listed = {route: format_names(names) for route, names in self.methods.items()}
             keywords.append(("methods", mapping_repr(listed)))
+        if self.execution._runs_more_than_compiled_code():
+            keywords.append(("execution", repr(self.execution)))
         return call_repr("CallReport", keywords=keywords)
 
     def _repr_html_(self) -> str:
@@ -159,7 +168,7 @@ class CallReport:
         feasibility, and reason, and the selected route's row is marked. An
         unresolved route's reason names what it waits on, and each check left
         to the return is a row of its own. The lifted arguments, the planned
-        conversions, the registry methods, and the result declaration follow
+        conversions, the registry methods, and the result's output spec follow
         the table. Every value is escaped.
         """
         chosen = self.selected is not None and self.selected.feasible is True
@@ -407,7 +416,7 @@ def _raw_form_named(value: Any, hint: Any) -> Any:
         # A class that refuses an instance check, as a protocol that is not
         # runtime checkable does, names no raw form.
         return value
-    raw = value.raw()
+    raw = value.raw
     return raw if isinstance(raw, classes) else value
 
 
@@ -432,10 +441,10 @@ def arrived_kind(value: Any) -> type[TermSpec]:
 
 
 def _accepts(declared: type[TermSpec], kind: type[TermSpec]) -> bool:
-    """Whether a slot declaring the kind *declared* admits a value of the kind *kind*.
+    """Whether an input declaring the kind *declared* admits a value of the kind *kind*.
 
     The record kinds admit each other, unification deciding their fields, and an
-    opaque slot admits every kind, as ``OpaqueSpec.is_valid`` does.
+    opaque input admits every kind, as ``OpaqueSpec.is_valid`` does.
     """
     if declared is OpaqueSpec or issubclass(kind, declared):
         return True
@@ -443,16 +452,16 @@ def _accepts(declared: type[TermSpec], kind: type[TermSpec]) -> bool:
 
 
 def _admitted_kind(value: Any, declared: type[TermSpec]) -> type[TermSpec]:
-    """The kind of *value* that a slot declaring *declared* checks.
+    """The kind of *value* that an input declaring *declared* checks.
 
-    A law at a slot of a value kind lifts, so its event kind is checked, and a
-    batch at a slot of another kind is swept, so its element kind is.
+    A law at an input of a value kind lifts, so its event kind is checked, and a
+    batch at an input of another kind is swept, so its element kind is.
     """
     lifted = (ConditionalDistributionSpec, DistributionSpec, BatchSpec)
     if isinstance(value, Distribution) and not issubclass(declared, lifted):
-        return type(value.event_spec.spec)
+        return type(value.event_spec.term_spec)
     if isinstance(value, Batch) and not issubclass(declared, BatchSpec):
-        return type(value.element_spec)
+        return type(value.element_spec.term_spec)
     return arrived_kind(value)
 
 
@@ -476,9 +485,9 @@ def role_lift(value: Any, role: tuple[type[TermSpec], ...]) -> Literal["sweep", 
     draws are is broadcast (V.4, V.5); any other value has no lift.
     """
     if isinstance(value, Batch) and len(value.batch_shape) > 0:
-        return "sweep" if role_admits(role, type(value.element_spec)) else None
+        return "sweep" if role_admits(role, type(value.element_spec.term_spec)) else None
     if isinstance(value, Distribution):
-        event = value.event_spec.spec
+        event = value.event_spec.term_spec
         return "broadcast" if event is not None and role_admits(role, type(event)) else None
     return None
 
@@ -490,9 +499,9 @@ def _role_refusal(
     kinds = ", ".join(kind.__name__ for kind in role)
     detail = arrived_kind(value).__name__
     if isinstance(value, Batch) and len(value.batch_shape) > 0:
-        detail += f" with {type(value.element_spec).__name__} elements"
-    elif isinstance(value, Distribution) and value.event_spec.spec is not None:
-        detail += f" with {type(value.event_spec.spec).__name__} draws"
+        detail += f" with {type(value.element_spec.term_spec).__name__} elements"
+    elif isinstance(value, Distribution) and value.event_spec.term_spec is not None:
+        detail += f" with {type(value.event_spec.term_spec).__name__} draws"
     return _kind_refusal(function_name, label, kinds, value, detail)
 
 
@@ -572,8 +581,8 @@ def admit_arguments(
     argument that a variadic parameter annotated ``Any`` collects is admitted
     whatever its kind. A conditional distribution at a parameter that expects a
     value is refused, since a kernel has no marginal law to lift over. Where an
-    *input_spec* declares a slot, the argument's kind must be the slot's: a
-    value's own kind, the event kind of a law the slot lifts, or the element
+    *input_spec* declares an input, the argument's kind must be the input's: a
+    value's own kind, the event kind of a law the input lifts, or the element
     kind of a batch it sweeps (V.4).
 
     Parameters
@@ -583,7 +592,7 @@ def admit_arguments(
     values : Mapping of str to Any
         The bound arguments, shaped by the signature.
     input_spec : InputSpec or None
-        The declared slots, whose kinds the arguments are admitted against.
+        The declared inputs, whose kinds the arguments are admitted against.
     function_name : str or None
         The function's label, for the message.
     roles : Mapping of str to tuple of TermSpec subclasses, or None

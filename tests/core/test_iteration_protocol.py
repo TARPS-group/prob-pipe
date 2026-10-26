@@ -71,7 +71,7 @@ DISTRIBUTIONS = [
         id="MultivariateNormal",
     ),
     pytest.param(
-        lambda: Normal("x", loc=0.0, scale=1.0) * Normal("y", loc=0.0, scale=1.0),
+        lambda: Normal("x", loc=0.0, scale=1.0) & Normal("y", loc=0.0, scale=1.0),
         id="FactoredDistribution",
     ),
     pytest.param(
@@ -79,20 +79,20 @@ DISTRIBUTIONS = [
         id="BijectorTransformedDistribution",
     ),
     pytest.param(
-        lambda: KDEDistribution(jnp.arange(60.0).reshape(20, 3), component="kde"),
+        lambda: KDEDistribution(jnp.arange(60.0).reshape(20, 3), output_name="kde"),
         id="KDEDistribution",
     ),
     pytest.param(
         lambda: EmpiricalDistribution(
             jnp.zeros((10, 3)),
-            component="theta",
+            output_name="theta",
         ),
         id="EmpiricalDistribution",
     ),
     pytest.param(
         lambda: BootstrapReplicateDistribution(
             "obs",
-            EmpiricalDistribution(jnp.zeros((10, 2)), component="obs"),
+            EmpiricalDistribution(jnp.zeros((10, 2)), output_name="obs"),
         ),
         id="BootstrapReplicateDistribution_empirical",
     ),
@@ -151,7 +151,7 @@ def test_distribution_is_not_iterable(make_dist):
 
     ``Distribution`` sets ``__iter__`` to ``None``, so ``iter`` itself raises
     ``TypeError`` rather than falling back to ``__getitem__``, which addresses
-    components. That fallback would yield nothing useful: a ``KeyError`` for an
+    outputs. That fallback would yield nothing useful: a ``KeyError`` for an
     integer key, or, worse, an ``IndexError`` that ends iteration silently.
     """
     d = make_dist()
@@ -186,7 +186,7 @@ def test_a_record_batch_iterates_leading_axis_views():
         {"a": jnp.zeros((5,)), "b": jnp.zeros((5,))},
         level_names="draw",
         axes_per_level=(1,),
-        element_spec=RecordSpec(a=(), b=()),
+        element=RecordSpec(a=(), b=()),
         label="batch",
     )
     rows = list(iter(batch))
@@ -201,7 +201,7 @@ def test_a_numeric_record_batch_iterates_leading_axis_views():
         {"a": jnp.zeros((4,)), "b": jnp.zeros((4,))},
         level_names="draw",
         axes_per_level=(1,),
-        element_spec=NumericRecordSpec(a=(), b=()),
+        element=NumericRecordSpec(a=(), b=()),
         label="batch",
     )
     rows = list(iter(batch))

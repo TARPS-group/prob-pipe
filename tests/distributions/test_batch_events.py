@@ -47,7 +47,7 @@ class TestBatchValuedAtoms:
             else NumericArrayBatch(
                 values,
                 ("trajectory", "time"),
-                element_spec=NumericArraySpec(()),
+                element=NumericArraySpec(()),
                 axes_per_level=(1, len(event_shape)),
                 label="trajectories",
             )
@@ -66,7 +66,7 @@ class TestBatchValuedAtoms:
         assert single.batch_shape == event_shape
         assert many.level_names == ("sample", "time")
         assert many.axis_groups == ((2, 4), event_shape)
-        np.testing.assert_array_equal(many.raw(), jnp.full((2, 4, *event_shape), 7.0))
+        np.testing.assert_array_equal(many.raw, jnp.full((2, 4, *event_shape), 7.0))
 
     def test_exact_expectation_preserves_the_event_axes(self):
         atoms = NumericArrayBatch(
@@ -83,7 +83,7 @@ class TestBatchValuedAtoms:
         atoms = RecordBatch(
             {"x": values, "y": 10 * values},
             ("trajectory", "time"),
-            element_spec=RecordSpec(x=(), y=()),
+            element=RecordSpec(x=(), y=()),
             label="paths",
         )
         event = BatchSpec(RecordSpec(x=(), y=()), time=3)
@@ -93,8 +93,8 @@ class TestBatchValuedAtoms:
             many = sample(law, 4)
         assert one.level_names == ("time",)
         assert many.level_names == ("sample", "time")
-        np.testing.assert_array_equal(one.raw("x"), values[1])
-        np.testing.assert_array_equal(many.raw("y"), 10 * many.raw("x"))
+        np.testing.assert_array_equal(one["x"].raw, values[1])
+        np.testing.assert_array_equal(many["y"].raw, 10 * many["x"].raw)
 
     @pytest.mark.parametrize("levels", [("time",), ("trajectory", "other")])
     def test_the_declared_event_must_be_a_trailing_suffix(self, levels):
@@ -151,11 +151,11 @@ class TestNestedBatchEvents:
         law = EmpiricalDistribution(atoms, [0.25, 0.75], event_spec=declaration)
 
         assert law.num_atoms == 2
-        assert law.event_spec.spec == BatchSpec(
+        assert law.event_spec.term_spec == BatchSpec(
             NumericArraySpec((), jnp.float32), replicate=2, time=(2, 3)
         )
-        assert declaration.spec is nested
-        assert isinstance(nested.element_spec, BatchSpec)
+        assert declaration.term_spec is nested
+        assert isinstance(nested.element_spec.term_spec, BatchSpec)
         with workflow_run(seed=0):
             drawn = sample(law, 4)
             mu = mean(law)
@@ -163,7 +163,7 @@ class TestNestedBatchEvents:
         assert drawn.level_names == ("sample", "replicate", "time")
         assert mu.level_names == ("replicate", "time")
         # Weight normalization gives a float32 error of 4.8e-7 at the analytic mean 4.
-        np.testing.assert_allclose(mu.raw(), jnp.full((2, 2, 3), 4.0), rtol=0, atol=1e-6)
+        np.testing.assert_allclose(mu.raw, jnp.full((2, 2, 3), 4.0), rtol=0, atol=1e-6)
 
     def test_repeated_nested_level_names_are_refused(self):
         nested = BatchSpec(BatchSpec(NumericArraySpec(()), time=3), time=2)
@@ -190,7 +190,7 @@ class TestNestedBatchEvents:
         # The source has one atom, so every replicate consists of two copies of path.
         expected = jnp.broadcast_to(path, (2, 3))
         if moment == "cov":
-            np.testing.assert_array_equal(result.raw(), jnp.zeros((6, 6)))
+            np.testing.assert_array_equal(result.raw, jnp.zeros((6, 6)))
         else:
             if moment == "variance":
                 expected = jnp.zeros((2, 3))
@@ -201,7 +201,7 @@ class TestNestedBatchEvents:
                 if moment == "quantiles"
                 else ("replicate", "time")
             )
-            np.testing.assert_array_equal(result.raw(), expected)
+            np.testing.assert_array_equal(result.raw, expected)
 
 
 #: The weights and the atoms 2·[1, 2, 3] and 5·[1, 2, 3] of a weighted trajectory law.
@@ -230,8 +230,8 @@ class TestBatchValuedMoments:
             assert moment.level_names == ("time",)
         assert mu.spec == BatchSpec(NumericArraySpec((), jnp.float32), time=3)
         assert var.spec == BatchSpec(NumericArraySpec((), jnp.float32, non_negative), time=3)
-        np.testing.assert_allclose(mu.raw(), [4.25, 8.5, 12.75], rtol=1e-6, atol=1e-6)
-        np.testing.assert_allclose(var.raw(), [1.6875, 6.75, 15.1875], rtol=1e-6, atol=1e-6)
+        np.testing.assert_allclose(mu.raw, [4.25, 8.5, 12.75], rtol=1e-6, atol=1e-6)
+        np.testing.assert_allclose(var.raw, [1.6875, 6.75, 15.1875], rtol=1e-6, atol=1e-6)
         np.testing.assert_allclose(law._mean(), _SCALE_MEAN * _STEPS, rtol=1e-6, atol=1e-6)
 
     def test_quantiles_are_elementwise_and_put_their_level_first(self):
@@ -241,10 +241,10 @@ class TestBatchValuedMoments:
             both = quantile(law, jnp.array([0.1, 0.9]))
         assert isinstance(median, NumericArrayBatch)
         assert median.level_names == ("time",)
-        np.testing.assert_array_equal(median.raw(), 5.0 * _STEPS)
+        np.testing.assert_array_equal(median.raw, 5.0 * _STEPS)
         assert both.level_names == ("quantile", "time")
         assert both.spec == BatchSpec(NumericArraySpec((), jnp.float32), quantile=2, time=3)
-        np.testing.assert_array_equal(both.raw(), _ATOMS)
+        np.testing.assert_array_equal(both.raw, _ATOMS)
 
     def test_the_covariance_is_over_the_flat_coordinates_of_one_draw(self):
         with workflow_run(seed=0):
@@ -252,7 +252,7 @@ class TestBatchValuedMoments:
         assert isinstance(matrix, NumericArray)
         assert matrix.spec == NumericArraySpec((3, 3), jnp.float32)
         np.testing.assert_allclose(
-            matrix.raw(), _SCALE_VARIANCE * jnp.outer(_STEPS, _STEPS), rtol=1e-6, atol=1e-6
+            matrix.raw, _SCALE_VARIANCE * jnp.outer(_STEPS, _STEPS), rtol=1e-6, atol=1e-6
         )
 
     def test_two_event_levels_keep_their_order(self):
@@ -268,8 +268,8 @@ class TestBatchValuedMoments:
         assert mu.level_names == ("chain", "time")
         assert mu.spec == BatchSpec(NumericArraySpec((), jnp.float32), chain=2, time=3)
         # 0.25·2 + 0.75·x and 0.25·0.75·(x − 2)² at each entry x of the second atom.
-        np.testing.assert_allclose(mu.raw(), 0.5 + 0.75 * second, rtol=1e-6, atol=1e-6)
-        np.testing.assert_allclose(var.raw(), 0.1875 * (second - 2.0) ** 2, rtol=1e-6, atol=1e-6)
+        np.testing.assert_allclose(mu.raw, 0.5 + 0.75 * second, rtol=1e-6, atol=1e-6)
+        np.testing.assert_allclose(var.raw, 0.1875 * (second - 2.0) ** 2, rtol=1e-6, atol=1e-6)
 
     def test_a_level_of_two_axes_keeps_its_axes(self):
         atoms = jnp.stack([jnp.full((2, 3), 1.0), jnp.full((2, 3), 3.0)])
@@ -279,14 +279,14 @@ class TestBatchValuedMoments:
             mu = mean(law)
         assert mu.level_names == ("time",)
         assert mu.axis_groups == ((2, 3),)
-        np.testing.assert_allclose(mu.raw(), jnp.full((2, 3), 2.5), rtol=1e-6, atol=1e-6)
+        np.testing.assert_allclose(mu.raw, jnp.full((2, 3), 2.5), rtol=1e-6, atol=1e-6)
 
     def test_record_elements_give_a_batch_of_records(self):
         x = jnp.array([[1.0, 2.0, 3.0], [5.0, 6.0, 7.0]])
         atoms = RecordBatch(
             {"x": x, "y": 10 * x},
             ("trajectory", "time"),
-            element_spec=RecordSpec(x=(), y=()),
+            element=RecordSpec(x=(), y=()),
             label="paths",
         )
         event = BatchSpec(RecordSpec(x=(), y=()), time=3)
@@ -298,12 +298,12 @@ class TestBatchValuedMoments:
         assert mu.level_names == ("time",)
         assert mu.spec == BatchSpec(NumericRecordSpec(x=(), y=()), time=3)
         # 0.25·[1, 2, 3] + 0.75·[5, 6, 7], and ten times that for y.
-        np.testing.assert_allclose(mu.raw("x"), [4.0, 5.0, 6.0], rtol=1e-6, atol=1e-6)
-        np.testing.assert_allclose(mu.raw("y"), [40.0, 50.0, 60.0], rtol=1e-6, atol=1e-6)
+        np.testing.assert_allclose(mu["x"].raw, [4.0, 5.0, 6.0], rtol=1e-6, atol=1e-6)
+        np.testing.assert_allclose(mu["y"].raw, [40.0, 50.0, 60.0], rtol=1e-6, atol=1e-6)
         # The flat coordinates are x over time, then y over time; each moves by 4 between atoms.
         direction = jnp.concatenate([jnp.ones(3), 10.0 * jnp.ones(3)])
         np.testing.assert_allclose(
-            matrix.raw(), 3.0 * jnp.outer(direction, direction), rtol=1e-6, atol=1e-6
+            matrix.raw, 3.0 * jnp.outer(direction, direction), rtol=1e-6, atol=1e-6
         )
 
     def test_a_view_of_a_batch_field_averages_its_draws(self):
@@ -314,7 +314,7 @@ class TestBatchValuedMoments:
             trajectory,
             output_spec=OutputSpec(trajectory=None),
             include_inputs=True,
-            n_broadcast_samples=20,
+            max_evaluations=20,
         )
         with workflow_run(seed=0):
             joint = wrapped(Normal("beta", 0.0, 1.0))
@@ -323,5 +323,5 @@ class TestBatchValuedMoments:
         assert mu.level_names == ("time",)
         assert mu.provenance.metadata["route"] == "monte_carlo"
         # Every draw is a multiple of [1, 2, 3], so their average is too.
-        values = np.asarray(mu.raw())
+        values = np.asarray(mu.raw)
         np.testing.assert_allclose(values, values[0] * np.asarray(_STEPS), rtol=1e-5, atol=1e-6)

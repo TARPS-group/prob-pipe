@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import copy
+import io
 import logging
 import math
+import re
+import tokenize
 from collections import deque
 from collections.abc import Mapping
 from dataclasses import dataclass, field
@@ -59,7 +62,7 @@ class ParentInfo:
         Best-effort 16-character digest populated by
         :meth:`Provenance.create`. ``None`` only when fingerprinting raises an
         unexpected error. Consult ``fingerprint_is_weak`` before treating it
-        as a portable cache-key component. Excluded from equality and hashing:
+        as part of a portable cache key. Excluded from equality and hashing:
         descriptor identity is structural (``type_name`` / ``label`` /
         ``provenance``), so a digest must not perturb ancestor-set dedup.
     parent : Any or None
@@ -67,7 +70,7 @@ class ParentInfo:
         ``None`` in LIGHTWEIGHT so the object's data can be garbage-collected.
         Excluded from equality and hashing.
     fingerprint_is_weak : bool
-        Whether the digest contains a process-local identity component. Weak
+        Whether the digest contains a process-local object identity. Weak
         fingerprints remain useful for distinguishing live objects in one
         process but must not be reused as portable content keys. Excluded from
         equality and hashing.
@@ -96,6 +99,9 @@ class Provenance:
     """How a tracked term was produced: an operation plus call descriptors.
 
     Attached write-once to a tracked term via ``with_provenance``.
+    ``print(term.provenance)`` prints the term's lineage, one step per line
+    from its roots, in the format that :meth:`__str__` states. The repr is
+    the short form, which names the operation and the labels of the parents.
 
     Attributes
     ----------
@@ -108,7 +114,10 @@ class Provenance:
     metadata : dict
         Optional scalar/string metadata about the operation (e.g. the old
         and new labels of a relabeling). Serialized alongside the operation by
-        :meth:`to_dict`.
+        :meth:`to_dict`. The record of a managed call whose route returned a
+        term with a record of its own, as an inference method's posterior
+        under ``condition_on`` is, lists the positions of those terms among
+        ``parents`` under ``"route_results"``.
     inputs : mapping of str to ParentInfo
         Descriptors of resolved plain inputs, keyed by stable parameter label.
         These descriptors preserve call-defining values without turning them
@@ -141,6 +150,71 @@ class Provenance:
     def __repr__(self) -> str:
         parent_names = ", ".join(p.label or p.type_name for p in self.parents)
         return f"Provenance({self.operation!r}, parents=[{parent_names}])"
+
+    def __str__(self) -> str:
+        """The lineage of the term this record describes, one step per line from its roots.
+
+        A step is an ancestor that records provenance. The steps run in the
+        order of computation, so each step follows every step it consumed, and
+        the last line is this record's own step. A line has three parts:
+
+        1. the step's number, followed by a period, as ``3.``;
+        2. the call, as ``condition_on(1, 2)``: the operation, without the
+           prefix ``workflow.`` that a managed function call records, applied
+           to its parents and then to the names of its plain inputs. A parent
+           that is a step shows its number, and a parent that records no
+           provenance shows its label, or its class name when it has no label.
+           The first parent of a managed call is omitted when it describes a
+           root ``Function`` or ``Operation`` under the callable's name.
+           A step whose label differs from its call shows the label first,
+           as ``posterior = condition_on(1, 2)``, and a label
+           that is the call with literal arguments, as
+           ``load_data('data.csv')``, replaces the call. Inside a label, each
+           parent's label outside string literals shows as the parent's
+           reference. The last line shows the call alone, because a record
+           does not store its term's label;
+        3. how the step ran, from its metadata: ``route`` and ``method`` where
+           it records them, and ``exact`` or ``approximate`` where it records
+           ``exact``.
+
+        A step that several later steps consume is listed once, and each of
+        them refers to its number. The steps of a route fold into the call
+        that ran it: a step that its consumer lists under ``"route_results"``
+        in its metadata, and that no other step consumes, is not a line of
+        its own, and neither is a step whose consumers all fold into the same
+        call. The call leaves the folded steps out of its parents, and its run
+        details name the route and the method that ran, so
+        ``condition_on(1, 2)`` is one line where its record also holds the
+        inference target and the sampler's run. A step that a step outside
+        the call also consumes stays a line, and the record keeps every step,
+        so :func:`provenance_ancestors` and :meth:`to_dict` list the folded
+        steps too. A view, the result of ``__getitem__``, is
+        not a step of its own: each step that consumes it refers to its
+        container indexed by the view's path or position, as ``4['beta']``.
+        A hexadecimal digest of 32 or more digits shows its first 8, followed
+        by ``…``. The run details of the lines start in one column, after the
+        widest call of at most 48 characters. The steps are the ancestors that
+        :func:`provenance_ancestors` returns which record provenance, less the
+        folded steps, and the order and the numbers depend only on the recorded
+        parents, in their recorded order, and on ``"route_results"``.
+
+        Returns
+        -------
+        str
+            The lines, joined by newlines, with no trailing newline.
+
+        Examples
+        --------
+        A model conditioned on the prepared rows of a data file, and the mean
+        of its posterior's ``beta``, print as::
+
+            1. load_data('data.csv', '72327ac7…')  route body, exact
+            2. prepare_inputs(1)                   route body, exact
+            3. model = build_model(2)              route body, exact
+            4. posterior = condition_on(3, 2)      method nuts, approximate
+            5. mean(4['beta'])                     route closed_form, exact
+        """
+        return _format_lineage(self)
 
     # -- Serialization -----------------------------------------------------
 
@@ -492,3 +566,215 @@ def provenance_dag(node: ProvenanceNode):
 
     _visit_node(node)
     return dot
+
+
+# ---------------------------------------------------------------------------
+# The printed lineage
+# ---------------------------------------------------------------------------
+
+_VIEW_OPERATION = "__getitem__"
+#: The metadata key under which a managed call records the positions, among its
+#: parents, of the terms its route returned.
+_ROUTE_RESULTS = "route_results"
+_MANAGED_CALL_PREFIX = "workflow."
+_DIGEST = re.compile(r"\b[0-9a-f]{32,}\b")
+# The widest call that the column of each line's run details aligns after.
+_CALL_COLUMN = 48
+
+
+def _provenance_of(p: Any) -> Provenance | None:
+    return getattr(p, "provenance", None)
+
+
+def _lineage_steps(provenance: Provenance) -> list[Any]:
+    """The ancestors of *provenance* that record provenance, each after every one it consumed.
+
+    The order is a depth-first postorder over the recorded parents, which
+    visits each ancestor once by the key :func:`provenance_ancestors` uses.
+    """
+    order: list[Any] = []
+    visited: set = set()
+    stack: list[tuple[Any, bool]] = [(p, False) for p in reversed(provenance.parents)]
+    while stack:
+        p, expanded = stack.pop()
+        if expanded:
+            order.append(p)
+            continue
+        key = _parent_key(p)
+        if key in visited:
+            continue
+        visited.add(key)
+        parent_provenance = _provenance_of(p)
+        if parent_provenance is None:
+            continue
+        stack.append((p, True))
+        stack.extend(
+            (pp, False)
+            for pp in reversed(parent_provenance.parents)
+            if _parent_key(pp) not in visited
+        )
+    return order
+
+
+def _folded_steps(provenance: Provenance, steps: list[Any]) -> set[Any]:
+    """The keys of the *steps* that the printed lineage folds into the call whose route made them.
+
+    A step folds into a call when the call records it under ``route_results``
+    and each of its other consumers folds into the call, and a step whose
+    consumers all fold into one call folds into that call too. Each step of *steps* follows
+    every step it consumed, so visiting them in reverse meets every consumer
+    of a step before the step.
+    """
+    root = object()
+    records = {_parent_key(p): p.provenance for p in steps}
+    records[root] = provenance
+    consumers: dict[Any, set[Any]] = {}
+    route_results: dict[Any, set[Any]] = {}
+    for key, node in records.items():
+        for p in node.parents:
+            if _provenance_of(p) is not None:
+                consumers.setdefault(_parent_key(p), set()).add(key)
+        positions = node.metadata.get(_ROUTE_RESULTS) or ()
+        route_results[key] = {
+            _parent_key(node.parents[i])
+            for i in positions
+            if isinstance(i, int) and 0 <= i < len(node.parents)
+        }
+    owner: dict[Any, Any] = {}
+    for p in reversed(steps):
+        key = _parent_key(p)
+        owners = {owner.get(c, c) for c in consumers.get(key, ())}
+        if len(owners) != 1:
+            continue
+        (call,) = owners
+        if all(c in owner for c in consumers[key]) or any(
+            key in route_results[c] for c in consumers[key]
+        ):
+            owner[key] = call
+    return set(owner)
+
+
+def _shorten_digests(text: str) -> str:
+    return _DIGEST.sub(lambda m: m.group(0)[:8] + "\u2026", text)
+
+
+def _view_index(metadata: Mapping[str, Any]) -> str:
+    """The index of a view, from the path or the position its metadata records."""
+    if "path" in metadata:
+        return f"[{metadata['path']!r}]"
+    if "position" in metadata:
+        position = metadata["position"]
+        items = position if isinstance(position, (list, tuple)) else [position]
+        return "[" + ", ".join(str(i) for i in items) + "]"
+    return "[" + ", ".join(f"{k}={v!r}" for k, v in metadata.items()) + "]"
+
+
+def _replace_parent_references(label: str, replacements: Mapping[str, str]) -> str:
+    """Replace parent labels in an expression while preserving its string literals."""
+    if not replacements:
+        return label
+    offsets = [0]
+    for line in label.splitlines(keepends=True):
+        offsets.append(offsets[-1] + len(line))
+    try:
+        strings = [
+            (offsets[token.start[0] - 1] + token.start[1], offsets[token.end[0] - 1] + token.end[1])
+            for token in tokenize.generate_tokens(io.StringIO(label).readline)
+            if token.type == tokenize.STRING
+        ]
+    except (tokenize.TokenError, IndentationError, SyntaxError):
+        return label
+    names = "|".join(re.escape(name) for name in sorted(replacements, key=len, reverse=True))
+    pattern = rf"(?<![\w.])(?:{names})(?![\w(])"
+
+    def replace(match: re.Match[str]) -> str:
+        if any(start <= match.start() < end for start, end in strings):
+            return match.group()
+        return replacements[match.group()]
+
+    return re.sub(pattern, replace, label)
+
+
+def _format_lineage(provenance: Provenance) -> str:
+    refs: dict[Any, str] = {}
+
+    def ref(p: Any) -> str:
+        key = _parent_key(p)
+        if key in refs:
+            return refs[key]
+        label = getattr(p, "label", None)
+        if label is None:
+            label = p.type_name if isinstance(p, ParentInfo) else type(p).__name__
+        return _shorten_digests(label)
+
+    def is_view(node: Provenance) -> bool:
+        return node.operation == _VIEW_OPERATION and bool(node.parents)
+
+    def step_text(node: Provenance, label: str | None) -> str:
+        name = node.operation.removeprefix(_MANAGED_CALL_PREFIX)
+        if is_view(node):
+            call = ref(node.parents[0]) + _view_index(node.metadata)
+        else:
+            arguments = [
+                ref(p)
+                for index, p in enumerate(node.parents)
+                if _parent_key(p) not in folded
+                and not (
+                    index == 0
+                    and node.operation.startswith(_MANAGED_CALL_PREFIX)
+                    and (p.type_name if isinstance(p, ParentInfo) else type(p).__name__)
+                    in ("Function", "Operation")
+                    and _provenance_of(p) is None
+                    and getattr(p, "label", None) == name
+                )
+            ]
+            arguments += list(node.inputs)
+            call = f"{name}({', '.join(arguments)})"
+        if label is None:
+            return call
+        replacements = {
+            p.label: ref(p)
+            for p in node.parents
+            if getattr(p, "label", None) and _parent_key(p) in refs and p.label != label
+        }
+        shown = _replace_parent_references(label, replacements)
+        shown = _shorten_digests(shown)
+        if shown == call or (not is_view(node) and shown.startswith(f"{name}(")):
+            return shown
+        return f"{shown} = {call}"
+
+    def run_details(node: Provenance) -> str:
+        details = [
+            f"{key} {node.metadata[key]}"
+            for key in ("route", "method")
+            if node.metadata.get(key) is not None
+        ]
+        exact = node.metadata.get("exact")
+        if isinstance(exact, bool):
+            details.append("exact" if exact else "approximate")
+        return ", ".join(details)
+
+    steps = _lineage_steps(provenance)
+    folded = _folded_steps(provenance, steps)
+    lines: list[tuple[str, str]] = []
+    for p in steps:
+        if _parent_key(p) in folded:
+            continue
+        node = p.provenance
+        if is_view(node):
+            refs[_parent_key(p)] = step_text(node, None)
+            continue
+        text = step_text(node, getattr(p, "label", None))
+        refs[_parent_key(p)] = str(len(lines) + 1)
+        lines.append((text, run_details(node)))
+    lines.append((step_text(provenance, None), run_details(provenance)))
+
+    width = min(_CALL_COLUMN, max(len(text) for text, _ in lines))
+    number_width = len(f"{len(lines)}.")
+    rendered = []
+    for number, (text, details) in enumerate(lines, start=1):
+        line = f"{f'{number}.':<{number_width}} {text}"
+        if details:
+            line = f"{f'{number}.':<{number_width}} {text:<{width}}  {details}"
+        rendered.append(line.rstrip())
+    return "\n".join(rendered)

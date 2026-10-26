@@ -14,7 +14,7 @@ def _model():
         given_spec={"mu": NumericArraySpec(())},
         label="y",
     )
-    return likelihood * Normal("mu", 0.0, 1.0)
+    return likelihood & Normal("mu", 0.0, 1.0)
 
 
 class TestAGivenOfTheWrongShape:

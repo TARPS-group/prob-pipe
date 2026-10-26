@@ -2,11 +2,11 @@
 
 ``condition_on(d, given)`` fixes fields of a distribution or of a conditional
 distribution and returns the resulting law, normalized. ``given`` is
-field-keyed, a ``Record`` or a mapping of field paths. Binding a given slot
+field-keyed, a ``Record`` or a mapping of field paths. Binding an input
 applies the kernel, and binding a produced field conditions the law.
 
 A call resolves in two stages. The **exact stage** computes the conditional: it
-binds given slots, calls a conditioning capability, or, where no exact route
+binds inputs, calls a conditioning capability, or, where no exact route
 conditions a produced field, forms the **unnormalized conditional**, the law of
 the unconditioned fields whose unnormalized log-density is the joint's at the
 given values. The **normalization stage** returns a normalized result as it is,
@@ -18,7 +18,7 @@ value: it normalizes each law it yields once its last given is bound.
 
 The routes, in selection order:
 
-1. ``bind_given_slots`` binds given slots of a kernel through its ``_condition_on``, which
+1. ``bind_inputs`` binds inputs of a kernel through its ``_condition_on``, which
    is exact unless the kernel claims ``SupportsApproximateConditioning``, and
    normalizes the result.
 2. ``slice`` assembles the conditional from a factored law's factors when the
@@ -26,7 +26,7 @@ The routes, in selection order:
    part of a law's that conditions on them exactly, and normalizes the result.
 3. ``exact_conditioning`` calls ``_condition_on`` on a law claiming
    ``SupportsExactConditioning``.
-4. ``inference_methods`` binds any given slots the given names, forms the
+4. ``inference_methods`` binds any inputs that *given* names, forms the
    unnormalized conditional of the produced fields by Bayes' rule, and
    normalizes it through the inference-method registry. A kernel normalized
    per value is bound and conditioned through the kernel whose laws it
@@ -60,6 +60,7 @@ not read with ``TypeError``, naming the entries it reads.
 
 from __future__ import annotations
 
+from abc import abstractmethod
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, replace
 from itertools import pairwise
@@ -67,12 +68,14 @@ from types import MappingProxyType
 from typing import Any, ClassVar
 
 from .._messages import unknown_names
+from ..core._catalog import registry_catalog
 from ..core._dispatch import (
     BaseDispatchRegistry,
     Feasibility,
     MethodInfo,
     UnaryDispatchMethod,
     UnaryDispatchRegistry,
+    _Registration,
 )
 from ..core._expression import Expression
 from ..core._record_batch import RecordBatch
@@ -84,14 +87,15 @@ from ..core._spec_base import (
     TermSpec,
     _full_array_shape_or_none,
 )
-from ..core._specs import InputSpec, OutputSpec, _components_record
+from ..core._specs import InputSpec, OutputSpec, _has_record_outputs, _output_record
+from ..core.named_tree import _PATH_SEP
 from ..core.provenance import Provenance
 from ..core.record import Record
+from ..custom_types import PRNGKey
 from ..distributions._capabilities import (
     SupportsApproximateConditioning,
     SupportsConditionalUnnormalizedLogProb,
     SupportsExactConditioning,
-    SupportsUnnormalizedLogProb,
     _capability_guard,
     _capability_subclass,
     _guard_condition,
@@ -101,7 +105,7 @@ from ..distributions._capabilities import (
 from ..distributions._conditional import (
     ConditionalDistribution,
     ConditionalDistributionSpec,
-    _moved_slots,
+    _moved_inputs,
 )
 from ..distributions._distribution import (
     Distribution,
@@ -120,10 +124,17 @@ from ..distributions._factored import (
     _with_named,
 )
 from ..distributions._views import _RenamedDistribution
+from ..functions import _evaluation_keys
 from ..functions._call import checking
 from ..functions._resolution import PointReport
 from ..values import FunctionSpec
 from ._convert import convert
+from ._inference_target import (
+    InferenceTarget,
+    _as_inference_target,
+    _joint_value,
+    _UnnormalizedConditional,
+)
 from ._operation import (
     BoundCall,
     RouteSource,
@@ -137,7 +148,6 @@ from ._sample import _record_batch, _sample_result, _sample_shape, sample
 
 __all__ = ["InferenceMethod", "condition_on", "inference_method_registry"]
 
-_PATH_SEP = "/"
 
 #: The name of the route that returns the exact stage's result.
 _UNNORMALIZED = "unnormalized"
@@ -152,19 +162,18 @@ class InferenceMethod(UnaryDispatchMethod):
     """Base class for registered inference methods; ``exact`` is ``False`` unless a method overrides it.
 
     A method normalizes the target of ``condition_on``'s normalization stage: it
-    takes the target alone, a law whose data are already bound, and returns a
-    normalized law over the target's event. A subclass declares ``name``,
-    ``supported_types``, ``check``, and ``execute``, and overrides ``priority``
-    to take part in automatic selection. Its ``check`` reads the interface it
-    requires of the target, such as an unnormalized density, a backend program,
-    or the joint and the given values to simulate from.
+    takes the target, an :class:`~probpipe.inference.InferenceTarget` whose data
+    are already bound, and returns a normalized law over the target's event. A
+    subclass declares ``name``, ``supported_types``, ``check``, and ``execute``,
+    and overrides ``priority`` to take part in automatic selection. Its
+    ``check`` reads the interface it requires of the target, such as an
+    unnormalized density, a backend program, or the prior and likelihood to
+    simulate from.
 
     A method validates the ``method_options`` entries it receives when it runs:
     a subclass names the entries its ``execute`` reads in ``_method_options``
-    and calls :meth:`_check_options` before it computes anything. A built-in
-    method reads no seed among them: each of its runs draws its key from a
-    workflow-owned random event, so ``workflow_run(seed=...)`` reproduces the
-    run.
+    and calls :meth:`_check_options` before it computes anything. No method
+    reads a seed among them: :meth:`execute` receives the run's random key.
 
     Notes
     -----
@@ -183,6 +192,36 @@ class InferenceMethod(UnaryDispatchMethod):
     @property
     def exact(self) -> bool:
         return False
+
+    @abstractmethod
+    def execute(self, target: InferenceTarget, /, *, key: PRNGKey, **options: Any) -> Distribution:
+        """Normalize *target*: return a normalized law over its event.
+
+        ``condition_on`` calls it once per run of the method, after ``check``
+        admitted the target, with a random key it derives for that run from
+        the enclosing ``workflow_run``, so ``workflow_run(seed=...)`` reproduces
+        the run and two runs in one workflow draw differently. A method draws
+        all of its randomness from *key*, splitting it as it needs, and none
+        from a global random generator; a method that draws nothing ignores
+        it. Code that calls a method directly passes a key of its own choice.
+
+        Parameters
+        ----------
+        target : InferenceTarget
+            The law to normalize: a model's parameters at its observed values.
+        key : PRNGKey
+            The run's random key.
+        **options : Any
+            The call's ``method_options``, which the method validates with
+            :meth:`_check_options`.
+
+        Returns
+        -------
+        Distribution
+            A normalized law over ``target.event_spec``, usually built with
+            :func:`~probpipe.inference.make_posterior`.
+        """
+        ...
 
     def _check_options(self, options: Mapping[str, Any]) -> None:
         """Refuse a ``method_options`` entry that the method does not read.
@@ -222,13 +261,37 @@ def _install_observed_target(builder: Callable[[Any, Any], Any]) -> None:
     _observed_target = builder
 
 
-class _InferenceMethodRegistry(UnaryDispatchRegistry[UnaryDispatchMethod]):
+class _InferenceMethodRegistry(UnaryDispatchRegistry[InferenceMethod]):
     """The inference-method registry, whose methods take the target of the normalization stage.
 
-    A call with a second positional argument passes a model and the data it is
-    conditioned on, as ``probpipe.condition_on`` does, and dispatches on the
-    target the installed builder forms from them.
+    Every method receives an :class:`~probpipe.inference.InferenceTarget` and
+    the key of its run. A call with a second positional argument passes a
+    model and the data it is conditioned on, as ``probpipe.condition_on``
+    does, and dispatches on the target the installed builder forms from them;
+    a law passed alone is the target of conditioning it on nothing.
     """
+
+    def register(self, method: InferenceMethod) -> None:
+        """Register an inference method; see :meth:`UnaryDispatchRegistry.register`.
+
+        Parameters
+        ----------
+        method : InferenceMethod
+            The method to register.
+
+        Raises
+        ------
+        TypeError
+            If *method* is not an :class:`InferenceMethod`, whose ``execute``
+            receives the run's key, or as the base registry refuses it.
+        """
+        if not isinstance(method, InferenceMethod):
+            raise TypeError(
+                f"cannot register {type(method).__name__} as an inference method: it does not "
+                f"subclass InferenceMethod. Subclass InferenceMethod, whose execute receives the "
+                f"run's key"
+            )
+        super().register(method)
 
     def check(
         self, *args: Any, method: str | None = None, exact_only: bool = False, **kwargs: Any
@@ -270,9 +333,26 @@ class _InferenceMethodRegistry(UnaryDispatchRegistry[UnaryDispatchMethod]):
         """
         return super().execute(*self._targets(args), method=method, exact_only=exact_only, **kwargs)
 
+    def _run_selected(
+        self,
+        registration: _Registration[InferenceMethod],
+        args: tuple[Any, ...],
+        kwargs: dict[str, Any],
+    ) -> Any:
+        """The selected method's result on the target, with the key of this run of the method."""
+        return registration.method.execute(
+            *args, key=_inference_run_key(registration.name), **kwargs
+        )
+
     @staticmethod
     def _targets(args: tuple[Any, ...]) -> tuple[Any, ...]:
-        """*args* with a model and its observed data replaced by their target.
+        """*args* with the target they denote, an inference target wherever they denote a law.
+
+        A model and the data it is conditioned on are replaced by the target the
+        installed builder forms from them. A law that is no inference target,
+        such as one that is itself unnormalized, is replaced by the target of
+        conditioning it on nothing, so every method receives an
+        :class:`~probpipe.inference.InferenceTarget`.
 
         Parameters
         ----------
@@ -283,26 +363,70 @@ class _InferenceMethodRegistry(UnaryDispatchRegistry[UnaryDispatchMethod]):
         Returns
         -------
         tuple of Any
-            A one-element tuple of the target when *args* holds two arguments, and
-            *args* itself otherwise.
+            A one-element tuple of the target when *args* holds a law or a model
+            and its data, and *args* itself otherwise.
 
         Raises
         ------
         TypeError
             If a model and its data are passed before a builder is installed.
         """
-        if len(args) != 2:
-            return args
-        if _observed_target is None:
-            raise TypeError("conditioning a model on data requires probpipe.inference; import it")
-        return (_observed_target(*args),)
+        if len(args) == 2:
+            if _observed_target is None:
+                raise TypeError(
+                    "conditioning a model on data requires probpipe.inference. Import it"
+                )
+            args = (_observed_target(*args),)
+        if len(args) == 1 and isinstance(args[0], Distribution):
+            return (_as_inference_target(args[0]),)
+        return args
 
 
-inference_method_registry: UnaryDispatchRegistry[UnaryDispatchMethod] = _InferenceMethodRegistry()
-"""The registry of the normalization stage of ``condition_on``, keyed on the target's type.
+#: The sampling ABI of the key of an inference method's run. The string is
+#: frozen: it enters every run's key, so changing it changes every seeded run.
+_INFERENCE_RUN_KEY_ABI = "probpipe.inference.run_seed/v1"
+
+
+def _inference_run_key(method_name: str) -> PRNGKey:
+    """The workflow-owned random key of one run of the inference method *method_name*.
+
+    The enclosing scope derives the key from its root seed and the call's
+    structure (V.8), so ``workflow_run(seed=...)`` reproduces the run, and
+    scopes with different seeds, or two unscoped calls, run differently. The
+    registry derives it for every method it runs, and a public function that
+    runs an inference algorithm outside the registry derives its own.
+
+    Parameters
+    ----------
+    method_name : str
+        The method's name, which the random event records as its provider.
+
+    Returns
+    -------
+    PRNGKey
+        A JAX random key.
+    """
+    return _evaluation_keys._resolve_automatic_key(
+        None,
+        _evaluation_keys._singleton_effect_plan(
+            operation_kind="inference",
+            execution_mode="sampled",
+            sample_shape=None,
+            sampling_abi=_INFERENCE_RUN_KEY_ABI,
+            provider_abi=f"probpipe.inference.{method_name}/v1",
+        ),
+    )
+
+
+inference_method_registry: UnaryDispatchRegistry[InferenceMethod] = _InferenceMethodRegistry(
+    name="inference",
+    description="Inference methods for condition_on, each given an inference target.",
+)
+"""The registry of the normalization stage of ``condition_on``, whose methods each receive an inference target.
 
 The methods of ``probpipe.inference`` register here.
 """
+registry_catalog.register(inference_method_registry)
 
 
 # ---------------------------------------------------------------------------
@@ -327,12 +451,12 @@ def _given_values(given: Any) -> dict[str, Any]:
 
 
 def _head(path: str) -> str:
-    """The first segment of *path*: a given slot or an event component."""
+    """The first segment of *path*: an input or an output of the event."""
     return path.split(_PATH_SEP, 1)[0]
 
 
-def _slots_of(d: Any) -> frozenset[str]:
-    """The given slots of *d*, none for a law."""
+def _inputs_of(d: Any) -> frozenset[str]:
+    """The inputs of *d*, none for a law."""
     return frozenset(d.given_spec) if isinstance(d, ConditionalDistribution) else frozenset()
 
 
@@ -362,28 +486,28 @@ def _given_kind(call: BoundCall) -> Feasibility | None:
 
 
 def _unknown_paths(d: Any, keys: Iterable[str]) -> list[str]:
-    """The keys among *keys* that name neither a given slot of *d* nor a field it declares."""
-    slots = _slots_of(d)
+    """The keys among *keys* that name neither an input of *d* nor a field it declares."""
+    inputs = _inputs_of(d)
     return [
         key
         for key in keys
-        if (_spec_at(d.given_spec, key) if _head(key) in slots else _spec_at(d.event_spec, key))
+        if (_spec_at(d.given_spec, key) if _head(key) in inputs else _spec_at(d.event_spec, key))
         is None
     ]
 
 
 def _unknown(d: Any, unknown: list[str]) -> Feasibility:
     """The actionable report that the keys *unknown* name nothing *d* declares."""
-    fields = list(d.event_spec.components)
-    slots = sorted(_slots_of(d))
-    if not slots:
+    fields = list(d.event_spec.outputs)
+    inputs = sorted(_inputs_of(d))
+    if not inputs:
         return Feasibility(False, unknown_names("field", unknown, fields), actionable=True)
     head = (
-        f"unknown given slot or field {unknown[0]!r}"
+        f"unknown input or field {unknown[0]!r}"
         if len(unknown) == 1
-        else f"unknown given slots or fields {unknown}"
+        else f"unknown inputs or fields {unknown}"
     )
-    return Feasibility(False, f"{head}; given slots: {slots}, fields: {fields}", actionable=True)
+    return Feasibility(False, f"{head}; inputs: {inputs}, fields: {fields}", actionable=True)
 
 
 def _nested_field(key: str) -> Feasibility:
@@ -421,9 +545,9 @@ def _at_given(kernel: ConditionalDistribution, given: Any, **options: Any) -> An
         kernel = kernel.with_dim_sizes(**bindings)
     nested = [path for path in values if _PATH_SEP in path]
     if nested:
-        # Promote each bound node to its own slot, preserving the unbound
-        # fields of every structured slot in the boundary translation.
-        occupied = set(kernel.given_spec) | set(kernel.event_spec.components)
+        # Promote each bound node to its own input, preserving the unbound
+        # fields of every structured input in the boundary translation.
+        occupied = set(kernel.given_spec) | set(kernel.event_spec.outputs)
         moves: dict[str, str] = {}
         for path in nested:
             name = "_bound"
@@ -431,7 +555,7 @@ def _at_given(kernel: ConditionalDistribution, given: Any, **options: Any) -> An
                 name += "_"
             occupied.add(name)
             moves[path] = name
-        kernel = kernel.with_path_names(moves)
+        kernel = kernel.rename(moves)
         values = {moves.get(path, path): value for path, value in values.items()}
     result = kernel._condition_on(values, **options)
     if result is not kernel and result.provenance is None:
@@ -439,121 +563,25 @@ def _at_given(kernel: ConditionalDistribution, given: Any, **options: Any) -> An
             Provenance.create(
                 "condition_on",
                 parents=[kernel],
-                metadata={"stage": "exact", "route": "bind_given_slots"},
+                metadata={"stage": "exact", "route": "bind_inputs"},
             )
         )
     return result
 
 
 def _unconditioned_event(law: Any, produced: Iterable[str]) -> OutputSpec:
-    """The declaration of *law*'s components that *produced* leaves unconditioned.
+    """The event spec of *law*'s outputs that *produced* leaves unconditioned.
 
-    It is an exposed record of those components, in the order *law* declares
-    them.
+    It is the positional form over a record of those outputs, in the order
+    *law* declares them.
     """
-    record = _components_record(law.event_spec)
+    record = _output_record(law.event_spec)
     conditioned = set(produced)
     return OutputSpec(
         RecordSpec(
             {name: spec for name, spec in record.children.items() if name not in conditioned}
         )
     )
-
-
-def _joint_value(value: Any, given: Record) -> Record:
-    """The joint's value at *value*, a draw of the unconditioned fields, and at *given*."""
-    fields = value.children if isinstance(value, Record) else value
-    return Record({**dict(fields), **dict(given.children)}, label="value")
-
-
-def _conditional_density(self: _UnnormalizedConditional, value: Any) -> Any:
-    """The joint's unnormalized log-density at *value* and the given values.
-
-    Field-keyed given values join *value* into one record of the joint's fields.
-    Data the joint does not declare as fields pair with *value* as
-    ``(value, data)``, the form a density over parameters and data takes.
-    """
-    given = self.given
-    joint_value = _joint_value(value, given) if self.keyed else (value, given)
-    return self.joint._unnormalized_log_prob(joint_value)
-
-
-class _UnnormalizedConditional(Distribution):
-    """The unnormalized conditional: the law of a joint's unconditioned fields at given values.
-
-    Its unnormalized log-density at a value of the unconditioned fields is the
-    joint's at that value and the given values. It carries the joint and the
-    given values, so a method that simulates rather than evaluates a density
-    reads them. It claims ``SupportsUnnormalizedLogProb`` when the joint claims
-    an unnormalized density, and no normalized capability, so it is
-    unnormalized, and ``condition_on`` passes it to the inference-method
-    registry as the target.
-
-    Parameters
-    ----------
-    joint : Distribution
-        The law conditioned.
-    given : Record or Any
-        The values of the conditioned fields, keyed by their components; or,
-        when *keyed* is false, the data of a joint that does not declare them
-        as fields, such as a model conditioned through ``probpipe.condition_on``.
-    event_spec : OutputSpec
-        The declaration of the unconditioned fields.
-    keyed : bool
-        Whether *given* is keyed by the joint's fields.
-    """
-
-    _capability_table: ClassVar = {
-        SupportsUnnormalizedLogProb: {"_unnormalized_log_prob": _conditional_density},
-    }
-
-    def __new__(
-        cls, joint: Distribution, given: Any, event_spec: OutputSpec, *, keyed: bool = True
-    ) -> Any:
-        claimed = (
-            (SupportsUnnormalizedLogProb,) if isinstance(joint, SupportsUnnormalizedLogProb) else ()
-        )
-        return object.__new__(_capability_subclass(_UnnormalizedConditional, claimed))
-
-    def __init__(
-        self, joint: Distribution, given: Any, event_spec: OutputSpec, *, keyed: bool = True
-    ) -> None:
-        super().__init__(
-            event_spec,
-            label=joint.label,
-        )
-        self._joint = joint
-        self._given = given
-        self._keyed = keyed
-        self.with_provenance(
-            Provenance.create(
-                "condition_on",
-                parents=[joint],
-                metadata={"stage": "exact", "route": "inference_methods"},
-            )
-        )
-
-    @property
-    def joint(self) -> Distribution:
-        """The law conditioned."""
-        return self._joint
-
-    @property
-    def given(self) -> Any:
-        """The values of the conditioned fields, or the data of a joint without such fields."""
-        return self._given
-
-    @property
-    def keyed(self) -> bool:
-        """Whether the given values are keyed by the joint's fields."""
-        return self._keyed
-
-    def _repr_arguments(self) -> list[tuple[str, str]]:
-        """The law conditioned, and the fields its given values fix where they are keyed."""
-        fields = [("joint", repr(self._joint))]
-        if self._keyed:
-            fields.append(("conditioned", format_names(self._given.keys())))
-        return fields
 
 
 def _conditional_kernel_density(
@@ -566,9 +594,9 @@ def _conditional_kernel_density(
 class _UnnormalizedConditionalKernel(ConditionalDistribution):
     """The unnormalized conditional within each slice of a kernel's unmet givens.
 
-    Binding the given slots yields the unnormalized conditional of the law the
+    Binding the inputs yields the unnormalized conditional of the law the
     kernel yields there, at the values of the conditioned fields, or a kernel
-    over the slots left. It claims ``SupportsConditionalUnnormalizedLogProb``
+    over the inputs left. It claims ``SupportsConditionalUnnormalizedLogProb``
     when the kernel does.
 
     Parameters
@@ -576,9 +604,10 @@ class _UnnormalizedConditionalKernel(ConditionalDistribution):
     kernel : ConditionalDistribution
         The kernel conditioned.
     given : Record
-        The values of the conditioned fields, keyed by their components.
+        The values of the conditioned fields, keyed by their outputs.
     event_spec : OutputSpec
-        The declaration of the unconditioned fields, an exposed record.
+        The event spec of the unconditioned fields, in the positional form over
+        a record.
     """
 
     _capability_table: ClassVar = {
@@ -623,7 +652,7 @@ class _UnnormalizedConditionalKernel(ConditionalDistribution):
     def _condition_on(
         self, given: Record | Mapping[str, Any], /, **kwargs: Any
     ) -> Distribution | ConditionalDistribution:
-        """The unnormalized conditional at a value of every given slot, or a kernel over the rest."""
+        """The unnormalized conditional at a value of every input, or a kernel over the rest."""
         return _unnormalized_conditional(_at_given(self._kernel, given, **kwargs), self._given)
 
 
@@ -659,18 +688,18 @@ _UNNORMALIZED_FIX = 'use method="unnormalized" to get the unnormalized condition
 
 
 def _packaged_alike(declared: OutputSpec, expected: OutputSpec) -> bool:
-    """Whether *declared* packages its event as *expected* does, under the same components."""
-    return declared.exposes_record == expected.exposes_record and tuple(
-        declared.components
-    ) == tuple(expected.components)
+    """Whether *declared* has the same form as *expected*, under the same outputs."""
+    return _has_record_outputs(declared) == _has_record_outputs(expected) and tuple(
+        declared.outputs
+    ) == tuple(expected.outputs)
 
 
 def _as_declared(source: Any, law: Any) -> EmpiricalDistribution:
-    """The atoms and weights of the normalized *law* under *source*'s event declaration.
+    """The atoms and weights of the normalized *law* under *source*'s event spec.
 
     The result is an ``EmpiricalDistribution`` carrying *law*'s provenance and
-    annotations, since a posterior over a whole-term event draws a one-field
-    record of it.
+    annotations, since a posterior over an event in the keyword form draws a
+    one-field record of it.
     """
     empirical = EmpiricalDistribution(
         law.atoms, law.weights, label=source.label, event_spec=source.event_spec
@@ -735,8 +764,8 @@ class _Normalization:
     def normalize(self, law: Any) -> Any:
         """The selected method's normalized law for the target *law*.
 
-        The result carries *law*'s event declaration, as the result rule of
-        binding given slots requires. A law renamed at its boundary is normalized through
+        The result carries *law*'s event spec, as the result rule of
+        binding inputs requires. A law renamed at its boundary is normalized through
         the target it holds, as :func:`_held_target` states.
         """
         held, renamed = _held_target(law)
@@ -783,7 +812,7 @@ def _per_value_sample(
     key: Any,
     sample_shape: tuple[int, ...] = (),
 ) -> Any:
-    """Draws of the normalized law at a value of every given slot."""
+    """Draws of the normalized law at a value of every input."""
     return self._condition_on(given)._sample(key, sample_shape)
 
 
@@ -791,7 +820,7 @@ class _PerValueNormalization(ConditionalDistribution):
     """A kernel whose laws are another kernel's, each normalized once its last given is bound.
 
     It is the normalization stage's result for a kernel whose laws are
-    unnormalized: binding every given slot yields the law the kernel yields
+    unnormalized: binding every input yields the law the kernel yields
     there, normalized by the inference-method registry, and binding some yields
     another such kernel. Its laws sample, so it claims
     ``SupportsConditionalSampling``, and it claims
@@ -834,7 +863,7 @@ class _PerValueNormalization(ConditionalDistribution):
     def _condition_on(
         self, given: Record | Mapping[str, Any], /, **kwargs: Any
     ) -> Distribution | ConditionalDistribution:
-        """The normalized law at a value of every given slot, or a kernel over the rest.
+        """The normalized law at a value of every input, or a kernel over the rest.
 
         *kwargs* are budgets of the method that normalizes the law.
         """
@@ -846,7 +875,7 @@ class _PerValueNormalization(ConditionalDistribution):
     def _normalization_report(
         self, given: Record | Mapping[str, Any], budgets: Mapping[str, Any]
     ) -> Feasibility:
-        """The registry's report for normalizing the law at a value of every given slot.
+        """The registry's report for normalizing the law at a value of every input.
 
         It computes that law and runs no method.
         """
@@ -856,7 +885,7 @@ class _PerValueNormalization(ConditionalDistribution):
         return self._normalization.with_budgets(budgets).report(law)
 
     def _condition_on_guard(self, paths: tuple[str, ...]) -> Feasibility:
-        """Every path names a given slot, since a produced field is conditioned by Bayes' rule.
+        """Every path names an input, since a produced field is conditioned by Bayes' rule.
 
         The exact stage conditions a produced field through the kernel whose
         laws this kernel normalizes.
@@ -865,7 +894,7 @@ class _PerValueNormalization(ConditionalDistribution):
         if produced:
             return Feasibility(
                 False,
-                f"{self.label!r} conditions exactly only on its given slots "
+                f"{self.label!r} conditions exactly only on its inputs "
                 f"{sorted(self.given_spec)}, not on {produced}",
             )
         return Feasibility(True)
@@ -930,7 +959,7 @@ class _ExactStage:
         declarations, or ``None`` when they do not state it.
     yields_kernel : callable
         ``yields_kernel(call)``, whether the result is a kernel, since a given
-        slot stays unbound.
+        input stays unbound.
     """
 
     check: Callable[[BoundCall], Feasibility]
@@ -940,8 +969,8 @@ class _ExactStage:
     yields_kernel: Callable[[BoundCall], bool]
 
 
-def _can_bind_given_slots(call: BoundCall) -> Feasibility:
-    """Every key of the given names a given slot of a conditional distribution.
+def _can_bind_inputs(call: BoundCall) -> Feasibility:
+    """Every key of the given names an input of a conditional distribution.
 
     Parameters
     ----------
@@ -965,14 +994,14 @@ def _can_bind_given_slots(call: BoundCall) -> Feasibility:
     unknown = _unknown_paths(d, keys)
     if unknown:
         return _unknown(d, unknown)
-    fields = [key for key in keys if _head(key) not in _slots_of(d)]
+    fields = [key for key in keys if _head(key) not in _inputs_of(d)]
     if fields:
-        return Feasibility(False, f"{fields} are fields of {d.label!r}, not given slots")
+        return Feasibility(False, f"{fields} are fields of {d.label!r}, not inputs")
     return Feasibility(True)
 
 
-def _bind_given_slots(call: BoundCall) -> Any:
-    """The kernel's ``_condition_on`` at the given slots.
+def _bind_inputs(call: BoundCall) -> Any:
+    """The kernel's ``_condition_on`` at the given values of its inputs.
 
     A kernel whose evaluation runs a method, one normalized per value or one
     that claims ``SupportsApproximateConditioning``, receives the call's
@@ -996,20 +1025,20 @@ def _bound_is_normalized(call: BoundCall) -> bool | None:
     return _laws_are_normalized(call.operands["d"])
 
 
-def _leaves_a_slot(call: BoundCall) -> bool:
-    """The given leaves a given slot of the conditioned object unbound."""
+def _leaves_an_input(call: BoundCall) -> bool:
+    """The given leaves an input of the conditioned object unbound."""
     kernel = call.operands["d"]
     if not isinstance(kernel, ConditionalDistribution):
         return False
     keys = _given_keys(call.operands["given"]) or ()
-    slots = tuple(key for key in keys if _spec_at(kernel.given_spec, key) is not None)
-    return bool(_remaining_given_spec(kernel.given_spec, slots).required)
+    inputs = tuple(key for key in keys if _spec_at(kernel.given_spec, key) is not None)
+    return bool(_remaining_given_spec(kernel.given_spec, inputs).required)
 
 
 def _can_form_the_unnormalized_conditional(call: BoundCall) -> Feasibility:
-    """The given names produced fields, each a component, and every other key is a given slot.
+    """The given names produced fields, each an output, and every other key is an input.
 
-    At least one component must stay unconditioned, as the law of the
+    At least one output must stay unconditioned, as the law of the
     unconditioned fields.
     """
     d, keys = call.operands["d"], _given_keys(call.operands["given"])
@@ -1019,15 +1048,15 @@ def _can_form_the_unnormalized_conditional(call: BoundCall) -> Feasibility:
     unknown = _unknown_paths(d, keys)
     if unknown:
         return _unknown(d, unknown)
-    slots = _slots_of(d)
-    produced = [key for key in keys if _head(key) not in slots]
+    inputs = _inputs_of(d)
+    produced = [key for key in keys if _head(key) not in inputs]
     if not produced:
-        return Feasibility(False, f"given binds only given slots of {d.label!r} and no field")
-    components = set(d.event_spec.components)
+        return Feasibility(False, f"given binds only inputs of {d.label!r} and no field")
+    outputs = set(d.event_spec.outputs)
     for key in produced:
-        if key not in components:
+        if key not in outputs:
             return _nested_field(key)
-    if components <= set(produced):
+    if outputs <= set(produced):
         return _fixes_every(d)
     return Feasibility(True)
 
@@ -1042,15 +1071,15 @@ def _evaluated(d: Any) -> Any:
 
 
 def _bayes(call: BoundCall) -> Any:
-    """The unnormalized conditional of the produced fields, the given slots bound first.
+    """The unnormalized conditional of the produced fields, the inputs bound first.
 
     A kernel normalized per value is bound and conditioned through the kernel
     it normalizes, so the result is normalized once.
     """
     d, values = call.operands["d"], _given_values(call.operands["given"])
     evaluated = _evaluated(d)
-    slots = _slots_of(d)
-    bound = {key: value for key, value in values.items() if _head(key) in slots}
+    inputs = _inputs_of(d)
+    bound = {key: value for key, value in values.items() if _head(key) in inputs}
     law = _at_given(evaluated, bound) if bound else evaluated
     produced = {key: value for key, value in values.items() if key not in bound}
     return _unnormalized_conditional(
@@ -1062,7 +1091,7 @@ def _bayes(call: BoundCall) -> Any:
 def _bayes_is_exact(call: BoundCall) -> bool:
     """Forming the unnormalized conditional is exact unless it binds an approximate kernel."""
     d = call.operands["d"]
-    binds = any(_head(key) in _slots_of(d) for key in _given_keys(call.operands["given"]) or ())
+    binds = any(_head(key) in _inputs_of(d) for key in _given_keys(call.operands["given"]) or ())
     return not (binds and isinstance(_evaluated(d), SupportsApproximateConditioning))
 
 
@@ -1088,14 +1117,14 @@ def _slice_plan(d: Any, keys: tuple[str, ...]) -> tuple[Feasibility, dict[int, f
     Returns
     -------
     tuple
-        The report, and the components the given fixes in each factor it
+        The report, and the outputs the given fixes in each factor it
         touches, by the factor's index.
     """
     factors = d.factors
     producer = {
-        component: index
+        output_name: index
         for index, factor in enumerate(factors)
-        for component in factor.event_spec.components
+        for output_name in factor.event_spec.outputs
     }
     fixed: dict[int, set[str]] = {}
     unknown = [key for key in keys if key not in producer and _spec_at(d.event_spec, key) is None]
@@ -1107,50 +1136,52 @@ def _slice_plan(d: Any, keys: tuple[str, ...]) -> tuple[Feasibility, dict[int, f
         fixed.setdefault(producer[key], set()).add(key)
     whole = {
         index
-        for index, components in fixed.items()
-        if components == set(factors[index].event_spec.components)
+        for index, outputs in fixed.items()
+        if outputs == set(factors[index].event_spec.outputs)
     }
     if len(whole) == len(factors):
         return _fixes_every(d), {}
-    for index, components in sorted(fixed.items()):
+    for index, outputs in sorted(fixed.items()):
         factor = factors[index]
-        slots = factor.given_spec if isinstance(factor, ConditionalDistribution) else {}
+        inputs = factor.given_spec if isinstance(factor, ConditionalDistribution) else {}
         free = sorted(
-            component
-            for parent in sorted({producer[slot] for slot in slots if slot in producer} - whole)
-            for component in factors[parent].event_spec.components
+            output_name
+            for parent in sorted(
+                {producer[input_name] for input_name in inputs if input_name in producer} - whole
+            )
+            for output_name in factors[parent].event_spec.outputs
         )
         if free:
             return Feasibility(
                 False,
-                f"the factor that defines {sorted(components)} conditions on {free}, which "
+                f"the factor that defines {sorted(outputs)} conditions on {free}, which "
                 f"given does not fix, so the conditional is not a product of the factors",
             ), {}
         if index in whole:
             continue
-        others = sorted(set(factor.event_spec.components) - components)
+        others = sorted(set(factor.event_spec.outputs) - outputs)
         if not isinstance(factor, SupportsExactConditioning) or isinstance(
             factor, ConditionalDistribution
         ):
             return Feasibility(
                 False,
-                f"given fixes {sorted(components)} but not {others} of the same factor, which "
+                f"given fixes {sorted(outputs)} but not {others} of the same factor, which "
                 f"cannot condition on part of its fields exactly",
             ), {}
-        guard = _capability_guard(factor, "_condition_on", tuple(sorted(components)))
+        guard = _capability_guard(factor, "_condition_on", tuple(sorted(outputs)))
         if guard.feasible is not True:
             return guard, {}
-    return Feasibility(True), {index: frozenset(components) for index, components in fixed.items()}
+    return Feasibility(True), {index: frozenset(outputs) for index, outputs in fixed.items()}
 
 
 def _can_slice(call: BoundCall) -> Feasibility:
     """The given fixes whole factors upstream of every factor it touches, or part of a law's.
 
-    Every key names a component of a factored law. A factor the given touches
-    either has every component fixed, or is a law whose exact conditioning
-    admits the fixed components, and every factor it conditions on has every
-    component fixed, so the conditional is the product of the other factors at
-    the fixed values. At least one component stays unconditioned.
+    Every key names an output of a factored law. A factor the given touches
+    either has every output fixed, or is a law whose exact conditioning
+    admits the fixed outputs, and every factor it conditions on has every
+    output fixed, so the conditional is the product of the other factors at
+    the fixed values. At least one output stays unconditioned.
     """
     d, keys = call.operands["d"], _given_keys(call.operands["given"])
     if isinstance(d, ConditionalDistribution):
@@ -1164,22 +1195,22 @@ def _can_slice(call: BoundCall) -> Feasibility:
 
 
 def _sliced_factors(call: BoundCall) -> list[tuple[Any, frozenset[str], dict[str, Any]]]:
-    """Each factor the slice keeps, with the components it fixes there and the values it binds.
+    """Each factor the slice keeps, with the outputs it fixes there and the values it binds.
 
-    A factor whose components are all fixed drops out, and a kernel binds the
-    fixed components it conditions on.
+    A factor whose outputs are all fixed drops out, and a kernel binds the
+    fixed outputs it conditions on.
     """
     d = call.operands["d"]
     values = _given_values(call.operands["given"])
     _, fixed = _slice_plan(d, tuple(values))
     kept = []
     for index, factor in enumerate(d.factors):
-        components = fixed.get(index, frozenset())
-        if components == set(factor.event_spec.components):
+        outputs = fixed.get(index, frozenset())
+        if outputs == set(factor.event_spec.outputs):
             continue
-        slots = factor.given_spec if isinstance(factor, ConditionalDistribution) else {}
-        bound = {slot: values[slot] for slot in slots if slot in values}
-        kept.append((factor, components, bound))
+        inputs = factor.given_spec if isinstance(factor, ConditionalDistribution) else {}
+        bound = {input_name: values[input_name] for input_name in inputs if input_name in values}
+        kept.append((factor, outputs, bound))
     return kept
 
 
@@ -1187,16 +1218,16 @@ def _slice(call: BoundCall) -> Any:
     """The product of the factors the given leaves unconditioned, at the fixed values.
 
     A law fixed in part is replaced by its exact conditional, and a kernel is
-    bound at the fixed components it conditions on, receiving the call's
+    bound at the fixed outputs it conditions on, receiving the call's
     ``method_options`` where evaluating it runs a method, as in binding
-    given slots. One
+    inputs. One
     factor kept is the result itself.
 
     Parameters
     ----------
     call : BoundCall
         The bound call of ``condition_on``, whose ``d`` is a factored law and
-        whose ``given`` fixes components of its factors.
+        whose ``given`` fixes outputs of its factors.
 
     Returns
     -------
@@ -1207,20 +1238,20 @@ def _slice(call: BoundCall) -> Any:
     Raises
     ------
     ValueError
-        If a law's exact conditional does not produce the components the given
+        If a law's exact conditional does not produce the outputs the given
         leaves free in it.
     """
     d = call.operands["d"]
     values = _given_values(call.operands["given"])
     factors = []
-    for factor, components, bound in _sliced_factors(call):
-        if components:
-            free = set(factor.event_spec.components) - components
-            factor = factor._condition_on({key: values[key] for key in sorted(components)})
-            if set(factor.event_spec.components) != free:
+    for factor, outputs, bound in _sliced_factors(call):
+        if outputs:
+            free = set(factor.event_spec.outputs) - outputs
+            factor = factor._condition_on({key: values[key] for key in sorted(outputs)})
+            if set(factor.event_spec.outputs) != free:
                 raise ValueError(
-                    f"the exact conditional of {d.label!r}'s factor on {sorted(components)} "
-                    f"produces {sorted(factor.event_spec.components)}, not {sorted(free)}"
+                    f"the exact conditional of {d.label!r}'s factor on {sorted(outputs)} "
+                    f"produces {sorted(factor.event_spec.outputs)}, not {sorted(free)}"
                 )
         if bound:
             options: dict[str, Any] = {}
@@ -1263,11 +1294,11 @@ def _sliced_is_normalized(call: BoundCall) -> bool | None:
     conditional capabilities state.
     """
     states = []
-    for factor, components, _ in _sliced_factors(call):
+    for factor, outputs, _ in _sliced_factors(call):
         if isinstance(factor, ConditionalDistribution):
             states.append(_laws_are_normalized(factor))
         else:
-            states.append(True if components else _is_normalized(factor))
+            states.append(True if outputs else _is_normalized(factor))
     if False in states:
         return False
     return True if all(states) else None
@@ -1285,11 +1316,11 @@ def _reads_shapes_from_data(law: Any) -> bool:
 def _spec_at(declaration: Any, path: str) -> TermSpec | None:
     """The term spec *declaration* states at *path*, or None where it states none.
 
-    The path's first segment names a component of an output declaration or a
-    slot of an input declaration, and the rest addresses a node of its record.
+    The path's first segment names an output of an output spec or an
+    input of an input spec, and the rest addresses a node of its record.
     """
-    head, _, rest = path.partition("/")
-    parts = declaration.components if isinstance(declaration, OutputSpec) else declaration
+    head, _, rest = path.partition(_PATH_SEP)
+    parts = declaration.outputs if isinstance(declaration, OutputSpec) else declaration
     spec = parts.get(head) if isinstance(parts, Mapping) else None
     if spec is None or not rest:
         return spec
@@ -1300,7 +1331,7 @@ def _spec_at(declaration: Any, path: str) -> TermSpec | None:
 
 
 def _given_conformance(call: BoundCall) -> Feasibility | None:
-    """Each numeric given conforms to the numeric declaration at its path, a given slot's or a produced field's.
+    """Each numeric given conforms to the spec at its path, an input's or a produced field's.
 
     A path the law declares nothing at is left to the stage's own check. A
     given that is no numeric array, such as a list of numbers, is checked by
@@ -1314,10 +1345,10 @@ def _given_conformance(call: BoundCall) -> Feasibility | None:
     for first, second in pairwise(paths):
         if second.startswith(first + _PATH_SEP):
             return Feasibility(False, f"given paths overlap at {first!r}", actionable=True)
-    slots = d.given_spec if isinstance(d, ConditionalDistribution) else {}
+    inputs = d.given_spec if isinstance(d, ConditionalDistribution) else {}
     bindings: dict[str, int] = {}
     for path, value in _given_values(given).items():
-        expected = _spec_at(slots, path)
+        expected = _spec_at(inputs, path)
         if expected is None:
             expected = _spec_at(d.event_spec, path)
         if not isinstance(expected, NumericSpec) or _full_array_shape_or_none(value) is None:
@@ -1344,26 +1375,26 @@ def _conforming(check: Callable[[BoundCall], Any]) -> Callable[[BoundCall], Any]
     return checked
 
 
-_BIND_GIVEN_SLOTS = _ExactStage(
-    check=_conforming(_can_bind_given_slots),
-    compute=_bind_given_slots,
+_BIND_INPUTS = _ExactStage(
+    check=_conforming(_can_bind_inputs),
+    compute=_bind_inputs,
     exact=_evaluation_is_exact,
     normalized=_bound_is_normalized,
-    yields_kernel=_leaves_a_slot,
+    yields_kernel=_leaves_an_input,
 )
 _SLICE = _ExactStage(
     check=_conforming(_can_slice),
     compute=_slice,
     exact=_slice_is_exact,
     normalized=_sliced_is_normalized,
-    yields_kernel=_leaves_a_slot,
+    yields_kernel=_leaves_an_input,
 )
 _BAYES = _ExactStage(
     check=_conforming(_can_form_the_unnormalized_conditional),
     compute=_bayes,
     exact=_bayes_is_exact,
     normalized=_never,
-    yields_kernel=_leaves_a_slot,
+    yields_kernel=_leaves_an_input,
 )
 
 
@@ -1432,7 +1463,7 @@ class _NormalizingRoute(_RegistryRoute):
         if exact_only and not exact:
             return Feasibility(
                 False,
-                "binding the given slots runs approximate conditioning "
+                "binding the inputs runs approximate conditioning "
                 "(SupportsApproximateConditioning), which exact_only excludes",
             )
         conditional = None
@@ -1482,7 +1513,7 @@ class _NormalizingRoute(_RegistryRoute):
     def _evaluation_report(
         self, call: BoundCall, kernel: _PerValueNormalization, exact: bool
     ) -> Feasibility:
-        """The report of the method that binding every slot of *kernel* runs, which runs nothing.
+        """The report of the method that binding every input of *kernel* runs, which runs nothing.
 
         A check computes the law the inner kernel yields only when that kernel
         is evaluated exactly.
@@ -1548,20 +1579,20 @@ class _NormalizingRoute(_RegistryRoute):
 
 
 def _remaining_given_spec(given_spec: InputSpec, keys: tuple[str, ...]) -> InputSpec:
-    """The given slots left after binding whole slots or nodes inside them."""
+    """The inputs left after binding whole inputs or nodes inside them."""
     moves = {key: f"_bound_{index}" for index, key in enumerate(keys)}
     while set(moves.values()) & set(given_spec):
         moves = {key: "_" + target for key, target in moves.items()}
-    moved, _ = _moved_slots(given_spec, moves)
+    moved, _ = _moved_inputs(given_spec, moves)
     return moved.without(*moves.values())
 
 
 def _condition_on_result(d: TermSpec, given: TermSpec) -> OutputSpec | None:
-    """Binding given slots declares the kernel's law, or a kernel over the slots left.
+    """Binding inputs declares the kernel's law, or a kernel over the inputs left.
 
-    The result exposes its event, so its components are the law's. Conditioning
-    on a produced field leaves the declaration to the law the selected route
-    returns.
+    The result is the positional form over the law, so its outputs are the
+    law's. Conditioning on a produced field leaves the output spec to the law
+    the selected route returns.
     """
     if isinstance(d, ConditionalDistributionSpec) and isinstance(given, RecordSpec):
         from ._given import _bind_given_dims_from_spec
@@ -1571,7 +1602,7 @@ def _condition_on_result(d: TermSpec, given: TermSpec) -> OutputSpec | None:
             bindings: dict[str, int] = {}
             for key in keys:
                 _bind_given_dims_from_spec(
-                    _spec_at(d.given_spec, key), given[key], bindings, f"given/{key}"
+                    _spec_at(d.given_spec, key), given[key], bindings, f"given{_PATH_SEP}{key}"
                 )
             left = _remaining_given_spec(d.given_spec, keys).with_dim_sizes(**bindings)
             event = d.event_spec.with_dim_sizes(**bindings)
@@ -1586,11 +1617,11 @@ def _conditioned_expression(d: Any, given: Any) -> Expression:
 
     The result is *d* conditioned on the paths *given* fixes, so it keeps
     *d*'s label: ``condition_on(model, {"y": data})`` is labeled ``model`` and
-    displays as ``model(mu; y)``, and a kernel applied at given slots keeps the
-    kernel's label and holds those slots fixed, while its other slots stay
+    displays as ``model(mu; y)``, and a kernel applied at some of its inputs
+    keeps the kernel's label and holds those inputs fixed, while its other inputs stay
     given. Fixing the whole events of factors upstream of the rest leaves the
     other factors at the given values, so ``condition_on(model, {"mu": 0.5})``
-    for ``model = likelihood * prior`` is ``likelihood`` conditioned on ``mu``,
+    for ``model = likelihood & prior`` is ``likelihood`` conditioned on ``mu``,
     as ``likelihood(y; mu)``, and several factors left form a product without
     a label. The result holds the paths *d* holds fixed, followed by the paths
     *given* fixes that *d* does not hold already, so conditioning a conditioned
@@ -1630,8 +1661,7 @@ def _factors_left(d: Any, keys: tuple[str, ...]) -> list[Any] | None:
     report, fixed = _slice_plan(d, keys)
     factors = d.factors
     if report.feasible is not True or any(
-        components != set(factors[index].event_spec.components)
-        for index, components in fixed.items()
+        outputs != set(factors[index].event_spec.outputs) for index, outputs in fixed.items()
     ):
         return None
     return [factor for index, factor in enumerate(factors) if index not in fixed]
@@ -1643,9 +1673,9 @@ def _conditioned_paths(given: Any) -> tuple[str, ...] | None:
     if keys is not None:
         return keys
     if isinstance(given, RecordBatch):
-        return tuple(given.element_spec.fields)
+        return tuple(given.element_spec.term_spec.fields)
     if isinstance(given, Distribution):
-        return tuple(given.event_spec.components)
+        return tuple(given.event_spec.outputs)
     return None
 
 
@@ -1668,7 +1698,7 @@ _GIVEN_KINDS: tuple[type[TermSpec], ...] = (
 def condition_on(d: Distribution, given: Record | Mapping[str, Any]):
     """Fix fields of *d* at the values *given* holds, and return the resulting law, normalized.
 
-    The exact stage binds given slots, calls a conditioning capability, or
+    The exact stage binds inputs, calls a conditioning capability, or
     forms the unnormalized conditional of the produced fields, and the
     normalization stage passes an unnormalized result to the inference-method
     registry. ``using(method="unnormalized")`` returns the exact stage's
@@ -1682,17 +1712,17 @@ def condition_on(d: Distribution, given: Record | Mapping[str, Any]):
     d : Distribution or ConditionalDistribution
         The law or kernel to condition.
     given : Record, Mapping, or RecordBatch
-        The values, keyed by field path: given slots of a kernel, or fields the
+        The values, keyed by field path: inputs of a kernel, or fields the
         law produces; or a batch of such values. A path into a structured given
-        slot binds that node and leaves the other fields in the residual slot;
-        binding its last field dissolves the slot. Paths must not overlap, and
+        input binds that node and leaves the other fields in the residual input;
+        binding its last field dissolves the input. Paths must not overlap, and
         all values bind shared symbolic dimensions together.
 
     Returns
     -------
     Distribution, ConditionalDistribution, or DistributionBatch
-        The conditional, normalized: an ordinary law once every given slot is
-        bound, and otherwise a kernel over the slots left whose laws are
+        The conditional, normalized: an ordinary law once every input is
+        bound, and otherwise a kernel over the inputs left whose laws are
         normalized; for a batch of givens, the batch of the conditionals. It
         keeps *d*'s label, except that fixing the whole events of factors
         upstream of the rest gives the labels of the factors left, and it
@@ -1713,9 +1743,9 @@ _install_expression_rule(condition_on, _conditioned_expression)
 
 
 def _given_paths(d: Any, given: Any) -> tuple[str, ...]:
-    """The paths *given* binds: its keys, or every component when the value is a whole draw."""
+    """The paths *given* binds: its keys, or every output when the value is a whole draw."""
     keys = _given_keys(given)
-    return keys if keys is not None else tuple(d.event_spec.components)
+    return keys if keys is not None else tuple(d.event_spec.outputs)
 
 
 def _conditioning_guard(call: BoundCall, result: OutputSpec | None) -> Any:
@@ -1727,7 +1757,7 @@ def _conditioning_guard(call: BoundCall, result: OutputSpec | None) -> Any:
 def _exact_stage_by_name(call: BoundCall, result: OutputSpec | None) -> Any:
     """Selected only by name, as ``method="unnormalized"``; the exact stage alone then runs.
 
-    The exact stage is the first of binding given slots, slicing, exact conditioning, and
+    The exact stage is the first of binding inputs, slicing, exact conditioning, and
     the unnormalized conditional that applies.
     """
     if call.controls["method"] != _UNNORMALIZED:
@@ -1756,9 +1786,9 @@ def _exact_stage_result(call: BoundCall, result: OutputSpec | None) -> Any:
 
 condition_on.register_route(
     _NormalizingRoute(
-        "bind_given_slots",
+        "bind_inputs",
         source=RouteSource.STRUCTURAL,
-        stage=_BIND_GIVEN_SLOTS,
+        stage=_BIND_INPUTS,
         registry=inference_method_registry,
     )
 )
@@ -1819,13 +1849,13 @@ _EXACT_CONDITIONING = _ExactStage(
     compute=_condition_exactly,
     exact=_always,
     normalized=_always,
-    yields_kernel=_leaves_a_slot,
+    yields_kernel=_leaves_an_input,
 )
 
 #: The ways the exact stage computes the conditional, in the order it tries them,
 #: each under the name of the route that runs it.
 _NAMED_STAGES: tuple[tuple[str, _ExactStage], ...] = (
-    ("bind_given_slots", _BIND_GIVEN_SLOTS),
+    ("bind_inputs", _BIND_INPUTS),
     ("slice", _SLICE),
     ("exact_conditioning", _EXACT_CONDITIONING),
     ("inference_methods", _BAYES),
@@ -1906,7 +1936,7 @@ def _every_sample_shape(call: BoundCall) -> Feasibility:
 
 
 def _declared_as_source(call: BoundCall, law: Any) -> Any:
-    """The normalized *law* under the source's event declaration.
+    """The normalized *law* under the source's event spec.
 
     A law that declares the source's event is returned as it is; otherwise its
     atoms and weights are declared as the source's event.
@@ -1941,7 +1971,7 @@ def _an_empirical_target(call: BoundCall) -> Feasibility:
 
 
 def _empirical_of(call: BoundCall, law: Any) -> Any:
-    """The normalized *law* at the target, carrying the source's event declaration.
+    """The normalized *law* at the target, carrying the source's event spec.
 
     Parameters
     ----------
@@ -1955,7 +1985,7 @@ def _empirical_of(call: BoundCall, law: Any) -> Any:
     Returns
     -------
     Distribution
-        The first of *law* and *law* under the source's declaration that is an
+        The first of *law* and *law* under the source's event spec that is an
         instance of the target and declares the source's event. Otherwise, an
         ``EmpiricalDistribution`` of *law*'s atoms and weights, under the
         source's label and with *law*'s annotations.
@@ -1963,7 +1993,7 @@ def _empirical_of(call: BoundCall, law: Any) -> Any:
     Raises
     ------
     TypeError
-        If the normalized law under the source's declaration is not the target.
+        If the normalized law under the source's event spec is not the target.
     """
     source, target = call.operands["d"], call.operands["target"]
     for candidate in (law, _declared_as_source(call, law)):

@@ -31,8 +31,8 @@ def _run_x64(snippet: str) -> str:
         import jax
         jax.config.update("jax_enable_x64", True)
         import jax.numpy as jnp
-        from probpipe import WorkflowKind, prefect_config
-        prefect_config.workflow_kind = WorkflowKind.OFF
+        from probpipe import WorkflowKind, config
+        config.prefect.workflow_kind = WorkflowKind.OFF
         """
     ) + textwrap.dedent(snippet)
     result = subprocess.run(
@@ -176,8 +176,8 @@ def test_x64_empirical_distribution_preserves_dtype():
         """
         from probpipe import EmpiricalDistribution
         samples = jnp.array([[1.0], [2.0], [3.0]])  # float64 under x64
-        d = EmpiricalDistribution(samples, component="x")
-        assert d.atoms.values.dtype == jnp.float64, d.atoms.values.dtype
+        d = EmpiricalDistribution(samples, output_name="x")
+        assert d.atoms.raw.dtype == jnp.float64, d.atoms.raw.dtype
         assert d.dtype == jnp.float64
         print('OK')
         """
@@ -212,9 +212,9 @@ def test_x64_gaussian_joint_preserves_dtype():
         import probpipe as ops
         import jax
 
-        joint = MultivariateNormal(
+        joint = (MultivariateNormal(
             'x', loc=jnp.zeros(1), cov=jnp.eye(1),
-        ) * MultivariateNormal('y', loc=jnp.zeros(2), cov=jnp.eye(2))
+        ) & MultivariateNormal('y', loc=jnp.zeros(2), cov=jnp.eye(2)))
         sample = ops.sample(joint)
         assert sample['x'].dtype == jnp.float64, sample['x'].dtype
         assert sample['y'].dtype == jnp.float64
@@ -295,7 +295,7 @@ def test_x64_kde_distribution():
         import jax
 
         samples = jnp.linspace(-2.0, 2.0, 50)
-        kde = KDEDistribution(samples, component='kde')
+        kde = KDEDistribution(samples, output_name='kde')
         assert kde.dtype == jnp.float64
         assert ops.sample(kde).dtype == jnp.float64
         assert ops.log_prob(kde, 0.5).dtype == jnp.float64
@@ -335,7 +335,7 @@ def test_x64_joint_promotes():
         import probpipe as ops
         import jax
 
-        joint = Normal('a', loc=0.0, scale=1.0) * Normal('b', loc=0.0, scale=1.0)
+        joint = (Normal('a', loc=0.0, scale=1.0) & Normal('b', loc=0.0, scale=1.0))
         sample = ops.sample(joint)
         assert sample['a'].dtype == jnp.float64
         assert sample['b'].dtype == jnp.float64
@@ -354,9 +354,9 @@ def test_x64_gaussian_joint_conditioning():
         from probpipe import condition_on, sample
         import jax
 
-        joint = MultivariateNormal(
+        joint = (MultivariateNormal(
             'x', loc=jnp.zeros(1), cov=jnp.eye(1),
-        ) * MultivariateNormal('y', loc=jnp.zeros(2), cov=jnp.eye(2))
+        ) & MultivariateNormal('y', loc=jnp.zeros(2), cov=jnp.eye(2)))
         # Conditioning on a float32 observed value must not corrupt the
         # parent's float64 dtype.
         cond = condition_on(joint, {"x": jnp.array([1.0], dtype=jnp.float32)})
@@ -375,7 +375,7 @@ def test_x64_bootstrap_replicate():
         import jax
 
         evals = jnp.linspace(0.0, 1.0, 10)
-        b = BootstrapReplicateDistribution('b', EmpiricalDistribution(evals, component='e'))
+        b = BootstrapReplicateDistribution('b', EmpiricalDistribution(evals, output_name='e'))
         assert jnp.asarray(b._sample(jax.random.key(0))).dtype == jnp.float64
         print('OK')
         """

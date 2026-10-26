@@ -1,4 +1,4 @@
-"""Function declarations, independent names, and the value/engine boundary."""
+"""Function input and output specs, independent names, and the value/engine boundary."""
 
 from __future__ import annotations
 
@@ -19,6 +19,7 @@ from probpipe import (
     Beta,
     DistributionSpec,
     EmpiricalDistribution,
+    EvaluationError,
     Function,
     FunctionSpec,
     Gamma,
@@ -34,6 +35,8 @@ from probpipe import (
     OutputSpec,
     Record,
     RecordSpec,
+    ResolutionError,
+    ResultSchemaError,
     Uniform,
     WorkflowKind,
     function,
@@ -43,6 +46,15 @@ from probpipe import (
 from probpipe.core._fingerprint import fingerprint
 from probpipe.core.constraints import interval, positive, real, unit_interval
 from probpipe.core.tracked import _NO_DESCRIPTION
+
+#: The executor controls a lift runs under in these tests. ``jax`` maps a
+#: traceable function, ``sequential`` and ``thread`` evaluate a function that
+#: claims ``traceable=False`` one evaluation point at a time, and the empty
+#: controls select the executor automatically.
+_JAX = pytest.param({"executor": "jax"}, id="jax")
+_SEQUENTIAL = pytest.param({"traceable": False, "executor": "sequential"}, id="sequential")
+_THREAD = pytest.param({"traceable": False, "executor": "thread"}, id="thread")
+_AUTOMATIC = pytest.param({}, id="automatic")
 
 
 def _module_level_add(x, y=1.0):
@@ -127,7 +139,7 @@ class TestFunctionSpecMatching:
                     input_spec={"y": NumericArraySpec(())},
                     label="actual",
                 ),
-                "incompatible input slots",
+                "the expected FunctionSpec has the inputs",
             ),
             (
                 FunctionSpec(output_spec=OutputSpec(left=None)),
@@ -136,16 +148,16 @@ class TestFunctionSpecMatching:
                     output_spec=OutputSpec(right=None),
                     label="actual",
                 ),
-                "incompatible output components",
+                "the expected FunctionSpec has the outputs",
             ),
             (
-                FunctionSpec(output_spec=OutputSpec(component=None)),
+                FunctionSpec(output_spec=OutputSpec(quantity=None)),
                 Function(
-                    lambda: {"component": 1},
-                    output_spec=RecordSpec(component=()),
+                    lambda: {"quantity": 1},
+                    output_spec=RecordSpec(quantity=()),
                     label="actual",
                 ),
-                "incompatible output components",
+                "incompatible outputs",
             ),
             (
                 FunctionSpec(output_spec=OutputSpec(RecordSpec(left=()))),
@@ -154,10 +166,10 @@ class TestFunctionSpecMatching:
                     output_spec=RecordSpec(right=()),
                     label="actual",
                 ),
-                "incompatible output components",
+                "the expected FunctionSpec has the outputs",
             ),
         ],
-        ids=["slots", "component-names", "whole-vs-exposed", "exposed-fields"],
+        ids=["inputs", "output-names", "keyword-vs-positional", "positional-fields"],
     )
     def test_incompatible_declarations_raise(self, expected, actual, message, from_value):
         with pytest.raises(ValueError, match=message):
@@ -169,12 +181,12 @@ class TestFunctionSpecMatching:
     def test_matching_declarations_bind_dimensions_without_changing_labels(self):
         expected = FunctionSpec(
             InputSpec(x=NumericArraySpec(("n",))),
-            OutputSpec(component=NumericArraySpec(("n",))),
+            OutputSpec(quantity=NumericArraySpec(("n",))),
         )
         actual = Function(
             lambda x: x,
             input_spec={"x": NumericArraySpec((3,))},
-            output_spec=OutputSpec(component=NumericArraySpec((3,))),
+            output_spec=OutputSpec(quantity=NumericArraySpec((3,))),
             label="display",
         )
         for value in (actual, actual.with_label("another")):
@@ -287,53 +299,53 @@ class TestFunctionDeclarations:
                 label="value",
             )
 
-    @pytest.mark.parametrize("component", ["", "group/value"])
-    def test_invalid_explicit_output_component(self, component):
-        with pytest.raises(ValueError, match="component names must be non-empty and contain no"):
+    @pytest.mark.parametrize("output_name", ["", "group/value"])
+    def test_invalid_explicit_output_name(self, output_name):
+        with pytest.raises(ValueError, match="output names must be non-empty and contain no"):
             Function(
                 lambda: 1,
-                output_spec=OutputSpec(**{component: NumericArraySpec(())}),
+                output_spec=OutputSpec(**{output_name: NumericArraySpec(())}),
                 label="value",
             )
 
     @pytest.mark.parametrize("name", ["class", "lambda", "None"])
-    def test_a_keyword_name_infers_the_result_component(self, name):
+    def test_a_keyword_name_infers_the_result_output(self, name):
         def value():
             return 1.0
 
         value.__name__ = name
         wrapped = Function(value, output_spec=NumericArraySpec(()))
         assert wrapped.label == name
-        assert tuple(wrapped.output_spec.components) == ("result",)
+        assert tuple(wrapped.output_spec.outputs) == ("result",)
 
     @pytest.mark.parametrize("name", ["group/value", "Model.fit", ""])
-    def test_a_non_identifier_name_infers_the_result_component(self, name):
+    def test_a_non_identifier_name_infers_the_result_output(self, name):
         def value():
             return 1.0
 
         value.__name__ = name
         wrapped = Function(value, output_spec=NumericArraySpec(()), label="value")
-        assert tuple(wrapped.output_spec.components) == ("result",)
+        assert tuple(wrapped.output_spec.outputs) == ("result",)
 
     @pytest.mark.parametrize("label", ["Model.fit", "<lambda>"])
-    def test_a_non_identifier_label_leaves_the_inferred_component(self, label):
+    def test_a_non_identifier_label_leaves_the_inferred_output(self, label):
         wrapped = Function(lambda: 1, output_spec=NumericArraySpec(()), label=label)
-        assert tuple(wrapped.output_spec.components) == ("f",)
+        assert tuple(wrapped.output_spec.outputs) == ("f",)
         assert wrapped().label == f"{label}()"
 
-    def test_decorated_lambda_keeps_its_default_component(self):
+    def test_decorated_lambda_keeps_its_default_output(self):
         wrapped = function(output_spec=NumericArraySpec(()))(lambda: 1)
         assert wrapped.label == "𝒻"
         assert wrapped.output_spec == OutputSpec(f=NumericArraySpec(()))
         assert float(wrapped()) == 1
 
     @pytest.mark.parametrize("kind", ["partial", "instance"])
-    def test_an_unnamed_callable_infers_the_result_component(self, kind):
+    def test_an_unnamed_callable_infers_the_result_output(self, kind):
         wrapped = Function(
             _unnamed_callables()[kind], output_spec=NumericArraySpec(()), label="add1"
         )
-        assert tuple(wrapped.output_spec.components) == ("result",)
-        assert wrapped._output_component == "result"
+        assert tuple(wrapped.output_spec.outputs) == ("result",)
+        assert wrapped._output_name == "result"
 
     def test_a_bound_method_infers_its_method_name(self):
         class Model:
@@ -342,7 +354,7 @@ class TestFunctionDeclarations:
 
         wrapped = Function(Model().fit, output_spec=NumericArraySpec(()))
         assert wrapped.label == "fit"
-        assert tuple(wrapped.output_spec.components) == ("fit",)
+        assert tuple(wrapped.output_spec.outputs) == ("fit",)
 
     def test_an_undeclared_output_infers_the_callable_name(self):
         def score(x):
@@ -350,16 +362,16 @@ class TestFunctionDeclarations:
 
         wrapped = Function(score, label="other")
         assert wrapped.output_spec is None
-        assert wrapped._output_component == "score"
+        assert wrapped._output_name == "score"
 
-    def test_with_label_leaves_the_inferred_component(self):
+    def test_with_label_leaves_the_inferred_output(self):
         def score(x):
             return x
 
         wrapped = Function(score, output_spec=NumericArraySpec(()))
         renamed = wrapped.with_label("other")
-        assert renamed.output_spec.components == {"score": NumericArraySpec(())}
-        assert renamed._output_component == "score"
+        assert renamed.output_spec.outputs == {"score": NumericArraySpec(())}
+        assert renamed._output_name == "score"
         assert renamed(4).label == "other(4)"
 
     @pytest.mark.parametrize("kind", ["partial", "instance"])
@@ -389,7 +401,7 @@ class TestFunctionDeclarations:
             label="add",
         )
         assert list(inspect.signature(Function.__init__).parameters)[1:3] == ["fn", "label"]
-        assert wrapped.raw() is add
+        assert wrapped.raw is add
         assert wrapped.apply(3) == 5
         assert inspect.signature(wrapped) == inspect.signature(add)
         assert Function(add).label == "add"
@@ -450,9 +462,9 @@ class TestFunctionDeclarations:
         assert float(result) == 3
         assert renamed.output_label == "prediction"
         assert renamed.output_spec is predict_impl.output_spec
-        assert renamed.output_spec.components == {"mean": None}
+        assert renamed.output_spec.outputs == {"mean": None}
         assert result.with_label("display").label == "display"
-        assert predict_impl.output_spec.components == {"mean": None}
+        assert predict_impl.output_spec.outputs == {"mean": None}
 
     def test_default_output_name_is_captured_once(self):
         def score(x):
@@ -461,20 +473,20 @@ class TestFunctionDeclarations:
         wrapped = Function(score, output_spec=NumericArraySpec(()), output_label="shown")
         renamed = wrapped.with_label("other")
         assert renamed.output_label == "shown"
-        assert renamed.output_spec.components == {"score": NumericArraySpec(())}
+        assert renamed.output_spec.outputs == {"score": NumericArraySpec(())}
         assert renamed(4).label == "shown"
 
-    @pytest.mark.parametrize("dispatch", ["sequential", "thread", "jax", "auto"])
+    @pytest.mark.parametrize("execution", [_SEQUENTIAL, _THREAD, _JAX, _AUTOMATIC])
     @pytest.mark.parametrize("lift", ["sweep", "broadcast"])
     def test_a_relabeled_lift_records_the_called_function(
-        self, dispatch, lift, full_provenance_mode
+        self, execution, lift, full_provenance_mode
     ):
         original = Function(
             (lambda x: x["value"] + 1) if lift == "sweep" else (lambda x: x + 1),
             output_label="prediction",
-            output_spec=OutputSpec(component=NumericArraySpec(())),
-            dispatch=dispatch,
-            n_broadcast_samples=8,
+            output_spec=OutputSpec(quantity=NumericArraySpec(())),
+            **execution,
+            max_evaluations=8,
             label="predict",
         )
         relabeled = original.with_label("display")
@@ -482,7 +494,7 @@ class TestFunctionDeclarations:
             NumericRecordBatch(
                 {"value": jnp.arange(3.0)},
                 "row",
-                element_spec=RecordSpec(value=()),
+                element=RecordSpec(value=()),
                 label="inputs",
             )
             if lift == "sweep"
@@ -500,9 +512,9 @@ class TestFunctionDeclarations:
         assert original.output_label == relabeled.output_label == "prediction"
         if lift == "sweep":
             assert result.level_names == ("row",)
-            np.testing.assert_array_equal(np.asarray(result.values), [1.0, 2.0, 3.0])
+            np.testing.assert_array_equal(np.asarray(result.raw), [1.0, 2.0, 3.0])
         else:
-            assert tuple(result.event_spec.components) == ("component",)
+            assert tuple(result.event_spec.outputs) == ("quantity",)
             assert result.num_atoms == 8
 
     def test_decorator_can_be_reused_with_its_name_override(self):
@@ -541,7 +553,7 @@ class TestFunctionDeclarations:
             lambda: lambda x: x + 1,
             output_spec=declaration
             if isinstance(declaration, OutputSpec) or declaration is None
-            else OutputSpec.default(declaration, component="factory"),
+            else OutputSpec.default(declaration, output_name="factory"),
             label="factory",
         )
         result = wrapped()
@@ -558,19 +570,19 @@ class TestFunctionDeclarations:
         stored = NumericArrayBatch(
             jnp.ones(2),
             "draw",
-            element_spec=NumericArraySpec(()),
+            element=NumericArraySpec(()),
             label="stored",
         )
         declared = BatchSpec(NumericArraySpec((), support=positive), stored.spec.levels)
         wrapped = Function(
             lambda: stored,
-            output_spec=OutputSpec.default(declared, component="load"),
+            output_spec=OutputSpec.default(declared, output_name="load"),
             label="load",
         )
         result = wrapped()
         assert wrapped.apply() is stored
         assert result.spec == declared
-        assert stored.element_spec.support is None
+        assert stored.element_spec.term_spec.support is None
 
     @pytest.mark.parametrize("invalid_value", [0.0, -1.0])
     @pytest.mark.parametrize("raw", [False, True])
@@ -581,7 +593,7 @@ class TestFunctionDeclarations:
         stored = NumericArrayBatch(
             values,
             "draw",
-            element_spec=NumericArraySpec(()),
+            element=NumericArraySpec(()),
             label="stored",
         )
         declaration = BatchSpec(NumericArraySpec((), support=positive), stored.spec.levels)
@@ -589,15 +601,15 @@ class TestFunctionDeclarations:
             lambda: stored,
             output_spec=declaration
             if isinstance(declaration, OutputSpec) or declaration is None
-            else OutputSpec.default(declaration, component="load"),
+            else OutputSpec.default(declaration, output_name="load"),
             label="load",
         )
         with pytest.raises(ValueError, match="output/load does not conform to declared support"):
             (wrapped.apply if raw else wrapped)()
-        assert stored.element_spec.support is None
+        assert stored.element_spec.term_spec.support is None
         assert stored.label == "stored"
-        np.testing.assert_array_equal(stored.values, values)
-        assert wrapped.output_spec.spec == declaration
+        np.testing.assert_array_equal(stored.raw, values)
+        assert wrapped.output_spec.term_spec == declaration
 
     def test_labels_are_outside_spec_equality(self):
         declaration = OutputSpec(mean=NumericArraySpec(()))
@@ -628,9 +640,9 @@ class TestFunctionDeclarations:
         assert isinstance(result, Record)
         assert result.label == "pack(2)"
         assert float(result["x"]) == 2
-        assert tuple(wrapped.output_spec.components) == (("x",) if exposed else ("bundle",))
+        assert tuple(wrapped.output_spec.outputs) == (("x",) if exposed else ("bundle",))
 
-    def test_type_hole_is_resolved_per_call(self):
+    def test_an_unspecified_output_type_is_resolved_per_call(self):
         wrapped = Function(
             lambda x: x,
             output_spec=OutputSpec(value=None),
@@ -638,7 +650,7 @@ class TestFunctionDeclarations:
         )
         assert isinstance(wrapped(3), NumericArray)
         assert isinstance(wrapped("text"), Opaque)
-        assert wrapped.output_spec.spec is None
+        assert wrapped.output_spec.term_spec is None
 
     def test_shared_and_output_only_dimensions(self):
         wrapped = Function(
@@ -650,7 +662,7 @@ class TestFunctionDeclarations:
         assert wrapped.input_spec == InputSpec(x=NumericArraySpec(("n",)))
         assert wrapped(jnp.ones(3)).shape == (6,)
         assert wrapped(jnp.ones(2)).shape == (4,)
-        assert wrapped.output_spec.spec.free_dims == {"m"}
+        assert wrapped.output_spec.term_spec.free_dims == {"m"}
 
     def test_returned_term_is_copied_and_relabelled(self):
         value = NumericArray(
@@ -665,7 +677,7 @@ class TestFunctionDeclarations:
         assert wrapped.apply() is value
         result = wrapped()
         assert result is not value
-        assert result.value is value.value
+        assert result.raw is value.raw
         assert result.label == "loaded"
         assert value.label == "stored"
 
@@ -687,9 +699,10 @@ class TestFunctionDeclarations:
             output_spec=OutputSpec(value=OpaqueSpec()),
             label="value",
         )
-        view = wrapped.using(dispatch="thread", max_workers=2)
-        assert view.options["dispatch"] == "thread"
-        assert wrapped.options["dispatch"] == "auto"
+        view = wrapped.using(executor="thread", executor_options={"max_workers": 2})
+        assert view.options["executor"] == "thread"
+        assert view.options["executor_options"] == {"max_workers": 2}
+        assert wrapped.options["executor"] is None
         assert view.spec is wrapped.spec
 
     def test_base_does_not_import_the_engine(self):
@@ -703,13 +716,13 @@ class TestFunctionDeclarations:
 
 
 class TestLiftedNames:
-    @pytest.mark.parametrize("dispatch", ["sequential", "jax", "thread"])
-    def test_sweep_keeps_array_kind_and_result_label(self, dispatch):
+    @pytest.mark.parametrize("execution", [_SEQUENTIAL, _JAX, _THREAD])
+    def test_sweep_keeps_array_kind_and_result_label(self, execution):
         wrapped = Function(
             lambda x: x["x"] * 2,
             output_label="doubled",
             output_spec=OutputSpec(value=NumericArraySpec(())),
-            dispatch=dispatch,
+            **execution,
             label="double",
         )
         from probpipe import NumericRecordBatch
@@ -717,26 +730,26 @@ class TestLiftedNames:
         rows = NumericRecordBatch(
             {"x": jnp.arange(3.0)},
             "case",
-            element_spec=RecordSpec(x=()),
+            element=RecordSpec(x=()),
             label="inputs",
         )
         result = wrapped(rows)
         assert isinstance(result, NumericArrayBatch)
         assert result.label == "doubled"
-        np.testing.assert_array_equal(result.values, [0.0, 2.0, 4.0])
+        np.testing.assert_array_equal(result.raw, [0.0, 2.0, 4.0])
 
     def test_empty_sweep_uses_declared_array_kind(self):
         wrapped = Function(
             lambda x: x * 2,
             output_label="doubled",
             output_spec=OutputSpec(doubled=NumericArraySpec(())),
-            dispatch="sequential",
+            executor="sequential",
             label="double",
         )
         rows = NumericArrayBatch(
             jnp.empty(0),
             "case",
-            element_spec=NumericArraySpec(()),
+            element=NumericArraySpec(()),
             label="inputs",
         )
         result = wrapped(rows)
@@ -761,20 +774,20 @@ class TestLiftedNames:
             output_label="results",
             output_spec=declaration
             if isinstance(declaration, OutputSpec) or declaration is None
-            else OutputSpec.default(declaration, component="results"),
-            dispatch="sequential",
+            else OutputSpec.default(declaration, output_name="results"),
+            executor="sequential",
             label="empty",
         )
         rows = NumericArrayBatch(
             jnp.empty(0),
             "case",
-            element_spec=NumericArraySpec(()),
+            element=NumericArraySpec(()),
             label="inputs",
         )
         result = wrapped(rows)
         assert type(result).__name__ == kind
         assert result.label == "results"
-        assert result.element_spec == declaration
+        assert result.element_spec.term_spec == declaration
         assert result.batch_shape == (0,)
 
     @pytest.mark.parametrize("declaration", [OutputSpec(value=None), NumericArraySpec(("n",))])
@@ -783,82 +796,87 @@ class TestLiftedNames:
             lambda x: x,
             output_spec=declaration
             if isinstance(declaration, OutputSpec) or declaration is None
-            else OutputSpec.default(declaration, component="empty"),
-            dispatch="sequential",
+            else OutputSpec.default(declaration, output_name="empty"),
+            executor="sequential",
             label="empty",
         )
         rows = NumericArrayBatch(
             jnp.empty(0),
             "case",
-            element_spec=NumericArraySpec(()),
+            element=NumericArraySpec(()),
             label="inputs",
         )
         with pytest.raises(ValueError, match="concrete output_spec"):
             wrapped(rows)
 
-    def test_broadcast_has_independent_label_and_component(self):
+    def test_broadcast_has_independent_label_and_output(self):
         wrapped = Function(
             lambda x: x * 2,
             output_label="doubled",
             output_spec=OutputSpec(value=NumericArraySpec(())),
-            dispatch="sequential",
-            n_broadcast_samples=8,
+            executor="sequential",
+            max_evaluations=8,
             label="double",
         )
         with workflow_run(seed=1):
             result = wrapped(Normal("x", 0, 1))
         assert result.label == "doubled"
-        assert tuple(result.event_spec.components) == ("value",)
+        assert tuple(result.event_spec.outputs) == ("value",)
         assert result.num_atoms == 8
 
-    @pytest.mark.parametrize("dispatch", ["sequential", "thread", "auto"])
+    @pytest.mark.parametrize("execution", [_SEQUENTIAL, _THREAD, _AUTOMATIC])
     @pytest.mark.parametrize("renamed", [None, "renamed", "M.pair"])
-    def test_list_rows_are_opaque_elements_under_output_name(self, dispatch, renamed):
+    def test_list_rows_are_opaque_elements_under_output_name(self, execution, renamed):
         rows = NumericRecordBatch(
             {"x": jnp.arange(3.0)},
             "rows",
-            element_spec=RecordSpec(x=()),
+            element=RecordSpec(x=()),
             label="inputs",
         )
         wrapped = Function(
             lambda x: [x["x"], x["x"] + 1.0],
             output_label="outs",
+            **execution,
             label="pair",
         )
         if renamed is not None:
             wrapped = wrapped.with_label(renamed)
-        result = wrapped.using(dispatch=dispatch)(rows)
+        result = wrapped(rows)
         assert isinstance(result, OpaqueBatch)
         assert result.label == "outs"
         assert result.level_names == ("rows",)
-        assert [float(value) for value in result[1].value] == [1.0, 2.0]
+        assert [float(value) for value in result[1].raw] == [1.0, 2.0]
 
-    def test_the_mapped_dispatch_refuses_a_list_row(self):
+    def test_the_jax_executor_refuses_a_list_row(self):
         rows = NumericRecordBatch(
             {"x": jnp.arange(3.0)},
             "rows",
-            element_spec=RecordSpec(x=()),
+            element=RecordSpec(x=()),
             label="inputs",
         )
         wrapped = Function(
             lambda x: [x["x"], x["x"] + 1.0],
-            dispatch="jax",
+            executor="jax",
             label="pair",
         )
 
-        with pytest.raises(ValueError, match="dispatch='jax'"):
+        with pytest.raises(
+            ResolutionError,
+            match=r"executor 'jax' cannot run the evaluation points of 'pair': "
+            r"JAX cannot trace 'pair': tracing it raised TypeError",
+        ):
             wrapped(rows)
 
 
 class TestLiftedInputDeclarations:
-    @pytest.mark.parametrize("dispatch", ["sequential", "thread", "auto"])
-    def test_a_declared_array_input_lifts_an_empirical_law_over_arrays(self, dispatch):
+    @pytest.mark.parametrize("execution", [_SEQUENTIAL, _THREAD, _AUTOMATIC])
+    def test_a_declared_array_input_lifts_an_empirical_law_over_arrays(self, execution):
         values = jnp.asarray([0.0, 1.0, 2.0])
-        law = EmpiricalDistribution(values, component="theta")
+        law = EmpiricalDistribution(values, output_name="theta")
         predict = Function(
             lambda theta: 2 * theta,
             input_spec={"theta": NumericArraySpec(())},
-            dispatch=dispatch,
+            **execution,
             label="predict",
             output_spec=OutputSpec(predict=None),
         )
@@ -866,20 +884,20 @@ class TestLiftedInputDeclarations:
         assert result.num_atoms == 3
         np.testing.assert_array_equal(np.asarray(result.atoms), 2 * values)
 
-    @pytest.mark.parametrize("dispatch", ["sequential", "thread", "auto"])
-    def test_declared_functions_compose_over_a_law(self, dispatch):
+    @pytest.mark.parametrize("execution", [_SEQUENTIAL, _THREAD, _AUTOMATIC])
+    def test_declared_functions_compose_over_a_law(self, execution):
         first = Function(
             lambda theta: theta + 1,
             input_spec={"theta": NumericArraySpec(())},
-            dispatch=dispatch,
-            n_broadcast_samples=8,
+            **execution,
+            max_evaluations=8,
             label="first",
             output_spec=OutputSpec(first=None),
         )
         second = Function(
             lambda x: x * 2,
             input_spec={"x": NumericArraySpec(())},
-            dispatch=dispatch,
+            **execution,
             label="second",
             output_spec=OutputSpec(second=None),
         )
@@ -890,8 +908,8 @@ class TestLiftedInputDeclarations:
         assert result.num_atoms == 8
         np.testing.assert_array_equal(np.asarray(result.atoms), 2 * np.asarray(intermediate.atoms))
 
-    def test_a_law_over_one_field_records_lifts_only_into_a_record_slot(self):
-        """A one-field record stays a record (II.2), so an array slot refuses its law."""
+    def test_a_law_over_one_field_records_lifts_only_into_a_record_input(self):
+        """A one-field record stays a record (II.2), so an array input refuses its law."""
         atoms = NumericRecordBatch(
             {"theta": jnp.asarray([0.0, 1.0, 2.0])},
             "draw",
@@ -901,14 +919,14 @@ class TestLiftedInputDeclarations:
         as_array = Function(
             lambda theta: 2 * theta,
             input_spec={"theta": NumericArraySpec(())},
-            dispatch="sequential",
+            executor="sequential",
             label="as_array",
             output_spec=OutputSpec(as_array=None),
         )
         as_record = Function(
             lambda theta: 2 * theta["theta"],
             input_spec={"theta": RecordSpec(theta=())},
-            dispatch="sequential",
+            executor="sequential",
             label="as_record",
             output_spec=OutputSpec(as_record=None),
         )
@@ -924,7 +942,7 @@ class TestCompletedOutputDeclarations:
         return NumericRecordBatch(
             {"x": jnp.arange(1.0, 4.0)},
             "case",
-            element_spec=RecordSpec(x=()),
+            element=RecordSpec(x=()),
             label="inputs",
         )
 
@@ -938,9 +956,9 @@ class TestCompletedOutputDeclarations:
             lambda x: stored,
             output_spec=declaration
             if isinstance(declaration, OutputSpec) or declaration is None
-            else OutputSpec.default(declaration, component="factory"),
-            dispatch="sequential",
-            n_broadcast_samples=3,
+            else OutputSpec.default(declaration, output_name="factory"),
+            executor="sequential",
+            max_evaluations=3,
             label="factory",
         )
         operand = {"plain": rows[0], "sweep": rows, "broadcast": Normal("x", 0.0, 1.0)}[mode]
@@ -954,8 +972,8 @@ class TestCompletedOutputDeclarations:
             laws = tuple(result.atoms)
         for law in laws:
             assert law.spec is stored.spec
-            assert law.event_spec.components["y"].dtype == np.dtype("float32")
-            assert law.event_spec.components["y"].support == positive
+            assert law.event_spec.outputs["y"].dtype == np.dtype("float32")
+            assert law.event_spec.outputs["y"].support == positive
 
     @pytest.mark.parametrize("mode", ["apply", "plain", "sweep", "broadcast"])
     def test_a_returned_law_outside_the_declared_support_is_refused(self, rows, mode):
@@ -965,8 +983,8 @@ class TestCompletedOutputDeclarations:
             output_spec=OutputSpec(
                 factory=DistributionSpec(OutputSpec(y=NumericArraySpec((), support=positive)))
             ),
-            dispatch="sequential",
-            n_broadcast_samples=8,
+            executor="sequential",
+            max_evaluations=8,
             label="factory",
         )
         operand = {
@@ -976,15 +994,21 @@ class TestCompletedOutputDeclarations:
             "broadcast": Normal("x", 0.0, 1.0),
         }[mode]
         invoke = factory.apply if mode == "apply" else factory
+        # A lift and a sweep check each evaluation point's output inside the point.
+        error = EvaluationError if mode in ("sweep", "broadcast") else ValueError
         with (
             workflow_run(seed=0),
-            pytest.raises(ValueError, match=r"factory/y support real does not conform to positive"),
+            pytest.raises(
+                error, match=r"factory/y support real does not conform to positive"
+            ) as raised,
         ):
             invoke(operand)
-        assert stored.event_spec.components["y"].support == real
+        if error is EvaluationError:
+            assert isinstance(raised.value.__cause__, ResultSchemaError)
+        assert stored.event_spec.outputs["y"].support == real
 
     def test_a_returned_joint_is_checked_field_by_field(self):
-        stored = Normal("a", 0.0, 1.0) * Normal("b", 0.0, 1.0)
+        stored = Normal("a", 0.0, 1.0) & Normal("b", 0.0, 1.0)
         declared = RecordSpec(a=NumericArraySpec((), support=positive), b=NumericArraySpec(()))
         factory = Function(
             lambda: stored,
@@ -1041,9 +1065,9 @@ class TestCompletedOutputDeclarations:
     def test_a_returned_law_over_a_whole_record_is_checked_field_by_field(self):
         from probpipe import Distribution
 
-        joint = Normal("y", 0.0, 1.0) * Normal("z", 0.0, 1.0)
+        joint = Normal("y", 0.0, 1.0) & Normal("z", 0.0, 1.0)
         stored = Distribution(
-            OutputSpec(bundle=joint.event_spec.spec),
+            OutputSpec(bundle=joint.event_spec.term_spec),
             label="bundle",
         )
         declared = RecordSpec(y=NumericArraySpec((), support=positive), z=NumericArraySpec(()))
@@ -1057,8 +1081,8 @@ class TestCompletedOutputDeclarations:
         ):
             factory.apply()
 
-    @pytest.mark.parametrize("dispatch", ["sequential", "thread"])
-    def test_swept_returned_functions_enforce_the_declared_contract(self, rows, dispatch):
+    @pytest.mark.parametrize("execution", [_SEQUENTIAL, _THREAD])
+    def test_swept_returned_functions_enforce_the_declared_contract(self, rows, execution):
         stored = Function(
             lambda: -1.0,
             label="inner",
@@ -1070,14 +1094,14 @@ class TestCompletedOutputDeclarations:
             lambda row: stored,
             output_spec=declaration
             if isinstance(declaration, OutputSpec) or declaration is None
-            else OutputSpec.default(declaration, component="factory"),
-            dispatch=dispatch,
+            else OutputSpec.default(declaration, output_name="factory"),
+            **execution,
             label="factory",
         )
 
         single = factory(rows[0])
         batch = factory(rows)
-        assert batch.element_spec == declaration
+        assert batch.element_spec.term_spec == declaration
         for result in (single, *batch):
             assert result is not stored
             assert result.spec == declaration
@@ -1086,8 +1110,8 @@ class TestCompletedOutputDeclarations:
         assert stored.output_spec is None
         assert factory.apply(rows[0]) is stored
 
-    @pytest.mark.parametrize("dispatch", ["sequential", "thread"])
-    def test_swept_existing_arrays_keep_declared_support(self, rows, dispatch):
+    @pytest.mark.parametrize("execution", [_SEQUENTIAL, _THREAD])
+    def test_swept_existing_arrays_keep_declared_support(self, rows, execution):
         stored = NumericArray(
             jnp.ones(2),
             label="stored",
@@ -1097,166 +1121,173 @@ class TestCompletedOutputDeclarations:
             lambda row: stored,
             output_spec=declaration
             if isinstance(declaration, OutputSpec) or declaration is None
-            else OutputSpec.default(declaration, component="load"),
-            dispatch=dispatch,
+            else OutputSpec.default(declaration, output_name="load"),
+            **execution,
             label="load",
         )
         result = wrapped(rows)
-        # The declaration leaves the dtype open, so completion takes the produced one (II.2).
+        # The output spec leaves the dtype open, so completion takes the produced one (II.2).
         completed = NumericArraySpec((2,), dtype=stored.dtype, support=positive)
-        assert result.element_spec == wrapped(rows[0]).spec == completed
-        np.testing.assert_array_equal(result.values, np.ones((3, 2)))
+        assert result.element_spec.term_spec == wrapped(rows[0]).spec == completed
+        np.testing.assert_array_equal(result.raw, np.ones((3, 2)))
         assert stored.spec.support is None
 
-    @pytest.mark.parametrize("dispatch", ["sequential", "jax", "thread"])
-    def test_sweep_completes_output_only_dimensions_per_call(self, rows, dispatch):
+    @pytest.mark.parametrize("execution", [_SEQUENTIAL, _JAX, _THREAD])
+    def test_sweep_completes_output_only_dimensions_per_call(self, rows, execution):
         declaration = RecordSpec(stats=RecordSpec(y=("width",)))
         wrapped = Function(
             lambda row, width: {"stats": {"y": jnp.full((width,), row["x"])}},
             output_spec=declaration,
-            dispatch=dispatch,
+            **execution,
             label="pack",
         )
         for width in (2, 4):
             result = wrapped(rows, width)
-            assert result.element_spec == RecordSpec(stats=RecordSpec(y=(width,)))
+            assert result.element_spec.term_spec == RecordSpec(stats=RecordSpec(y=(width,)))
             np.testing.assert_array_equal(
                 result["stats/y"], np.repeat([[1.0], [2.0], [3.0]], width, axis=1)
             )
-        assert wrapped.output_spec.spec is declaration
+        assert wrapped.output_spec.term_spec is declaration
         assert declaration.free_dims == {"width"}
 
-    @pytest.mark.parametrize("dispatch", ["sequential", "jax", "thread"])
+    @pytest.mark.parametrize("execution", [_SEQUENTIAL, _JAX, _THREAD])
     @pytest.mark.parametrize("kind", ["array", "record", "hole", "record_hole"])
-    def test_broadcast_completes_dimensions_and_preserves_component(self, dispatch, kind):
+    def test_broadcast_completes_dimensions_and_preserves_output(self, execution, kind):
         declaration = {
-            "array": OutputSpec(component=NumericArraySpec(("width",))),
-            "record": OutputSpec(RecordSpec(component=("width",))),
-            "hole": OutputSpec(component=None),
-            "record_hole": OutputSpec(component=None),
+            "array": OutputSpec(quantity=NumericArraySpec(("width",))),
+            "record": OutputSpec(RecordSpec(quantity=("width",))),
+            "hole": OutputSpec(quantity=None),
+            "record_hole": OutputSpec(quantity=None),
         }[kind]
 
         def body(x):
             value = jnp.stack([x, x + 1])
-            return {"component": value} if kind in ("record", "record_hole") else value
+            return {"quantity": value} if kind in ("record", "record_hole") else value
 
         wrapped = Function(
             body,
             output_label="result",
             output_spec=declaration,
-            dispatch=dispatch,
-            n_broadcast_samples=8,
+            **execution,
+            max_evaluations=8,
             label="f",
         )
         with workflow_run(seed=4):
             joint = wrapped.using(include_inputs=True)(Normal("x", 0, 1))
         assert joint.label == "result"
-        assert tuple(joint.event_spec.components) == ("x", "component")
-        column = joint._rows["component/component" if kind == "record_hole" else "component"]
+        assert tuple(joint.event_spec.outputs) == ("x", "quantity")
+        column = joint._rows["quantity/quantity" if kind == "record_hole" else "quantity"]
         assert column.shape == (8, 2)
         np.testing.assert_allclose(column[:, 1], column[:, 0] + 1, rtol=0, atol=0)
         assert wrapped.output_spec is declaration
         if kind in ("hole", "record_hole"):
-            assert declaration.spec is None
+            assert declaration.term_spec is None
         else:
-            assert declaration.spec.free_dims == {"width"}
+            assert declaration.term_spec.free_dims == {"width"}
 
     @pytest.mark.parametrize(
         "returned",
         [[1.0, 2.0], (1.0, 2.0), [], jnp.ones(3, dtype="float32"), np.arange(3, dtype="int32")],
         ids=["list", "tuple", "empty-list", "float32-array", "int32-array"],
     )
-    @pytest.mark.parametrize("dispatch", ["sequential", "thread", "jax", "auto"])
-    def test_a_type_hole_completes_as_an_undeclared_return_does(self, returned, dispatch):
-        """A type hole takes the type the kind-directed wrap gives the return, dtype included."""
+    @pytest.mark.parametrize("execution", [_SEQUENTIAL, _THREAD, _JAX, _AUTOMATIC])
+    def test_an_unspecified_output_type_completes_as_an_undeclared_return_does(
+        self, returned, execution
+    ):
+        """An unspecified output type takes the type the kind-directed wrap gives the return.
+
+        The dtype is included.
+        """
         undeclared = Function(
             lambda row: returned,
             output_label="items",
-            dispatch=dispatch,
+            **execution,
             label="f",
         )
         declared = Function(
             lambda row: returned,
             output_label="items",
             output_spec=OutputSpec(items=None),
-            dispatch=dispatch,
+            **execution,
             label="f",
         )
         rows = NumericRecordBatch(
             {"x": jnp.arange(2.0)},
             "row",
-            element_spec=RecordSpec(x=()),
+            element=RecordSpec(x=()),
             label="rows",
         )
-        operands = [0]
-        if dispatch != "jax" or not isinstance(returned, (list, tuple)):
-            # The mapped dispatch refuses a sequence row.
-            operands.append(rows)
-        for operand in operands:
-            expected = undeclared(operand)
-            result = declared(operand)
+        jax_mapped = execution.get("executor") == "jax"
+        # A plain call is one evaluation point, which jax never maps.
+        cases = [(0, {"executor": None} if jax_mapped else {})]
+        if not jax_mapped or not isinstance(returned, (list, tuple)):
+            # The jax executor refuses a sequence row.
+            cases.append((rows, {}))
+        for operand, view_controls in cases:
+            expected = undeclared.using(**view_controls)(operand)
+            result = declared.using(**view_controls)(operand)
             assert type(result) is type(expected)
             assert result.spec == expected.spec
-        assert declared.output_spec.spec is None
+        assert declared.output_spec.term_spec is None
         assert declared.apply(0) is returned
 
-    @pytest.mark.parametrize("dispatch", ["sequential", "thread", "jax", "auto"])
-    def test_a_lift_that_includes_its_inputs_completes_the_output_declaration(self, dispatch):
+    @pytest.mark.parametrize("execution", [_SEQUENTIAL, _THREAD, _JAX, _AUTOMATIC])
+    def test_a_lift_that_includes_its_inputs_completes_the_output_declaration(self, execution):
         factory = Function(
             lambda x: jnp.stack([x, x + 1, x + 2]),
             output_label="results",
-            output_spec=OutputSpec(component=NumericArraySpec(("width",))),
-            dispatch=dispatch,
-            n_broadcast_samples=8,
+            output_spec=OutputSpec(quantity=NumericArraySpec(("width",))),
+            **execution,
+            max_evaluations=8,
             include_inputs=True,
             label="factory",
         )
         with workflow_run(seed=4):
             result = factory(Normal("x", 0.0, 1.0))
         assert result.label == "results"
-        assert result.event_spec.spec["component"] == NumericArraySpec((3,), dtype="float32")
-        assert factory.output_spec.spec.free_dims == {"width"}
+        assert result.event_spec.term_spec["quantity"] == NumericArraySpec((3,), dtype="float32")
+        assert factory.output_spec.term_spec.free_dims == {"width"}
 
-    @pytest.mark.parametrize("dispatch", ["sequential", "thread", "jax", "auto"])
-    def test_an_enumerated_lift_that_includes_its_inputs_fills_a_type_hole(self, dispatch):
+    @pytest.mark.parametrize("execution", [_SEQUENTIAL, _THREAD, _JAX, _AUTOMATIC])
+    def test_an_enumerated_lift_that_includes_its_inputs_fills_an_unspecified_type(self, execution):
         factory = Function(
             lambda x: jnp.stack([x, x + 1, x + 2]),
             output_label="results",
-            output_spec=OutputSpec(component=None),
-            dispatch=dispatch,
+            output_spec=OutputSpec(quantity=None),
+            **execution,
             include_inputs=True,
             label="factory",
         )
-        result = factory(EmpiricalDistribution(jnp.arange(3.0), component="x"))
+        result = factory(EmpiricalDistribution(jnp.arange(3.0), output_name="x"))
         assert result.label == "results"
-        assert result.event_spec.spec["component"] == NumericArraySpec((3,), dtype="float32")
-        assert factory.output_spec.spec is None
+        assert result.event_spec.term_spec["quantity"] == NumericArraySpec((3,), dtype="float32")
+        assert factory.output_spec.term_spec is None
 
-    @pytest.mark.parametrize("dispatch", ["sequential", "thread", "jax", "auto"])
+    @pytest.mark.parametrize("execution", [_SEQUENTIAL, _THREAD, _JAX, _AUTOMATIC])
     @pytest.mark.parametrize("exposed", [False, True])
-    def test_a_lift_keeps_the_declared_record_exposure(self, dispatch, exposed):
+    def test_a_lift_keeps_the_declared_record_exposure(self, execution, exposed):
         record = RecordSpec(field=NumericArraySpec((2,), dtype="float32"))
         declaration = OutputSpec(record) if exposed else OutputSpec(bundle=record)
         factory = Function(
             lambda x: {"field": jnp.stack([x, x + 1])},
             output_label="results",
             output_spec=declaration,
-            dispatch=dispatch,
-            n_broadcast_samples=8,
+            **execution,
+            max_evaluations=8,
             label="factory",
         )
         with workflow_run(seed=4):
             result = factory(Normal("x", 0.0, 1.0))
             draws = sample(result, sample_shape=(4,))
         assert result.event_spec == declaration
-        assert tuple(result.event_spec.components) == (("field",) if exposed else ("bundle",))
+        assert tuple(result.event_spec.outputs) == (("field",) if exposed else ("bundle",))
         if not exposed:
             assert result["bundle"] is result
         column = np.asarray(draws["field"])
         np.testing.assert_allclose(column[:, 1], column[:, 0] + 1, rtol=0, atol=0)
         assert factory.output_spec is declaration
 
-    @pytest.mark.parametrize("dispatch", ["sequential", "thread", "auto"])
+    @pytest.mark.parametrize("execution", [_SEQUENTIAL, _THREAD, _AUTOMATIC])
     @pytest.mark.parametrize(
         "kind",
         [
@@ -1266,7 +1297,7 @@ class TestCompletedOutputDeclarations:
             "batch",
         ],
     )
-    def test_a_lift_keeps_a_non_numeric_component_kind(self, dispatch, kind):
+    def test_a_lift_keeps_a_non_numeric_output_kind(self, execution, kind):
         stored = {
             "function": lambda: Function(
                 lambda x: x + 1,
@@ -1289,23 +1320,23 @@ class TestCompletedOutputDeclarations:
             "batch": lambda: NumericArrayBatch(
                 jnp.arange(2.0),
                 "row",
-                element_spec=NumericArraySpec((), dtype=jnp.float32),
+                element=NumericArraySpec((), dtype=jnp.float32),
                 label="stored",
             ),
         }[kind]()
-        declaration = OutputSpec(component=stored.spec)
+        declaration = OutputSpec(quantity=stored.spec)
         factory = Function(
             lambda x: stored,
             output_label="results",
             output_spec=declaration,
-            dispatch=dispatch,
-            n_broadcast_samples=8,
+            **execution,
+            max_evaluations=8,
             label="factory",
         )
         with workflow_run(seed=4):
             result = factory(Normal("x", 0.0, 1.0))
         assert result.event_spec == declaration
-        assert result["component"] is result
+        assert result["quantity"] is result
         assert result.num_atoms == 8
         assert all(type(atom) is type(stored) for atom in result.atoms)
         if kind == "function":
@@ -1313,7 +1344,7 @@ class TestCompletedOutputDeclarations:
         assert stored.label == ("inner" if kind == "function" else "stored")
 
     @pytest.mark.parametrize("tracked", [False, True])
-    def test_type_hole_accepts_a_nested_record(self, tracked):
+    def test_an_unspecified_output_type_accepts_a_nested_record(self, tracked):
         value = {"stats": {"mean": 2.0}}
         if tracked:
             value = Record(
@@ -1328,7 +1359,7 @@ class TestCompletedOutputDeclarations:
         result = wrapped()
         assert isinstance(result, Record)
         assert float(result["stats/mean"]) == 2.0
-        assert wrapped.output_spec.components == {"bundle": None}
+        assert wrapped.output_spec.outputs == {"bundle": None}
         assert wrapped.apply() is value
 
     @pytest.mark.parametrize("tracked", [False, True])
@@ -1350,10 +1381,13 @@ class TestCompletedOutputDeclarations:
             lambda: returned,
             output_spec=declaration
             if isinstance(declaration, OutputSpec) or declaration is None
-            else OutputSpec.default(declaration, component="factory"),
+            else OutputSpec.default(declaration, output_name="factory"),
             label="factory",
         )
-        with pytest.raises(ValueError, match=r"input_spec slots.*signature parameters"):
+        with pytest.raises(
+            ValueError,
+            match=r"declares the inputs.*in input_spec, but its signature has the parameters",
+        ):
             (factory.apply if raw else factory)()
         if tracked:
             assert returned.input_spec is None
@@ -1399,23 +1433,23 @@ class TestCompletedOutputDeclarations:
         assert factory.apply() is returned
         assert factory().signature == inspect.signature(returned)
 
-    @pytest.mark.parametrize("dispatch", ["sequential", "thread"])
-    def test_nested_lift_carries_completed_output_dimensions(self, rows, dispatch):
-        declaration = RecordSpec(component=("width",))
+    @pytest.mark.parametrize("execution", [_SEQUENTIAL, _THREAD])
+    def test_nested_lift_carries_completed_output_dimensions(self, rows, execution):
+        declaration = RecordSpec(quantity=("width",))
         wrapped = Function(
-            lambda row, x: {"component": jnp.full((2,), x + row["x"])},
+            lambda row, x: {"quantity": jnp.full((2,), x + row["x"])},
             output_spec=declaration,
-            dispatch=dispatch,
-            n_broadcast_samples=8,
+            **execution,
+            max_evaluations=8,
             label="nested",
         )
         with workflow_run(seed=4):
             result = wrapped(rows, Normal("x", 0, 1))
-        assert result.event_spec.spec.leaf_shapes == {"component": (2,)}
+        assert result.event_spec.term_spec.leaf_shapes == {"quantity": (2,)}
         assert result.batch_shape == (3,)
         for marginal in result:
-            assert marginal.event_spec.spec == result.event_spec.spec
-            values = marginal.atoms["component"].raw()
+            assert marginal.event_spec.term_spec == result.event_spec.term_spec
+            values = marginal.atoms["quantity"].raw
             np.testing.assert_array_equal(values[:, 0], values[:, 1])
         assert declaration.free_dims == {"width"}
 
@@ -1423,7 +1457,7 @@ class TestCompletedOutputDeclarations:
         wrapped = Function(
             lambda row: {"value": jnp.ones(int(row["x"]))},
             output_spec=RecordSpec(value=("width",)),
-            dispatch="sequential",
+            executor="sequential",
             label="ragged",
         )
         with pytest.raises(ValueError, match="already bound"):
@@ -1466,7 +1500,7 @@ def test_a_shape_only_declaration_keeps_the_returned_terms_dtype_and_support(kin
         stored = NumericArrayBatch(
             values[None, :],
             "item",
-            element_spec=leaf,
+            element=leaf,
             label="stored",
         )
         declaration = BatchSpec(NumericArraySpec((3,)), item=1)
@@ -1474,8 +1508,8 @@ def test_a_shape_only_declaration_keeps_the_returned_terms_dtype_and_support(kin
         lambda row: stored,
         output_spec=declaration
         if isinstance(declaration, OutputSpec) or declaration is None
-        else OutputSpec.default(declaration, component="factory"),
-        dispatch="sequential",
+        else OutputSpec.default(declaration, output_name="factory"),
+        executor="sequential",
         label="factory",
     )
     if mode == "plain":
@@ -1484,22 +1518,22 @@ def test_a_shape_only_declaration_keeps_the_returned_terms_dtype_and_support(kin
         rows = NumericArrayBatch(
             jnp.arange(2.0),
             "row",
-            element_spec=NumericArraySpec(()),
+            element=NumericArraySpec(()),
             label="rows",
         )
-        actual = factory(rows).element_spec
+        actual = factory(rows).element_spec.term_spec
     if kind == "record":
         actual = actual["stats/x"]
     elif kind == "batch" and mode == "plain":
-        actual = actual.element_spec
+        actual = actual.element_spec.term_spec
     assert actual == leaf
-    assert factory.output_spec.spec is declaration
+    assert factory.output_spec.term_spec is declaration
 
 
 @pytest.mark.parametrize("mode", ["plain", "sweep", "lift"])
 @pytest.mark.parametrize("declared_side", [None, "input", "output"])
 def test_a_returned_function_keeps_the_declarations_its_result_leaves_open(mode, declared_side):
-    """A side the outer declaration leaves unspecified keeps the returned function's own."""
+    """A side the outer function spec leaves unspecified keeps the returned function's own."""
     from probpipe import EmpiricalDistribution, positive
 
     inputs = InputSpec(x=NumericArraySpec(()))
@@ -1518,8 +1552,8 @@ def test_a_returned_function_keeps_the_declarations_its_result_leaves_open(mode,
         lambda row: inner,
         output_spec=declaration
         if isinstance(declaration, OutputSpec) or declaration is None
-        else OutputSpec.default(declaration, component="outer"),
-        dispatch="sequential",
+        else OutputSpec.default(declaration, output_name="outer"),
+        executor="sequential",
         label="outer",
     )
     if mode == "plain":
@@ -1528,12 +1562,12 @@ def test_a_returned_function_keeps_the_declarations_its_result_leaves_open(mode,
         rows = NumericArrayBatch(
             jnp.arange(2.0),
             "row",
-            element_spec=NumericArraySpec(()),
+            element=NumericArraySpec(()),
             label="rows",
         )
         returned = list(factory(rows))
     else:
-        returned = list(factory(EmpiricalDistribution(jnp.arange(2.0), component="row")).atoms)
+        returned = list(factory(EmpiricalDistribution(jnp.arange(2.0), output_name="row")).atoms)
     for result in returned:
         assert result is not inner
         assert result.spec == inner.spec
@@ -1549,7 +1583,7 @@ def test_a_returned_batch_is_relabeled_as_the_root_of_its_views(sliced, full_pro
         jnp.arange(6.0).reshape(2, 3),
         ("chain", "row"),
         axes_per_level=(1, 1),
-        element_spec=NumericArraySpec(()),
+        element=NumericArraySpec(()),
         label="pts",
     )
     if sliced:
@@ -1571,7 +1605,7 @@ def test_a_returned_batch_is_relabeled_as_the_root_of_its_views(sliced, full_pro
     relabeled = result.with_label("display")
     assert relabeled[0].label.startswith("display[")
     assert relabeled.provenance.operation == "with_label"
-    np.testing.assert_array_equal(result.values, stored.values)
+    np.testing.assert_array_equal(result.raw, stored.raw)
 
 
 def test_a_returned_function_is_relabeled_with_its_python_names(full_provenance_mode):
@@ -1603,23 +1637,23 @@ class TestFunctionLabels:
         assert Function(predict)(NumericArray(2.0, label="ambient")).label == "predict(ambient)"
         assert Function(predict, output_label="prediction")(2.0).label == "prediction"
 
-    def test_output_components_are_declared_independently_of_aliases(self):
+    def test_outputs_are_declared_independently_of_aliases(self):
         inferred = Function(lambda x: x, output_spec=NumericArraySpec(()))
-        assert tuple(inferred.output_spec.components) == ("f",)
+        assert tuple(inferred.output_spec.outputs) == ("f",)
         declared = OutputSpec(prediction=NumericArraySpec(()))
         f = Function(
             lambda x: x + 1, label="predict", output_label="forecast", output_spec=declared
         )
-        g = Function(f.raw(), label="other", output_label="estimate", output_spec=declared)
+        g = Function(f.raw, label="other", output_label="estimate", output_spec=declared)
         assert f.output_spec == g.output_spec
         assert fingerprint(f) == fingerprint(g)
         with workflow_run(seed=42):
             first = f(Normal("temperature", 0, 1))
         with workflow_run(seed=42):
             second = g(Normal("temperature", 0, 1))
-        assert tuple(first.event_spec.components) == ("prediction",)
-        assert tuple(second.event_spec.components) == ("prediction",)
-        np.testing.assert_array_equal(first.atoms.raw(), second.atoms.raw())
+        assert tuple(first.event_spec.outputs) == ("prediction",)
+        assert tuple(second.event_spec.outputs) == ("prediction",)
+        np.testing.assert_array_equal(first.atoms.raw, second.atoms.raw)
 
     @pytest.mark.parametrize("transform", [jax.jit, jax.vmap], ids=["jit", "vmap"])
     def test_a_function_applies_to_a_rebuilt_array_in_a_transform(self, transform):
@@ -1640,23 +1674,21 @@ class TestFunctionLabels:
         assert wrapped(first).label == "increment(temperature)"
         assert float(wrapped(first)) == 2.0
 
-    def test_lifting_infers_components_independently_of_display_aliases(self):
+    def test_lifting_infers_outputs_independently_of_display_aliases(self):
         def predict(x):
             return x + 1
 
-        inferred = Function(predict, n_broadcast_samples=5)
-        aliased = Function(
-            predict, label="forecast", output_label="estimate", n_broadcast_samples=5
-        )
+        inferred = Function(predict, max_evaluations=5)
+        aliased = Function(predict, label="forecast", output_label="estimate", max_evaluations=5)
         assert fingerprint(inferred) == fingerprint(aliased)
         with workflow_run(seed=42):
             first = inferred(Normal("temperature", 0, 1))
         with workflow_run(seed=42):
             second = aliased.with_label("other")(Normal("temperature", 0, 1))
-        assert tuple(first.event_spec.components) == ("predict",)
-        assert tuple(second.event_spec.components) == ("predict",)
-        np.testing.assert_array_equal(first.atoms.raw(), second.atoms.raw())
-        unnamed = Function(lambda x: x + 1, label="predict", n_broadcast_samples=5)
-        assert tuple(unnamed(Normal("temperature", 0, 1)).event_spec.components) == ("f",)
-        exposed = Function(lambda x: {"prediction": x + 1}, n_broadcast_samples=5)
-        assert tuple(exposed(Normal("temperature", 0, 1)).event_spec.components) == ("prediction",)
+        assert tuple(first.event_spec.outputs) == ("predict",)
+        assert tuple(second.event_spec.outputs) == ("predict",)
+        np.testing.assert_array_equal(first.atoms.raw, second.atoms.raw)
+        unnamed = Function(lambda x: x + 1, label="predict", max_evaluations=5)
+        assert tuple(unnamed(Normal("temperature", 0, 1)).event_spec.outputs) == ("f",)
+        exposed = Function(lambda x: {"prediction": x + 1}, max_evaluations=5)
+        assert tuple(exposed(Normal("temperature", 0, 1)).event_spec.outputs) == ("prediction",)

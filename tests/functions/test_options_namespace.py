@@ -15,6 +15,7 @@ from probpipe import (
     Normal,
     OutputSpec,
     WorkflowKind,
+    config,
     function,
     workflow_run,
 )
@@ -36,7 +37,7 @@ def test_function_is_the_only_public_wrapper_api():
 
 
 def test_function_decorator_sets_construction_defaults():
-    @function(n_broadcast_samples=7, dispatch="sequential", output_spec=OutputSpec(identity=None))
+    @function(max_evaluations=7, executor="sequential", output_spec=OutputSpec(identity=None))
     def identity(x):
         return x
 
@@ -54,12 +55,12 @@ def test_function_rng_seed_controls_are_removed():
     def identity(x):
         return x
 
-    wf = Function(identity, label="identity", dispatch="sequential")
+    wf = Function(identity, label="identity", executor="sequential")
 
     assert "seed" not in inspect.signature(Function.__init__).parameters
     assert "seed" not in inspect.signature(wf.using).parameters
     with pytest.warns(FutureWarning, match="seed.*ignored"):
-        deprecated = Function(identity, label="identity", dispatch="sequential", seed=42)
+        deprecated = Function(identity, label="identity", executor="sequential", seed=42)
     assert float(deprecated(3)) == 3
     with pytest.warns(FutureWarning, match="seed.*ignored"):
 
@@ -77,7 +78,7 @@ def test_function_construction_seed_warns_without_binding_user_parameter():
         return x + seed
 
     with pytest.warns(FutureWarning, match="seed.*ignored"):
-        wrapped = Function(add_seed, label="add_seed", dispatch="sequential", seed=42)
+        wrapped = Function(add_seed, label="add_seed", executor="sequential", seed=42)
     with pytest.raises(TypeError, match="seed"):
         wrapped(1)
     assert float(wrapped(1, seed=2)) == 3
@@ -161,7 +162,7 @@ def test_function_bind_can_still_supply_user_seed_parameter():
     def add_seed(x, seed):
         return x + seed
 
-    wf = Function(add_seed, label="add_seed", dispatch="sequential", bind={"seed": 42})
+    wf = Function(add_seed, label="add_seed", executor="sequential", bind={"seed": 42})
 
     assert float(wf(1.0)) == 43.0
 
@@ -181,27 +182,27 @@ def test_bare_decorator_forms_wrap_functions():
     assert float(bare_parentheses(2.0)) == 2.0
 
 
-def test_using_controls_sample_count_and_include_inputs():
+def test_using_controls_max_evaluations_and_include_inputs():
     def identity(x):
         return x
 
     wf = Function(
         identity,
         label="identity",
-        n_broadcast_samples=20,
-        dispatch="sequential",
+        max_evaluations=20,
+        executor="sequential",
         output_spec=OutputSpec(identity=None),
     )
 
     with workflow_run(seed=0):
         result = wf.using(
-            n_broadcast_samples=6,
+            max_evaluations=6,
             include_inputs=True,
         )(Normal("x", loc=0.0, scale=1.0))
 
     assert isinstance(result, EmpiricalDistribution)
     assert result.num_atoms == 6
-    assert "x" in result.event_spec.components
+    assert "x" in result.event_spec.outputs
 
 
 def test_workflow_run_reproduces_one_lifted_call():
@@ -211,8 +212,8 @@ def test_workflow_run_reproduces_one_lifted_call():
     wf = Function(
         identity,
         label="identity",
-        n_broadcast_samples=8,
-        dispatch="sequential",
+        max_evaluations=8,
+        executor="sequential",
         output_spec=OutputSpec(identity=None),
     )
     normal = Normal("x", loc=0.0, scale=1.0)
@@ -236,15 +237,15 @@ def test_workflow_seed_is_separate_from_user_seed_parameter():
     base = Function(
         identity,
         label="identity",
-        n_broadcast_samples=8,
-        dispatch="sequential",
+        max_evaluations=8,
+        executor="sequential",
         output_spec=OutputSpec(identity=None),
     )
     wf = Function(
         add_user_seed,
         label="add_user_seed",
-        n_broadcast_samples=8,
-        dispatch="sequential",
+        max_evaluations=8,
+        executor="sequential",
         output_spec=OutputSpec(add_user_seed=None),
     )
 
@@ -261,18 +262,18 @@ def test_workflow_seed_is_separate_from_user_seed_parameter():
 
 def test_workflow_control_names_are_user_parameters():
     @function
-    def collect(seed, n_broadcast_samples, include_inputs, name, dispatch):
-        return f"{seed}:{n_broadcast_samples}:{include_inputs}:{name}:{dispatch}"
+    def collect(seed, max_evaluations, include_inputs, name, executor):
+        return f"{seed}:{max_evaluations}:{include_inputs}:{name}:{executor}"
 
     result = collect(
         seed=1,
-        n_broadcast_samples=2,
+        max_evaluations=2,
         include_inputs=True,
         name="model",
-        dispatch="local",
+        executor="local",
     )
 
-    assert result.value == "1:2:True:model:local"
+    assert result.raw == "1:2:True:model:local"
 
 
 def test_var_keyword_receives_workflow_control_names():
@@ -285,17 +286,18 @@ def test_var_keyword_receives_workflow_control_names():
     wf = Function(
         identity,
         label="identity",
-        n_broadcast_samples=20,
-        dispatch="sequential",
+        max_evaluations=20,
+        traceable=False,
+        executor="sequential",
         output_spec=OutputSpec(identity=None),
     )
     normal = Normal("x", loc=0.0, scale=1.0)
 
     with workflow_run(seed=0):
-        result = wf.using(n_broadcast_samples=5)(
+        result = wf.using(max_evaluations=5)(
             x=normal,
             seed=42,
-            n_broadcast_samples=99,
+            max_evaluations=99,
             include_inputs=True,
         )
 
@@ -303,7 +305,7 @@ def test_var_keyword_receives_workflow_control_names():
     assert (
         seen
         == [
-            {"seed": 42, "n_broadcast_samples": 99, "include_inputs": True},
+            {"seed": 42, "max_evaluations": 99, "include_inputs": True},
         ]
         * 5
     )
@@ -316,65 +318,65 @@ def test_unbindable_call_time_control_name_is_rejected():
     wf = Function(
         identity,
         label="identity",
-        n_broadcast_samples=20,
-        dispatch="sequential",
+        max_evaluations=20,
+        executor="sequential",
     )
 
     with pytest.raises(TypeError, match="unexpected keyword argument"):
-        wf(Normal("x", loc=0.0, scale=1.0), n_broadcast_samples=6)
+        wf(Normal("x", loc=0.0, scale=1.0), max_evaluations=6)
 
 
 def test_bindable_workflow_control_name_does_not_override():
-    def identity(x, n_broadcast_samples):
-        return x + n_broadcast_samples
+    def identity(x, max_evaluations):
+        return x + max_evaluations
 
     wf = Function(
         identity,
         label="identity",
-        n_broadcast_samples=5,
-        dispatch="sequential",
+        max_evaluations=5,
+        executor="sequential",
         output_spec=OutputSpec(identity=None),
     )
     normal = Normal("x", loc=0.0, scale=1.0)
 
     with workflow_run(seed=0):
-        result = wf(x=normal, n_broadcast_samples=4)
+        result = wf(x=normal, max_evaluations=4)
 
     assert result.num_atoms == 5
 
 
-def test_using_clears_workers_and_resets_sample_count():
+def test_using_resets_the_executor_as_one_unit_and_resets_max_evaluations():
     wrapped = Function(
         lambda x: x,
-        dispatch="thread",
-        max_workers=2,
-        n_broadcast_samples=7,
+        executor="thread",
+        executor_options={"max_workers": 2},
+        max_evaluations=7,
         label="identity",
         output_spec=OutputSpec(identity=None),
     )
     unchanged = wrapped.using(include_inputs=True)
-    assert unchanged.options["max_workers"] == 2
-    assert unchanged.options["n_broadcast_samples"] == 7
+    assert unchanged.options["executor"] == "thread"
+    assert unchanged.options["executor_options"] == {"max_workers": 2}
+    assert unchanged.options["max_evaluations"] == 7
 
-    reset = wrapped.using(max_workers=None, n_broadcast_samples=None)
+    reset = wrapped.using(executor_options=None, max_evaluations=None)
     defaults = Function(
         lambda x: x,
-        dispatch="thread",
         label="defaults",
         output_spec=OutputSpec(defaults=None),
     )
     assert reset.options == defaults.options
-    assert wrapped.options["max_workers"] == 2
-    assert wrapped.options["n_broadcast_samples"] == 7
+    assert wrapped.options["executor"] == "thread"
+    assert wrapped.options["executor_options"] == {"max_workers": 2}
+    assert wrapped.options["max_evaluations"] == 7
     with workflow_run(seed=3):
         result = reset(Normal("x", 0, 1))
-    assert result.num_atoms == Function.DEFAULT_N_BROADCAST_SAMPLES
+    assert result.num_atoms == config.sampling.max_evaluations
 
 
 @pytest.mark.parametrize(
     ("control", "default", "error", "message"),
     [
-        ("dispatch", "auto", ValueError, "dispatch must"),
         ("workflow_kind", WorkflowKind.DEFAULT, TypeError, "WorkflowKind"),
     ],
 )
@@ -384,7 +386,7 @@ def test_a_view_resets_a_control_that_construction_refuses_as_none(
     """A view's None resets a control to its default (V.2); construction refuses it."""
     wrapped = Function(
         lambda x: x,
-        dispatch="sequential",
+        executor="sequential",
         label="identity",
     )
     configured = wrapped.using(workflow_kind=WorkflowKind.OFF)
@@ -395,37 +397,6 @@ def test_a_view_resets_a_control_that_construction_refuses_as_none(
             **{control: None},
             label="identity",
         )
-
-
-@pytest.mark.parametrize("entrypoint", ["constructor", "decorator", "using"])
-def test_max_workers_warning_points_to_the_user_call(entrypoint):
-    def identity(x):
-        return x
-
-    wrapped = Function(
-        identity,
-        label="identity",
-    )
-    frame = inspect.currentframe()
-    assert frame is not None
-    with pytest.warns(UserWarning, match="max_workers configures only") as caught:
-        if entrypoint == "constructor":
-            line = frame.f_lineno + 1
-            Function(
-                identity,
-                max_workers=2,
-                label="identity",
-            )
-        elif entrypoint == "decorator":
-            decorate = function(max_workers=2)
-            line = frame.f_lineno + 1
-            decorate(identity)
-        else:
-            line = frame.f_lineno + 1
-            wrapped.using(max_workers=2)
-    assert len(caught) == 1
-    assert caught[0].filename == __file__
-    assert caught[0].lineno == line
 
 
 def test_each_removed_keyword_warns_on_its_own():

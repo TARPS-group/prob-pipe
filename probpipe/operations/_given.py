@@ -8,8 +8,14 @@ from typing import Any, ClassVar
 import numpy as np
 
 from ..core._dispatch import Feasibility
-from ..core._record_spec import RecordSpec
+from ..core._record_spec import (
+    RecordSpec,
+    _field_mismatch,
+    _layout_record_mapping,
+    _RecordOrderMismatch,
+)
 from ..core._spec_base import NumericArraySpec, OpaqueSpec, TermSpec, _unify_specs
+from ..core.named_tree import _PATH_SEP
 from ..core.record import Record
 from ..distributions._capabilities import (
     _CONDITIONAL_TWINS,
@@ -41,10 +47,12 @@ def _bind_given_dims_from_spec(
         # binding checks their shape and dtype before the kernel runs.
         return
     if isinstance(expected, RecordSpec) and isinstance(actual, RecordSpec):
-        if expected.children.keys() != actual.children.keys():
+        if tuple(expected.children) != tuple(actual.children):
             _unify_specs(expected, actual, bindings, path)
         for name, spec in expected.children.items():
-            _bind_given_dims_from_spec(spec, actual.children[name], bindings, f"{path}/{name}")
+            _bind_given_dims_from_spec(
+                spec, actual.children[name], bindings, f"{path}{_PATH_SEP}{name}"
+            )
         return
     _unify_specs(expected, actual, bindings, path)
 
@@ -55,9 +63,13 @@ def _bind_given_dims_from_value(
     """Bind dimensions from numeric sequences without replacing the kernel input."""
     if isinstance(expected, RecordSpec):
         children = value.children if isinstance(value, Record) else value
+        if isinstance(value, Record) and tuple(expected.children) != tuple(children):
+            raise _field_mismatch(path, children, expected.children)
         if isinstance(children, Mapping) and expected.children.keys() == children.keys():
             for name, spec in expected.children.items():
-                _bind_given_dims_from_value(spec, children[name], bindings, f"{path}/{name}")
+                _bind_given_dims_from_value(
+                    spec, children[name], bindings, f"{path}{_PATH_SEP}{name}"
+                )
             return
     if isinstance(expected, NumericArraySpec) and isinstance(value, (list, tuple)):
         value = np.asarray(value)
@@ -109,13 +121,13 @@ def _methods(protocol: type) -> dict[str, Callable[..., Any]]:
 
 
 class _GivenLaw(Distribution):
-    """The kernel's law at complete given slots, without evaluating the kernel.
+    """The kernel's law at values of all its required inputs, without evaluating the kernel.
 
     It claims exactly the unconditional capabilities whose conditional twins
     the kernel claims. All given values unify in one dimension scope before
-    the event declaration is substituted. No density, draw, kernel application,
+    the event spec is substituted. No density, draw, kernel application,
     or inference method runs during construction. Internal declaration-only
-    planning also accepts a record-valued StandIn: its field declarations bind
+    planning also accepts a record-valued StandIn: its fields' specs bind
     the dimensions, and guards that need its values remain unresolved.
 
     Parameters
@@ -123,14 +135,14 @@ class _GivenLaw(Distribution):
     kernel : ConditionalDistribution
         The kernel whose conditional capabilities serve this call.
     given : Record, Mapping[str, Any], or StandIn
-        Values of every required given slot; optional slots may be omitted. A
-        private planning stand-in carries a RecordSpec for those slots.
+        Values of every required input; optional inputs may be omitted. A
+        private planning stand-in carries a RecordSpec for those inputs.
 
     Raises
     ------
     ApplicabilityError
         If the given is not a record, mapping, or record-valued planning stand-in,
-        names an unknown slot, leaves a required slot unbound, or fails its declaration.
+        names an unknown input, leaves a required input unbound, or fails its input spec.
     """
 
     _capability_table: ClassVar[dict[type, dict[str, Callable[..., Any]]]] = {
@@ -148,29 +160,41 @@ class _GivenLaw(Distribution):
         elif isinstance(given, Mapping):
             values = dict(given)
         else:
-            raise ApplicabilityError("given must be a Record or a mapping of given slots")
-        unknown = set(values) - set(kernel.given_spec)
-        missing = set(kernel.given_spec.required) - set(values)
-        if unknown or missing:
+            raise ApplicabilityError("given must be a Record or a mapping of inputs")
+        unknown = sorted(set(values) - set(kernel.given_spec))
+        if unknown:
             raise ApplicabilityError(
-                f"given for {kernel.label!r}: unknown slots {sorted(unknown)}; "
-                f"missing required slots {sorted(missing)}; "
-                f"available slots {list(kernel.given_spec)}"
+                f"given for {kernel.label!r} names the unknown {_input_names(unknown)}. "
+                f"Its inputs are {list(kernel.given_spec)}"
+            )
+        missing = sorted(set(kernel.given_spec.required) - set(values))
+        if missing:
+            raise ApplicabilityError(
+                f"given for {kernel.label!r} leaves the required {_input_names(missing)} "
+                "without a value. Give a value for each"
             )
         bindings: dict[str, int] = {}
         try:
             for name, value in values.items():
                 if isinstance(value, StandIn):
                     _bind_given_dims_from_spec(
-                        kernel.given_spec[name], value.spec, bindings, f"given/{name}"
+                        kernel.given_spec[name], value.spec, bindings, f"given{_PATH_SEP}{name}"
                     )
                 else:
                     _bind_given_dims_from_value(
-                        kernel.given_spec[name], value, bindings, f"given/{name}"
+                        kernel.given_spec[name], value, bindings, f"given{_PATH_SEP}{name}"
                     )
+                    values[name] = _layout_record_mapping(kernel.given_spec[name], value)
+        except _RecordOrderMismatch:
+            raise
         except (TypeError, ValueError) as error:
             raise ApplicabilityError(f"given for {kernel.label!r}: {error}") from None
         super().__init__(kernel.event_spec.with_dim_sizes(**bindings), label=kernel.label)
         object.__setattr__(self, "kernel", kernel)
         object.__setattr__(self, "given", given if isinstance(given, StandIn) else values)
         self._store_expression(kernel._embedded_expression().with_fixed(tuple(values)))
+
+
+def _input_names(names: list[str]) -> str:
+    """*names* after the noun "input", as ``input 'mu'`` or ``inputs ['mu', 'tau']``."""
+    return f"input {names[0]!r}" if len(names) == 1 else f"inputs {names}"

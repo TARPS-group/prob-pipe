@@ -3,7 +3,9 @@
 # Labels and provenance
 
 Each tracked term carries a label and a write-once provenance record, which names the operation that produced the term and its parents.
-This page documents the identity of a tracked term, the provenance record and its traversal, the setting of how much history a provenance chain keeps, and the setting of how many nested levels a label or a notation shows.
+This page documents the identity of a tracked term, the provenance record and its traversal, and the modes of how much history a provenance chain keeps.
+`print(x.provenance)` prints the lineage of `x`, one step per line from the loaded data or other roots down to `x`, as `Provenance.__str__` states.
+The settings `config.provenance` and `config.notation` are on [Settings](config.md).
 Replay from a provenance record is on [Workflows and reproducibility](workflows.md).
 
 ## Labels and annotations
@@ -26,20 +28,13 @@ Replay from a provenance record is on [Workflows and reproducibility](workflows.
 
 ::: probpipe.provenance_dag
 
-## Provenance settings
+## Provenance modes
+
+`config.provenance.mode` takes one of these modes, as [Settings](config.md) states.
+A `workflow_run` keeps the mode in effect when it opens, and changing the mode inside the run raises `RuntimeError`.
 
 ::: probpipe.ProvenanceMode
 
-::: probpipe.provenance_config
-
-::: probpipe.core.config.ProvenanceConfig
-    options:
-      show_root_full_path: true
-
-## Notation settings
-
-::: probpipe.notation_config
-
-::: probpipe.core.config.NotationConfig
-    options:
-      show_root_full_path: true
+A [default workflow scope](workflows.md#probpipe.workflow_run--workflow-run-set-default) fixes provenance mode for each top-level
+call separately. Changing the mode between calls leaves its random stream
+unchanged. Full recording cannot recover history omitted by earlier calls.

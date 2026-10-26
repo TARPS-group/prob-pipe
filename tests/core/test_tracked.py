@@ -73,7 +73,7 @@ class TestMixinMembership:
             {"a": jnp.zeros((3,))},
             level_names="draw",
             axes_per_level=(1,),
-            element_spec=RecordSpec(a=()),
+            element=RecordSpec(a=()),
             label="batch",
         )
         assert isinstance(ra, TrackedTerm)
@@ -95,6 +95,7 @@ class TestLabelEnforcement:
             def __init__(self):
                 pass
 
+            @property
             def raw(self):
                 return None
 
@@ -105,6 +106,7 @@ class TestLabelEnforcement:
             def __init__(self):
                 self._init_tracked("")
 
+            @property
             def raw(self):
                 return None
 
@@ -161,7 +163,7 @@ class TestLabelLifecycle:
             {"a": jnp.zeros((3,))},
             level_names="draw",
             axes_per_level=(1,),
-            element_spec=RecordSpec(a=()),
+            element=RecordSpec(a=()),
             label="derived",
         )
         assert ra.label == "derived"
@@ -169,13 +171,13 @@ class TestLabelLifecycle:
             {"a": jnp.zeros((3,))},
             level_names="draw",
             axes_per_level=(1,),
-            element_spec=RecordSpec(a=()),
+            element=RecordSpec(a=()),
             label="mine",
         )
         assert named.label == "mine"
 
     def test_composite_distribution_derives_default_label(self):
-        joint = Normal("mu", loc=0.0, scale=1.0) * Normal("sigma", loc=0.0, scale=1.0)
+        joint = Normal("mu", loc=0.0, scale=1.0) & Normal("sigma", loc=0.0, scale=1.0)
         assert joint.label == "Normal·Normal"
         assert str(joint) == "Normal(mu)·Normal(sigma)"
 
@@ -194,16 +196,19 @@ class TestLabelLifecycle:
             pytest.param(lambda r: r.map(lambda x: x + 1), {"a": 2.0, "b": 3.0}, id="map"),
             pytest.param(lambda r: r.replace(a=3.0), {"a": 3.0, "b": 2.0}, id="replace"),
             pytest.param(
-                lambda r: r.merge(
-                    Record(
-                        {"c": 3.0},
-                        label="other",
+                lambda r: (
+                    r
+                    & (
+                        Record(
+                            {"c": 3.0},
+                            label="other",
+                        )
                     )
                 ),
                 {"a": 1.0, "b": 2.0, "c": 3.0},
                 id="merge",
             ),
-            pytest.param(lambda r: r.with_path_names(a="z"), {"z": 1.0, "b": 2.0}, id="rename"),
+            pytest.param(lambda r: r.rename(a="z"), {"z": 1.0, "b": 2.0}, id="rename"),
         ],
     )
     def test_structural_transforms_preserve_labels_and_apply_the_edit(
@@ -230,7 +235,7 @@ class TestLabelLifecycle:
             label="record(a)",
         )
         assert nested.label == "record(a)"
-        assert nested.with_path_names({"a/b": "z"}).label == "record(a)"
+        assert nested.rename({"a/b": "z"}).label == "record(a)"
         assert nested.map(lambda x: x).label == "record(a)"
 
     def test_record_labels_survive_pickle(self):
@@ -283,7 +288,7 @@ class TestWithLabel:
         r2 = r.with_label("new")
         assert r2.label == "new"
         # shallow copy: field data is shared, not copied
-        assert r2.raw("a") is r.raw("a")
+        assert r2["a"].raw is r["a"].raw
         assert r2.event_template is r.event_template
         assert r == r2 or r2["b"] is r["b"]
 
@@ -295,7 +300,7 @@ class TestWithLabel:
             n.with_label(3)  # type: ignore[arg-type]
 
     def test_with_label_off_mode_attaches_no_provenance(self):
-        probpipe.provenance_config.mode = ProvenanceMode.OFF
+        probpipe.config.provenance.mode = ProvenanceMode.OFF
         n = Normal("x", loc=0.0, scale=1.0)
         m = n.with_label("y")
         assert m.label == "y"
@@ -339,13 +344,13 @@ class TestWithLabelOnBatchTypes:
             {"a": jnp.zeros((3,))},
             level_names="draw",
             axes_per_level=(1,),
-            element_spec=RecordSpec(a=()),
+            element=RecordSpec(a=()),
             label="derived",
         )
         ra2 = ra.with_label("mine")
         assert ra2 is not ra
         assert ra2.label == "mine"
-        assert ra2["a"].raw() is ra["a"].raw()
+        assert ra2["a"].raw is ra["a"].raw
         assert ra2.batch_shape == ra.batch_shape
         assert ra2.event_template is ra.event_template
 
@@ -354,12 +359,12 @@ class TestWithLabelOnBatchTypes:
             {"a": jnp.zeros((3,))},
             level_names="draw",
             axes_per_level=(1,),
-            element_spec=RecordSpec(a=()),
+            element=RecordSpec(a=()),
             label="orig",
         )
         nra2 = nrb.with_label("new")
         assert nra2.label == "new"
-        assert nra2["a"].raw() is nrb["a"].raw()
+        assert nra2["a"].raw is nrb["a"].raw
         assert nrb.label == "orig"
 
     def test_distribution_batch(self):
@@ -390,8 +395,8 @@ class TestWithLabelOnCustomNewHosts:
         key = jax.random.PRNGKey(0)
         assert jnp.allclose(jnp.asarray(t._sample(key, (5,))), jnp.asarray(t2._sample(key, (5,))))
 
-    def test_field_view(self):
-        joint = Normal("mu", loc=0.0, scale=1.0) * Normal("sigma", loc=1.0, scale=0.5)
+    def test_coupled_marginal(self):
+        joint = Normal("mu", loc=0.0, scale=1.0) & Normal("sigma", loc=1.0, scale=0.5)
         view = joint["mu"]
         renamed = view.with_label("mu_view")
         assert renamed.label == "mu_view"
@@ -403,7 +408,7 @@ class TestWithLabelOnCustomNewHosts:
                 "emp",
                 label="labels",
             ),
-            component="emp",
+            output_name="emp",
         )
         renamed = emp.with_label("labels")
         assert renamed.label == "labels"
@@ -436,7 +441,7 @@ class TestLabelPreservation:
         assert named.label == "mine"
 
     def test_joint_conditioning_preserves_labels(self):
-        auto_joint = Normal("mu", loc=0.0, scale=1.0) * Normal("sigma", loc=1.0, scale=0.5)
+        auto_joint = Normal("mu", loc=0.0, scale=1.0) & Normal("sigma", loc=1.0, scale=0.5)
         cond = auto_joint._condition_on({"mu": 0.5})
         assert cond.label == auto_joint.label
         named_joint = auto_joint.with_label("my_joint")
@@ -539,7 +544,7 @@ class TestAnnotated:
 
 class TestJointPickleRoundTrip:
     def test_joint_keeps_derived_label_through_pickle(self):
-        joint = Normal("mu", loc=0.0, scale=1.0) * Normal("sigma", loc=1.0, scale=0.5)
+        joint = Normal("mu", loc=0.0, scale=1.0) & Normal("sigma", loc=1.0, scale=0.5)
         back = pickle.loads(pickle.dumps(joint))
         assert back.label == joint.label
 
@@ -560,7 +565,7 @@ class TestBatchPickleRoundTrip:
             {"a": jnp.zeros((3,))},
             level_names="draw",
             axes_per_level=(1,),
-            element_spec=RecordSpec(a=()),
+            element=RecordSpec(a=()),
             label="mine",
         )
         nrb.with_provenance(Provenance("op"))

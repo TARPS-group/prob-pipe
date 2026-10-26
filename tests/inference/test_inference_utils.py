@@ -28,21 +28,23 @@ from probpipe import (
     workflow_run,
 )
 from probpipe.distributions import FactoredDistribution
-from probpipe.distributions._capabilities import SupportsSampling
+from probpipe.distributions._capabilities import SupportsSampling, SupportsUnnormalizedLogProb
 from probpipe.distributions._distribution import Distribution
 from probpipe.inference._inference_utils import (
     as_prng_key,
     build_target_log_prob,
     build_target_log_prob_flat,
-    extract_event_spec,
+    chain_initial_states,
     get_init_state,
-    is_jax_traceable,
     likelihood_flat,
     model_factors,
+    nuts_controls,
     observed_target,
+    parallel_chain_map,
     parameter_given,
-    posterior_var_order,
+    require_trace_variables,
     run_chain_scan,
+    traces_in_jax,
     unconstrained_chain,
 )
 from tests._posterior import flat_chains, flat_draws
@@ -53,24 +55,24 @@ def _gaussian_mean(prior, n, scale=1.0):
     """``y_i ~ N(mu, scale^2)`` for ``n`` observations, times *prior* over ``mu``."""
     likelihood = ObservationKernel(
         "y",
-        dict(prior.event_spec.components),
+        dict(prior.event_spec.outputs),
         NumericArraySpec((n,)),
         lambda mu: tfd.Independent(tfd.Normal(jnp.broadcast_to(mu, (n,)), scale), 1),
     )
-    return likelihood * prior
+    return likelihood & prior
 
 
 @pytest.fixture
 def small_model():
     """The unnormalized conditional of a joint with a 2-field factored prior."""
-    prior = Normal("a", loc=0.0, scale=1.0) * Normal("b", loc=2.0, scale=0.5)
+    prior = Normal("a", loc=0.0, scale=1.0) & Normal("b", loc=2.0, scale=0.5)
     likelihood = ObservationKernel(
         "y",
-        dict(prior.event_spec.components),
+        dict(prior.event_spec.outputs),
         NumericArraySpec((4,)),
         lambda a, b: tfd.Independent(tfd.Normal(jnp.zeros(4), 1.0), 1),
     )
-    return observed_target(likelihood * prior, {"y": jnp.zeros((4,))})
+    return observed_target((likelihood & prior), {"y": jnp.zeros((4,))})
 
 
 class TestBuildTargetLogProbFlat:
@@ -78,10 +80,12 @@ class TestBuildTargetLogProbFlat:
 
     def test_flat_target_matches_record_target(self, small_model):
         target_record = build_target_log_prob(small_model, None)
-        target_flat, flat_init, event_spec = build_target_log_prob_flat(small_model, None)
+        target_flat, flat_init = build_target_log_prob_flat(small_model, None)
         # Round-trip: unflatten the flat init back to a Record and confirm
         # the two callables agree.
-        record_init = NumericRecord.from_vector(event_spec.spec, flat_init, label="nr")
+        record_init = NumericRecord.from_vector(
+            small_model.event_spec.term_spec, flat_init, label="nr"
+        )
         np.testing.assert_allclose(
             float(target_flat(flat_init)),
             float(target_record(record_init)),
@@ -90,24 +94,19 @@ class TestBuildTargetLogProbFlat:
         )
 
     def test_flat_init_dim_matches_the_declared_vector_size(self, small_model):
-        _, flat_init, event_spec = build_target_log_prob_flat(
+        _, flat_init = build_target_log_prob_flat(
             small_model,
             observed=None,
         )
         # Both fields are scalar Normals: vector_size == 2.
-        assert flat_init.shape == (event_spec.spec.vector_size,) == (2,)
-
-    def test_the_declared_component_order_is_preserved(self, small_model):
-        _, _, event_spec = build_target_log_prob_flat(small_model, observed=None)
-        # The order of the joint's factors.
-        assert tuple(event_spec.components) == ("a", "b")
+        assert flat_init.shape == (small_model.event_spec.term_spec.vector_size,) == (2,)
 
     def test_bare_distribution_falls_through_unwrapped(self):
         """A target with no Record-shaped prior round-trips its log-prob unchanged.
 
         For a bare ``SupportsLogProb`` whose ``_unnormalized_log_prob``
         already takes a flat array, ``build_target_log_prob_flat``
-        passes the callable through verbatim and returns no declaration.
+        passes the callable through verbatim.
         This is the path BlackJAX MCMC uses
         for hand-rolled distributions that don't carry a Record-shaped
         prior.
@@ -119,11 +118,10 @@ class TestBuildTargetLogProbFlat:
             def _unnormalized_log_prob(self, x):
                 return -0.5 * jnp.sum(jnp.asarray(x) ** 2)
 
-        target_flat, flat_init, event_spec = build_target_log_prob_flat(
+        target_flat, flat_init = build_target_log_prob_flat(
             _FlatGaussian(),
             observed=None,
         )
-        assert event_spec is None
         assert flat_init.shape == (2,)
         np.testing.assert_allclose(
             float(target_flat(jnp.asarray([1.0, -1.0]))),
@@ -147,22 +145,17 @@ class _FlatTarget(Distribution):
         return self._log_prob(value)
 
 
-class TestExtractEventSpec:
-    def test_a_target_over_a_record_gives_its_declaration(self, small_model):
-        assert extract_event_spec(small_model) == small_model.event_spec
-
-    def test_a_target_with_no_flat_view_gives_none(self):
-        assert extract_event_spec(_FlatTarget()) is None
-
+class TestThePosteriorOfALawOverOneArray:
     @pytest.mark.parametrize("method", ["blackjax_nuts", "blackjax_rwmh", "tfp_nuts"])
-    def test_the_methods_agree_on_a_bare_target(self, method):
-        """Each names the posterior and draws it as build_target_log_prob_flat does."""
+    def test_the_methods_name_the_posterior_by_the_laws_output(self, method):
+        """Each declares the law's event, as every posterior declares its target's."""
+        law = _FlatTarget()
         with workflow_run(seed=0):
             posterior = inference_method_registry.execute(
-                _FlatTarget(), method=method, num_results=20, num_warmup=20, num_chains=1
+                law, method=method, num_results=20, num_warmup=20, num_chains=1
             )
-        assert list(posterior.event_spec.components) == ["posterior"]
-        assert isinstance(flat_draws(posterior), jax.Array)
+        assert posterior.event_spec == law.event_spec
+        assert flat_chains(posterior).shape == (1, 20, 2)
 
 
 # ---------------------------------------------------------------------------
@@ -259,21 +252,20 @@ class TestRunChainScan:
         np.testing.assert_allclose(np.asarray(positions), expected)
 
 
-class TestIsJaxTraceable:
-    """``is_jax_traceable`` probes whether a fn traces at an init state."""
+class TestTracesInJax:
+    """``traces_in_jax`` reads a target's traceability, which a law without one probes once."""
 
-    def test_traceable_fn(self):
-        init = jnp.array([1.0, 2.0])
-        assert is_jax_traceable(lambda x: jnp.sum(x**2), init) is True
+    def test_a_family_traces(self):
+        assert traces_in_jax(Normal("mu", loc=0.0, scale=1.0)) is True
 
-    def test_non_traceable_fn(self):
-        # ``float(np.asarray(x))`` forces concretisation of a traced value,
-        # which raises during ``make_jaxpr``.
-        def host_side(x):
-            return jnp.asarray(float(np.asarray(x).sum()))
+    def test_a_law_whose_density_converts_to_numpy_does_not_trace(self):
+        class HostDensity(Distribution, SupportsUnnormalizedLogProb):
+            def _unnormalized_log_prob(self, value):
+                # Concretizes a traced value, which fails while JAX traces.
+                return jnp.asarray(-0.5 * float(np.asarray(value) ** 2))
 
-        init = jnp.array([1.0, 2.0])
-        assert is_jax_traceable(host_side, init) is False
+        law = HostDensity(OutputSpec(x=NumericArraySpec(())), label="host")
+        assert traces_in_jax(law) is False
 
 
 class TestModelFactors:
@@ -291,8 +283,8 @@ class TestModelFactors:
 
     def test_the_factors_split_at_the_observed_fields(self, gaussian_target):
         factors = model_factors(gaussian_target)
-        assert list(factors.prior.event_spec.components) == ["mu"]
-        assert list(factors.likelihood.event_spec.components) == ["y"]
+        assert list(factors.prior.event_spec.outputs) == ["mu"]
+        assert list(factors.likelihood.event_spec.outputs) == ["y"]
         np.testing.assert_allclose(factors.observed, [1.0, -1.0, 0.5])
 
     def test_a_target_that_is_no_conditioned_joint_has_no_factors(self):
@@ -324,19 +316,19 @@ def _shifted(**given_spec):
     )
 
 
-class TestModelFactorsWithOptionalSlots:
-    """An optional slot of the likelihood takes its default unless the prior produces it."""
+class TestModelFactorsWithOptionalInputs:
+    """An optional input of the likelihood takes its default unless the prior produces it."""
 
-    def test_an_unmet_optional_slot_is_left_to_its_default(self):
-        factors = model_factors(observed_target(_shifted() * Normal("mu", 0.0, 1.0), {"y": Y}))
+    def test_an_unmet_optional_input_is_left_to_its_default(self):
+        factors = model_factors(observed_target((_shifted() & Normal("mu", 0.0, 1.0)), {"y": Y}))
         # The prior is the whole-term law of mu, so its draw is the value itself.
         given = parameter_given(factors, jnp.asarray(1.0))
         assert list(given) == ["mu"]
         np.testing.assert_allclose(given["mu"], 1.0)
 
-    def test_the_prior_meets_an_optional_slot(self):
-        prior = Normal("mu", 0.0, 1.0) * Normal("shift", 0.0, 1.0)
-        factors = model_factors(observed_target(_shifted() * prior, {"y": Y}))
+    def test_the_prior_meets_an_optional_input(self):
+        prior = Normal("mu", 0.0, 1.0) & Normal("shift", 0.0, 1.0)
+        factors = model_factors(observed_target((_shifted() & prior), {"y": Y}))
         given = parameter_given(factors, {"mu": jnp.asarray(1.0), "shift": jnp.asarray(0.5)})
         assert set(given) == {"mu", "shift"}
 
@@ -344,7 +336,7 @@ class TestModelFactorsWithOptionalSlots:
     def test_a_prior_of_several_factors_is_labeled_as_the_model_is(self, labeled):
         from probpipe.distributions._factored import _is_named
 
-        model = _shifted() * Normal("mu", 0.0, 1.0) * Normal("shift", 0.0, 1.0)
+        model = (_shifted() & Normal("mu", 0.0, 1.0)) & Normal("shift", 0.0, 1.0)
         model = model.with_label("model") if labeled else model
         factors = model_factors(observed_target(model, {"y": Y}))
         assert isinstance(factors.prior, FactoredDistribution)
@@ -352,7 +344,7 @@ class TestModelFactorsWithOptionalSlots:
 
     def test_a_prior_kernel_at_its_defaults_is_the_prior(self):
         hyper = conditional_distribution(lambda loc=0.0: Normal("mu", loc, 1.0), label="mu")
-        factors = model_factors(observed_target(_shifted() * hyper, {"y": Y}))
+        factors = model_factors(observed_target((_shifted() & hyper), {"y": Y}))
         assert isinstance(factors.prior, Normal)
 
     @pytest.mark.parametrize("met", [False, True], ids=["default", "prior"])
@@ -365,13 +357,13 @@ class TestModelFactorsWithOptionalSlots:
         ``(sum(y) / 4) / (1 / v + 5 / 4)`` for prior variance ``v``.
         """
         prior = (
-            Normal("mu", 0.0, 1.0) * Normal("shift", 0.0, 1.0) if met else Normal("mu", 0.0, 1.0)
+            (Normal("mu", 0.0, 1.0) & Normal("shift", 0.0, 1.0)) if met else Normal("mu", 0.0, 1.0)
         )
         budget = {"num_results": 2000, "num_warmup": 200, "num_chains": 2}
         with workflow_run(seed=0):
             posterior = condition_on.using(
                 method="blackjax_elliptical_slice", method_options=budget
-            )(_shifted() * prior, {"y": Y})
+            )((_shifted() & prior), {"y": Y})
         draws = flat_draws(posterior)
         location = np.asarray(draws["mu"]) + (np.asarray(draws["shift"]) if met else 0.0)
         variance = 2.0 if met else 1.0
@@ -460,7 +452,7 @@ class TestGetInitState:
     def test_a_factored_prior_starts_at_its_own_draw(self):
         # A factored prior draws a nested mapping, which is flattened rather
         # than replaced by the Uniform(-2, 2) box.
-        prior = Normal("a", 0.0, 1.0) * MultivariateNormal(
+        prior = Normal("a", 0.0, 1.0) & MultivariateNormal(
             "b", jnp.array([10.0, -10.0]), cov=jnp.eye(2)
         )
         out = get_init_state(prior, init=None, random_seed=0)
@@ -470,7 +462,7 @@ class TestGetInitState:
 
     @pytest.mark.parametrize("seed", range(12))
     def test_a_factored_prior_starts_inside_its_support(self, seed):
-        prior = Normal("a", 0.0, 1.0) * HalfNormal("scale", 1.0)
+        prior = Normal("a", 0.0, 1.0) & HalfNormal("scale", 1.0)
         out = get_init_state(prior, init=None, random_seed=seed)
         assert float(out[1]) > 0.0
 
@@ -657,49 +649,25 @@ class TestParallelChainMap:
 
 class _StubPosterior:
     def __init__(self, var_names):
-        # dict preserves insertion order, mimicking a trace's data_vars.
         self.data_vars = dict.fromkeys(var_names)
 
 
 class _StubTrace:
-    """Minimal stand-in: ``posterior_var_order`` reads only
-    ``trace.posterior.data_vars`` (ordered)."""
+    """Minimal stand-in: ``require_trace_variables`` reads only ``trace.posterior.data_vars``."""
 
     def __init__(self, var_names):
         self.posterior = _StubPosterior(var_names)
 
 
-class TestPosteriorVarOrder:
-    """``posterior_var_order`` returns a trace's posterior variables in the
-    backend's natural order filtered to *keep*, and fails loudly when a
-    kept name is missing."""
+class TestRequireTraceVariables:
+    """A backend's trace must hold the draws of every parameter a method extracts."""
 
-    def test_preserves_trace_order_not_keep_order(self):
-        trace = _StubTrace(["slope", "intercept", "lp__"])
-        # The trace's data_vars order wins; the keep argument's order does not.
-        assert posterior_var_order(trace, ["intercept", "slope"]) == ["slope", "intercept"]
+    def test_a_trace_with_every_parameter_passes(self):
+        require_trace_variables(_StubTrace(["slope", "intercept", "lp__"]), ["intercept", "slope"])
 
-    def test_alphabetical_backend_order_returned_for_realignment(self):
-        # nutpie, e.g., sorts data_vars alphabetically; the helper returns
-        # that order so field_order can realign columns by name.
-        trace = _StubTrace(["a", "b", "c"])
-        assert posterior_var_order(trace, ["c", "a", "b"]) == ["a", "b", "c"]
-
-    def test_ignores_unkept_trace_vars(self):
-        trace = _StubTrace(["mu", "sigma", "lp__", "diverging"])
-        assert posterior_var_order(trace, ["mu", "sigma"]) == ["mu", "sigma"]
-
-    def test_missing_expected_var_raises_valueerror(self):
-        """A kept name absent from the trace raises a clear ValueError here,
-        not a cryptic 'not a permutation' error later in make_posterior."""
-        trace = _StubTrace(["mu"])
-        with pytest.raises(ValueError, match="trace is missing the parameters"):
-            posterior_var_order(trace, ["mu", "sigma"])
-
-    def test_error_message_names_the_missing_vars(self):
-        trace = _StubTrace(["mu"])
-        with pytest.raises(ValueError, match="sigma"):
-            posterior_var_order(trace, ["mu", "sigma"])
+    def test_a_missing_parameter_raises_naming_it(self):
+        with pytest.raises(ValueError, match=r"trace is missing the parameters \['sigma'\]"):
+            require_trace_variables(_StubTrace(["mu"]), ["mu", "sigma"])
 
 
 # ---------------------------------------------------------------------------
@@ -742,8 +710,166 @@ class TestUnconstrainedChain:
         np.testing.assert_allclose(jnp.sum(draws, axis=-1), 1.0, rtol=1e-5)
         assert bool(jnp.all(jnp.isfinite(jax.vmap(density)(jnp.zeros((2, 2))))))
 
+    def test_one_initial_state_per_chain_is_mapped_row_by_row(self):
+        law = Gamma("g", 2.0, 1.0)
+        rows = jnp.array([[0.5], [1.0], [4.0]])
+        _, init, constrain = unconstrained_chain(lambda theta: 0.0, rows, law, per_chain=True)
+        assert init.shape == (3, 1)
+        for row, state in zip(rows, init):
+            _, one, _ = unconstrained_chain(lambda theta: 0.0, row, law)
+            np.testing.assert_allclose(state, one, rtol=1e-6)
+        np.testing.assert_allclose(constrain(init), rows, rtol=1e-5)
+
     def test_an_initial_state_outside_the_support_starts_at_the_center(self):
         law = Gamma("g", 2.0, 1.0)
         _, init, constrain = unconstrained_chain(lambda theta: 0.0, jnp.array([-1.0]), law)
         assert bool(jnp.all(jnp.isfinite(init)))
         assert float(jnp.squeeze(constrain(init[None]))) > 0
+
+
+# ---------------------------------------------------------------------------
+# chain_initial_states
+# ---------------------------------------------------------------------------
+
+
+class TestChainInitialStates:
+    """``init`` resolves to one state shared by the chains or to one state per chain."""
+
+    law = Normal("a", 1.0, 0.5) & HalfNormal("scale", 1.0)
+
+    def _resolve(self, init, num_chains=3):
+        return chain_initial_states(
+            self.law, init, num_chains=num_chains, key=jax.random.key(0), method="m"
+        )
+
+    def test_none_and_one_state_are_shared(self):
+        assert self._resolve(None) == (None, False)
+        state = jnp.array([1.0, 2.0])
+        init, per_chain = self._resolve(state)
+        assert init is state and per_chain is False
+
+    def test_one_state_per_chain_is_returned_as_given(self):
+        rows = np.ones((3, 2))
+        init, per_chain = self._resolve(rows)
+        assert init is rows and per_chain is True
+
+    def test_per_chain_draws_one_state_for_each_chain(self):
+        init, per_chain = self._resolve("per_chain")
+        assert per_chain is True
+        assert init.shape == (3, 2)
+        assert len({tuple(np.asarray(row).round(6)) for row in init}) == 3
+        assert bool(jnp.all(init[:, 1] > 0))
+
+    def test_none_draws_one_state_per_chain_when_that_is_the_default(self):
+        init, per_chain = chain_initial_states(
+            self.law,
+            None,
+            num_chains=3,
+            key=jax.random.key(0),
+            method="m",
+            default_per_chain=True,
+        )
+        assert per_chain is True
+        np.testing.assert_array_equal(init, self._resolve("per_chain")[0])
+
+    def test_a_law_that_lays_out_no_array_shares_its_default_state(self):
+        law = _NoInitHeuristicDist()
+        resolved = chain_initial_states(
+            law, None, num_chains=2, key=jax.random.key(0), method="m", default_per_chain=True
+        )
+        assert resolved == (None, False)
+
+    def test_per_chain_is_reproducible_under_one_key(self):
+        first, _ = self._resolve("per_chain")
+        second, _ = self._resolve("per_chain")
+        np.testing.assert_array_equal(first, second)
+
+    def test_a_per_chain_array_of_another_shape_raises(self):
+        with pytest.raises(
+            ValueError,
+            match=(
+                r"inference method 'm': init with one state per chain must have shape "
+                r"\(3, 2\), got shape \(2, 2\)"
+            ),
+        ):
+            self._resolve(np.ones((2, 2)))
+
+    def test_another_name_raises(self):
+        with pytest.raises(
+            ValueError, match="init must be None, an array, or 'per_chain', got 'prior'"
+        ):
+            self._resolve("prior")
+
+    def test_per_chain_for_a_law_that_lays_out_no_array_raises(self):
+        with pytest.raises(ValueError, match="init='per_chain' needs a target whose parameters"):
+            chain_initial_states(
+                _NoInitHeuristicDist(),
+                "per_chain",
+                num_chains=2,
+                key=jax.random.key(0),
+                method="m",
+            )
+
+
+class TestParallelChainMapArguments:
+    def test_a_pytree_of_per_chain_arguments_maps_each_chain_entry(self):
+        keys = jax.random.split(jax.random.key(0), 3)
+        starts = jnp.arange(3.0)
+        out = parallel_chain_map(lambda chain: chain[1] * 2.0, (keys, starts))
+        np.testing.assert_array_equal(out, starts * 2.0)
+
+    def test_one_chain_of_a_pytree_gets_its_entry(self):
+        keys = jax.random.split(jax.random.key(0), 1)
+        out = parallel_chain_map(lambda chain: chain[1] + 1.0, (keys, jnp.array([4.0])))
+        np.testing.assert_array_equal(out, [5.0])
+
+
+# ---------------------------------------------------------------------------
+# nuts_controls
+# ---------------------------------------------------------------------------
+
+
+class TestNutsControls:
+    def test_unset_options_take_the_backend_defaults(self):
+        assert nuts_controls("m", {}) == (0.8, 10)
+        assert nuts_controls(
+            "m", {}, default_target_accept_prob=0.75, default_max_tree_depth=8
+        ) == (0.75, 8)
+
+    def test_set_options_are_returned_as_float_and_int(self):
+        target, depth = nuts_controls(
+            "m", {"target_accept_prob": np.float32(0.9), "max_tree_depth": np.int64(12)}
+        )
+        assert (type(target), type(depth)) == (float, int)
+        assert depth == 12
+        assert target == pytest.approx(0.9)
+
+    @pytest.mark.parametrize(
+        ("options", "error", "message"),
+        [
+            (
+                {"target_accept_prob": 0.0},
+                ValueError,
+                "inference method 'm': target_accept_prob must be strictly between 0 and 1, got 0.0",
+            ),
+            (
+                {"target_accept_prob": True},
+                TypeError,
+                "inference method 'm': target_accept_prob must be a number, got bool",
+            ),
+            (
+                {"max_tree_depth": -1},
+                ValueError,
+                "inference method 'm': max_tree_depth must be a positive integer, got -1",
+            ),
+            (
+                {"max_tree_depth": 10.0},
+                TypeError,
+                "inference method 'm': max_tree_depth must be a positive integer, got float",
+            ),
+        ],
+    )
+    def test_an_inadmissible_value_raises(self, options, error, message):
+        with pytest.raises(error) as raised:
+            nuts_controls("m", options)
+        assert str(raised.value) == message

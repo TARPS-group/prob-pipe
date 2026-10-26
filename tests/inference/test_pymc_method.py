@@ -97,3 +97,19 @@ def test_pymc_nuts_runs_pymcs_own_sampler_where_nutpie_is_installed(normal_mean)
     attrs = posterior.annotations["arviz"].posterior.attrs
     assert attrs["inference_library"] == "pymc"
     assert "nutpie" not in {attrs.get("sampling_package"), attrs.get("inference_library")}
+
+
+@pytest.mark.parametrize("method", ["pymc_nuts", "pymc_advi"])
+def test_an_older_pymc_names_the_method(method, normal_mean, monkeypatch):
+    monkeypatch.setattr(pm, "__version__", "6.1.0")
+    with (
+        pytest.raises(
+            ImportError,
+            match=rf"^PyMC 6\.1\.0 is installed, but the inference method '{method}' requires PyMC "
+            r"6\.2 or later\.",
+        ),
+        workflow_run(seed=0),
+    ):
+        condition_on.using(method=method, method_options=_BUDGETS[method])(
+            normal_mean, {"y": np.array([0.1, -0.3, 0.7])}
+        )

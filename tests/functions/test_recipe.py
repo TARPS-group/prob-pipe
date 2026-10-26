@@ -27,16 +27,19 @@ from probpipe import (
     NumericRecordBatch,
     OpaqueSpec,
     OutputSpec,
+    Poisson,
     Provenance,
     ProvenanceMode,
     RecordSpec,
     ReplayCompatibilityError,
+    mean,
+    quantile,
     replay_run,
     sample,
     workflow_run,
 )
-from probpipe.functions import _broker, _callable, _recipe, _replay
-from probpipe.functions._managed import ManagedEffectClaim, sweep_unit_segment
+from probpipe.functions import _callable, _evaluation_keys, _recipe, _replay
+from probpipe.functions._evaluation_keys import StochasticEffectClaim, sweep_cell_point_segment
 from tests.functions import (
     _alias_replay_fixtures,
     _postponed_alias_replay_fixtures,
@@ -65,12 +68,12 @@ def _identity(value):
 
 
 def _switch_to_full(value):
-    probpipe.provenance_config.mode = ProvenanceMode.FULL
+    probpipe.config.provenance.mode = ProvenanceMode.FULL
     return value
 
 
 def _switch_to_off(value):
-    probpipe.provenance_config.mode = ProvenanceMode.OFF
+    probpipe.config.provenance.mode = ProvenanceMode.OFF
     return value
 
 
@@ -86,7 +89,7 @@ def _draw_value(value):
     return sample(Normal("draw", loc=value, scale=1.0))
 
 
-_INNER_DRAW = Function(_draw_value, label="_draw_value", dispatch="sequential")
+_INNER_DRAW = Function(_draw_value, label="_draw_value", executor="sequential")
 
 
 def _nested_automatic(value):
@@ -167,8 +170,8 @@ class TestWorkflowRecipeRecording:
         workflow = Function(
             _identity,
             label="_identity",
-            dispatch="sequential",
-            n_broadcast_samples=11,
+            executor="sequential",
+            max_evaluations=11,
             output_spec=OutputSpec(_identity=None),
         )
         with workflow_run(seed=7):
@@ -181,11 +184,11 @@ class TestWorkflowRecipeRecording:
         assert recipe["expected_event_count"] == 1
         assert len(recipe["events"]) == 1
         replay = _replay_controls(result)
-        assert replay["plan"]["schema"] == "probpipe.stochastic_plan/v1"
+        assert replay["plan"]["schema"] == "probpipe.stochastic_plan/v2"
         assert replay["plan"]["canonical_fields"]["n_evaluations"] == 11
         assert replay["plan"]["expected_effects"][0]["sample_shape"] == [11]
         assert replay["compatibility"] == {
-            "execution_contract": "probpipe.workflow_rng_execution/v1",
+            "execution_contract": "probpipe.workflow_rng_execution/v2",
             "sampling_abi": ["probpipe.distribution_sampling/v1"],
             "provider_abi": ["probpipe.distribution/v1"],
             "descendant_adapter_abi": [],
@@ -193,11 +196,9 @@ class TestWorkflowRecipeRecording:
         }
         assert result.provenance.diagnostics["execution"] == [
             {
-                "requested_dispatch": "sequential",
-                "requested_workflow_kind": "off",
-                "resolved_evaluator": "rowwise",
-                "resolved_transport": "local_inline",
-                "contract_abi": "probpipe.workflow_rng_execution/v1",
+                "executor": "sequential",
+                "executor_options": {},
+                "contract_abi": "probpipe.workflow_rng_execution/v2",
             }
         ]
 
@@ -205,7 +206,7 @@ class TestWorkflowRecipeRecording:
         workflow = Function(
             _identity,
             label="_identity",
-            n_broadcast_samples=5,
+            max_evaluations=5,
             output_spec=OutputSpec(_identity=None),
         )
         entropy = bytes.fromhex("0123456789abcdef")
@@ -233,11 +234,11 @@ class TestWorkflowRecipeRecording:
         exact_workflow = Function(
             _identity,
             label="_identity",
-            n_broadcast_samples=8,
+            max_evaluations=8,
             output_spec=OutputSpec(_identity=None),
         )
         exact = exact_workflow(
-            value=EmpiricalDistribution(jnp.asarray([1.0, 2.0]), component="exact")
+            value=EmpiricalDistribution(jnp.asarray([1.0, 2.0]), output_name="exact")
         )
 
         assert deterministic.provenance.controls == {}
@@ -256,12 +257,12 @@ class TestWorkflowRecipeRecording:
         workflow = Function(
             _difference,
             label="_difference",
-            n_broadcast_samples=5,
+            max_evaluations=5,
             output_spec=OutputSpec(_difference=None),
         )
         with workflow_run(seed=9):
             result = workflow(
-                left=EmpiricalDistribution(jnp.asarray([1.0, 2.0]), component="left"),
+                left=EmpiricalDistribution(jnp.asarray([1.0, 2.0]), output_name="left"),
                 right=Normal("right", loc=0.0, scale=1.0),
             )
 
@@ -272,12 +273,12 @@ class TestWorkflowRecipeRecording:
             for group in _replay_controls(result)["plan"]["canonical_fields"]["source_groups"]
         ] == ["exact", "sampled"]
 
-    def test_nested_sweep_recipe_contains_every_canonical_unit(self):
+    def test_nested_sweep_recipe_contains_every_canonical_evaluation_point(self):
         workflow = Function(
             _add,
             label="_add",
-            n_broadcast_samples=5,
-            dispatch="sequential",
+            max_evaluations=5,
+            executor="sequential",
             output_spec=OutputSpec(_add=None),
         )
         with workflow_run(seed=12):
@@ -293,14 +294,14 @@ class TestWorkflowRecipeRecording:
             ["cell", 1],
         ]
 
-    def test_recipe_sorts_reverse_inserted_managed_effects_canonically(self):
+    def test_recipe_sorts_reverse_inserted_effect_claims_canonically(self):
         occurrence_path = (("invocation", 0),)
 
         def effect(index):
-            return ManagedEffectClaim(
+            return StochasticEffectClaim(
                 occurrence_path=(
                     *occurrence_path,
-                    sweep_unit_segment((index,)),
+                    sweep_cell_point_segment((index,)),
                     ("child", 0),
                 ),
                 occurrence_kind="operation",
@@ -313,7 +314,7 @@ class TestWorkflowRecipeRecording:
                 provider_abi="probpipe.distribution/v1",
             )
 
-        snapshot = _broker._BrokerRecipeSnapshot(
+        snapshot = _evaluation_keys._BrokerRecipeSnapshot(
             root_words=(0, 17),
             occurrence_path=occurrence_path,
             rng_origin={
@@ -323,8 +324,6 @@ class TestWorkflowRecipeRecording:
             },
             effects=(effect(1), effect(0)),
             execution_contracts=(),
-            requested_dispatch="thread",
-            requested_workflow_kind="off",
             callable_anchor=_callable.capture_function_anchor(
                 Function(
                     _identity,
@@ -334,7 +333,7 @@ class TestWorkflowRecipeRecording:
         )
 
         with patch.object(
-            _broker,
+            _evaluation_keys,
             "_snapshot_active_recipe_state",
             return_value=snapshot,
         ):
@@ -347,7 +346,7 @@ class TestWorkflowRecipeRecording:
 
     def test_recipe_refuses_effects_without_a_callable_anchor(self):
         occurrence_path = (("invocation", 0),)
-        effect = ManagedEffectClaim(
+        effect = StochasticEffectClaim(
             occurrence_path=occurrence_path,
             occurrence_kind="invocation",
             stochastic_source_id=("source-group", 0),
@@ -358,7 +357,7 @@ class TestWorkflowRecipeRecording:
             sampling_abi="probpipe.distribution_sampling/v1",
             provider_abi="probpipe.distribution/v1",
         )
-        snapshot = _broker._BrokerRecipeSnapshot(
+        snapshot = _evaluation_keys._BrokerRecipeSnapshot(
             root_words=(0, 17),
             occurrence_path=occurrence_path,
             rng_origin={
@@ -368,14 +367,12 @@ class TestWorkflowRecipeRecording:
             },
             effects=(effect,),
             execution_contracts=(),
-            requested_dispatch="sequential",
-            requested_workflow_kind="off",
             callable_anchor=None,
         )
 
         with (
             patch.object(
-                _broker,
+                _evaluation_keys,
                 "_snapshot_active_recipe_state",
                 return_value=snapshot,
             ),
@@ -384,7 +381,7 @@ class TestWorkflowRecipeRecording:
             _recipe.provenance_recipe_fields(None)
 
     def test_nested_automatic_function_is_marked_non_standalone(self):
-        workflow = Function(_nested_automatic, label="_nested_automatic", dispatch="thread")
+        workflow = Function(_nested_automatic, label="_nested_automatic", executor="thread")
         with workflow_run(seed=21):
             result = workflow(value=1.0)
 
@@ -399,8 +396,8 @@ class TestWorkflowRecipeRecording:
         workflow = Function(
             _nested_automatic,
             label="_nested_automatic",
-            dispatch="sequential",
-            n_broadcast_samples=5,
+            executor="sequential",
+            max_evaluations=5,
             output_spec=OutputSpec(_nested_automatic=None),
         )
         with workflow_run(seed=21):
@@ -418,8 +415,9 @@ class TestWorkflowRecipeRecording:
         workflow = Function(
             _identity,
             label="_identity",
-            dispatch="thread",
-            n_broadcast_samples=5,
+            traceable=False,
+            executor="thread",
+            max_evaluations=5,
             output_spec=OutputSpec(_identity=None),
         )
         with workflow_run(seed=5):
@@ -441,11 +439,11 @@ class TestWorkflowRecipeRecording:
             assert forbidden not in persisted_keys
 
     def test_provenance_off_persists_no_recipe(self):
-        probpipe.provenance_config.mode = ProvenanceMode.OFF
+        probpipe.config.provenance.mode = ProvenanceMode.OFF
         workflow = Function(
             _identity,
             label="_identity",
-            n_broadcast_samples=5,
+            max_evaluations=5,
             output_spec=OutputSpec(_identity=None),
         )
 
@@ -455,45 +453,44 @@ class TestWorkflowRecipeRecording:
         assert result.provenance is None
 
     @pytest.mark.parametrize(
-        ("initial_mode", "implementation", "expect_provenance"),
+        ("run_mode", "implementation"),
         [
-            (ProvenanceMode.OFF, _switch_to_full, False),
-            (ProvenanceMode.FULL, _switch_to_off, True),
+            (ProvenanceMode.OFF, _switch_to_full),
+            (ProvenanceMode.FULL, _switch_to_off),
         ],
     )
-    def test_workflow_run_snapshots_provenance_mode(
-        self,
-        initial_mode,
-        implementation,
-        expect_provenance,
-    ):
-        probpipe.provenance_config.mode = initial_mode
+    def test_assigning_another_mode_inside_the_run_raises(self, run_mode, implementation):
+        probpipe.config.provenance.mode = run_mode
         workflow = Function(
             implementation,
             label="implementation",
-            dispatch="sequential",
-            n_broadcast_samples=5,
+            executor="sequential",
+            max_evaluations=5,
             output_spec=OutputSpec(implementation=None),
         )
 
-        with workflow_run(seed=7):
-            result = workflow(value=Normal("value", loc=0.0, scale=1.0))
-
-        assert (result.provenance is not None) is expect_provenance
-        if result.provenance is not None:
-            assert result.provenance.controls["replay"]["callable"]["supported"] is True
+        with (
+            workflow_run(seed=7),
+            pytest.raises(
+                RuntimeError,
+                match=f"inside a workflow run under ProvenanceMode.{run_mode.name}",
+            ),
+        ):
+            workflow(value=Normal("value", loc=0.0, scale=1.0))
+        assert probpipe.config.provenance.mode is run_mode
 
     def test_nested_workflow_inherits_outer_provenance_mode(self):
-        probpipe.provenance_config.mode = ProvenanceMode.FULL
+        probpipe.config.provenance.mode = ProvenanceMode.FULL
         workflow = Function(
             _identity,
             label="_identity",
-            n_broadcast_samples=5,
+            max_evaluations=5,
             output_spec=OutputSpec(_identity=None),
         )
 
         with workflow_run(seed=7):
-            probpipe.provenance_config.mode = ProvenanceMode.OFF
+            with pytest.raises(RuntimeError, match=r"under ProvenanceMode\.FULL"):
+                probpipe.config.provenance.mode = ProvenanceMode.OFF
             with workflow_run(seed=8):
                 result = workflow(value=Normal("value", loc=0.0, scale=1.0))
 
@@ -504,13 +501,13 @@ class TestWorkflowRecipeRecording:
         workflow = Function(
             _identity,
             label="_identity",
-            dispatch="sequential",
-            n_broadcast_samples=8,
+            executor="sequential",
+            max_evaluations=8,
             output_spec=OutputSpec(_identity=None),
         )
 
         def controls_for(mode):
-            probpipe.provenance_config.mode = mode
+            probpipe.config.provenance.mode = mode
             with workflow_run(seed=7):
                 result = workflow(value=Normal("value", loc=0.0, scale=1.0))
             return result.provenance.controls
@@ -522,16 +519,16 @@ class TestWorkflowCallableAnchor:
     @pytest.mark.parametrize(
         "declaration",
         [None, OutputSpec(value=NumericArraySpec(())), NumericArraySpec(())],
-        ids=["undeclared", "explicit-component", "default-component"],
+        ids=["undeclared", "explicit-output", "default-output"],
     )
     def test_an_output_label_changes_no_anchor(self, declaration):
-        """Changing output aliases and component names leaves the callable anchor unchanged."""
+        """Changing output aliases and output names leaves the callable anchor unchanged."""
         first = Function(
             replayable_identity,
             output_label="first",
             output_spec=declaration
             if isinstance(declaration, OutputSpec) or declaration is None
-            else OutputSpec.default(declaration, component="first"),
+            else OutputSpec.default(declaration, output_name="first"),
             label="identity",
         )
         second = Function(
@@ -539,7 +536,7 @@ class TestWorkflowCallableAnchor:
             output_label="second",
             output_spec=declaration
             if isinstance(declaration, OutputSpec) or declaration is None
-            else OutputSpec.default(declaration, component="second"),
+            else OutputSpec.default(declaration, output_name="second"),
             label="identity",
         )
         anchor = _callable.capture_function_anchor(first)
@@ -551,7 +548,7 @@ class TestWorkflowCallableAnchor:
             == _callable.capture_function_anchor(first.with_label("display")).controls()
         )
 
-    @pytest.mark.parametrize("change", ["shape", "kind", "packaging", "declaration"])
+    @pytest.mark.parametrize("change", ["shape", "kind", "form", "output_spec"])
     def test_output_contract_participates_in_callable_anchor(self, change):
         declaration = OutputSpec(bundle=RecordSpec(field=()))
         baseline = Function(
@@ -563,8 +560,8 @@ class TestWorkflowCallableAnchor:
         declarations = {
             "shape": OutputSpec(bundle=RecordSpec(field=(2,))),
             "kind": OutputSpec(bundle=OpaqueSpec()),
-            "packaging": OutputSpec(RecordSpec(field=())),
-            "declaration": None,
+            "form": OutputSpec(RecordSpec(field=())),
+            "output_spec": None,
         }
         changed = Function(
             replayable_identity,
@@ -650,7 +647,7 @@ class TestWorkflowCallableAnchor:
 
     def test_replay_refuses_a_changed_postponed_alias(self, monkeypatch):
         fixtures = _postponed_alias_replay_fixtures
-        workflow = Function(fixtures.shift, dispatch="sequential", n_broadcast_samples=5)
+        workflow = Function(fixtures.shift, executor="sequential", max_evaluations=5)
         value = NumericArray(jnp.asarray(1.0), label="x")
         noise = Normal("noise", loc=0.0, scale=1.0)
         with workflow_run(seed=0):
@@ -660,7 +657,7 @@ class TestWorkflowCallableAnchor:
         np.testing.assert_array_equal(np.asarray(first.atoms), np.asarray(same.atoms))
 
         monkeypatch.setattr(fixtures, "Values", fixtures.values_alias("Values", NumericArray))
-        changed = Function(fixtures.shift, dispatch="sequential", n_broadcast_samples=5)
+        changed = Function(fixtures.shift, executor="sequential", max_evaluations=5)
         with (
             pytest.raises(
                 ReplayCompatibilityError, match="has changed since the call was recorded"
@@ -674,7 +671,7 @@ class TestWorkflowCallableAnchor:
             _callable._canonical_json({"value": float("nan")})
 
     def test_provenance_off_skips_callable_anchor_capture(self):
-        probpipe.provenance_config.mode = ProvenanceMode.OFF
+        probpipe.config.provenance.mode = ProvenanceMode.OFF
         workflow = Function(
             replayable_identity,
             label="replayable_identity",
@@ -694,13 +691,13 @@ class TestWorkflowCallableAnchor:
         workflow = Function(
             replayable_identity,
             label="replayable_identity",
-            n_broadcast_samples=5,
+            max_evaluations=5,
             output_spec=OutputSpec(replayable_identity=None),
         )
         with workflow_run(seed=17):
             original = workflow(value=Normal("value", loc=0.0, scale=1.0))
 
-        probpipe.provenance_config.mode = ProvenanceMode.OFF
+        probpipe.config.provenance.mode = ProvenanceMode.OFF
         with (
             patch.object(
                 _callable,
@@ -838,13 +835,13 @@ class TestWorkflowCallableAnchor:
         workflow = Function(
             replayable_affine,
             label="replayable_affine",
-            n_broadcast_samples=5,
+            max_evaluations=5,
         )
 
         declared = Function(
             replayable_affine,
             output_spec=OutputSpec(value=None),
-            n_broadcast_samples=5,
+            max_evaluations=5,
         )
         with workflow_run(seed=19):
             result = declared(
@@ -899,13 +896,13 @@ class TestWorkflowCallableAnchor:
         plain = Function(
             replayable_identity,
             label="replayable_identity",
-            n_broadcast_samples=5,
+            max_evaluations=5,
             output_spec=OutputSpec(replayable_identity=None),
         )
         declared = Function(
             replayable_identity,
             label="replayable_identity",
-            n_broadcast_samples=5,
+            max_evaluations=5,
             input_spec=InputSpec(probpipe.RecordSpec(value=()).children),
             output_spec=OutputSpec(replayable_identity=None),
         )
@@ -933,7 +930,7 @@ class TestWorkflowCallableAnchor:
         workflow = Function(
             replayable_identity,
             label="replayable_identity",
-            n_broadcast_samples=5,
+            max_evaluations=5,
             output_spec=OutputSpec(replayable_identity=None),
         )
         monkeypatch.setattr(
@@ -971,7 +968,7 @@ class TestWorkflowCallableAnchor:
         workflow = Function(
             lambda value: value,
             label="function",
-            n_broadcast_samples=5,
+            max_evaluations=5,
             output_spec=OutputSpec(function=None),
         )
 
@@ -987,7 +984,7 @@ class TestWorkflowCallableAnchor:
         workflow = Function(
             replayable_cyclic_default,
             label="replayable_cyclic_default",
-            n_broadcast_samples=5,
+            max_evaluations=5,
             output_spec=OutputSpec(replayable_cyclic_default=None),
         )
 
@@ -1216,3 +1213,20 @@ def _closure():
         return value + captured
 
     return closure
+
+
+class TestTheMonteCarloDrawsACallRecords:
+    def test_a_monte_carlo_route_records_its_draws_by_the_part_it_drew(self):
+        law = Normal("mu", 0.0, 2.0) & Poisson("count", 4.0)
+        with workflow_run(seed=0):
+            median = quantile(law, 0.5)
+
+        assert _recipe.monte_carlo_draws(median.provenance) == {
+            ("count",): quantile.options["num_samples"]
+        }
+
+    def test_an_exact_route_records_no_draws(self):
+        assert _recipe.monte_carlo_draws(mean(Normal("mu", 0.0, 1.0)).provenance) == {}
+
+    def test_no_provenance_records_no_draws(self):
+        assert _recipe.monte_carlo_draws(None) == {}

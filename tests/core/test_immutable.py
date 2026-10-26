@@ -187,7 +187,7 @@ class TestAMemoIsRebuiltAfterARoundTrip:
         )
         assert operation(record).to_vector().tolist() == [1.0, 2.0]
         # The native leaf itself survives; only the converted form is rebuilt.
-        assert operation(record).raw("x").dims == ("t",)
+        assert operation(record)["x"].raw.dims == ("t",)
 
 
 class TestDecoupledState:
@@ -389,6 +389,7 @@ class TestTheConstructionWindow:
                 self._init_tracked("t")
                 return "oops"
 
+            @property
             def raw(self):
                 return None
 
@@ -416,6 +417,7 @@ class TestTheConstructionWindow:
                 self.partial = 1
                 raise ValueError("no")
 
+            @property
             def raw(self):
                 return None
 
@@ -486,18 +488,18 @@ class TestAClassBuiltAtRuntime:
     def _joint():
         from probpipe import Gamma, Normal
 
-        return Normal("a", 0.0, 1.0) * Gamma("b", 2.0, 1.0)
+        return Normal("a", 0.0, 1.0) & Gamma("b", 2.0, 1.0)
 
     @staticmethod
-    def _field_view():
+    def _coupled_marginal():
         from probpipe import Gamma, Normal
 
-        return (Normal("a", 0.0, 1.0) * Gamma("b", 2.0, 1.0))["a"]
+        return (Normal("a", 0.0, 1.0) & Gamma("b", 2.0, 1.0))["a"]
 
     @pytest.fixture(
         params=[
             pytest.param("_joint", id="joint"),
-            pytest.param("_field_view", id="field-view"),
+            pytest.param("_coupled_marginal", id="field-view"),
         ]
     )
     def runtime_classed(self, request):

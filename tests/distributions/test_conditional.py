@@ -1,11 +1,11 @@
 """The conditional distribution: a probability kernel, its term spec, and its markers.
 
 A ``ConditionalDistribution`` stores one ``ConditionalDistributionSpec``: a
-non-empty ``InputSpec`` of given slots and an event declaration completed as a
+non-empty ``InputSpec`` of inputs and an event spec completed as a
 ``Distribution``'s is. ``given_spec`` and ``event_spec`` are views on it, the
-given-slot and produced-component names are disjoint, and symbolic dimensions
+input and output names are disjoint, and symbolic dimensions
 are scoped over both sides jointly. The numeric markers read membership from
-the declarations, and ``_condition_on`` is the one method a kernel must
+the input and event specs, and ``_condition_on`` is the one method a kernel must
 implement.
 """
 
@@ -21,11 +21,13 @@ from probpipe import (
     NumericArraySpec,
     OpaqueSpec,
     OutputSpec,
+    Record,
     RecordSpec,
     TrackedTerm,
     condition_on,
     mean,
 )
+from probpipe.core._specs import _has_record_outputs
 from probpipe.distributions import (
     ConditionalDistribution,
     ConditionalDistributionSpec,
@@ -70,7 +72,7 @@ class _GivesDeclaredLaw:
 
 
 class Kernel(_GivesDeclaredLaw, ConditionalDistribution):
-    """A kernel over the slots and event it is given."""
+    """A kernel over the inputs and event it is given."""
 
 
 class NumericEventKernel(_GivesDeclaredLaw, ConditionalNumericDistribution):
@@ -78,7 +80,7 @@ class NumericEventKernel(_GivesDeclaredLaw, ConditionalNumericDistribution):
 
 
 class NumericGivenKernel(_GivesDeclaredLaw, NumericConditionalDistribution):
-    """A class that claims numeric given slots for every instance."""
+    """A class that claims numeric inputs for every instance."""
 
 
 class FullyNumericKernel(_GivesDeclaredLaw, FullyNumericConditionalDistribution):
@@ -96,8 +98,8 @@ class LocationKernel(ConditionalDistribution):
         )
 
     def _condition_on(self, given, /, **kwargs):
-        (component,) = self.event_spec.components
-        return Normal(component, given["mu"], 1.0, label=self.label)
+        (output_name,) = self.event_spec.outputs
+        return Normal(output_name, given["mu"], 1.0, label=self.label)
 
 
 def _kernel(given=None, event=None, label: str = "k") -> Kernel:
@@ -150,13 +152,13 @@ class TestConstruction:
         given = InputSpec(mu=SCALAR, theta=RecordSpec(a=SCALAR, b=_array(2)))
         assert _kernel(given=given).given_spec == given
 
-    def test_the_declared_component_survives_a_relabel(self):
+    def test_the_declared_output_survives_a_relabel(self):
         kernel = _kernel(event=OutputSpec(lik=SCALAR), label="lik")
         renamed = kernel.with_label("other")
         assert renamed.label == "other"
         assert kernel.label == "lik"
         assert renamed.spec == kernel.spec
-        assert list(renamed.event_spec.components) == ["lik"]
+        assert list(renamed.event_spec.outputs) == ["lik"]
 
     @pytest.mark.parametrize(
         "record",
@@ -167,9 +169,9 @@ class TestConstruction:
     )
     def test_a_record_spec_exposes_its_fields(self, record):
         kernel = _kernel(event=record)
-        assert kernel.event_spec.exposes_record
+        assert _has_record_outputs(kernel.event_spec)
         assert kernel.event_spec == OutputSpec(record)
-        assert dict(kernel.event_spec.components) == dict(record.children)
+        assert dict(kernel.event_spec.outputs) == dict(record.children)
 
     @pytest.mark.parametrize(
         "declaration",
@@ -188,18 +190,18 @@ class TestConstructionErrors:
         "given", [pytest.param({}, id="mapping"), pytest.param(InputSpec(), id="input-spec")]
     )
     def test_an_empty_given_raises(self, given):
-        with pytest.raises(ValueError, match="at least one given slot"):
+        with pytest.raises(ValueError, match="at least one input"):
             _kernel(given=given)
 
     @pytest.mark.parametrize(
         ("given", "event", "name"),
         [
-            pytest.param({"y": SCALAR}, OutputSpec(y=SCALAR), "k", id="whole-term-component"),
+            pytest.param({"y": SCALAR}, OutputSpec(y=SCALAR), "k", id="whole-term-output"),
             pytest.param({"a": SCALAR}, RecordSpec(a=SCALAR, b=SCALAR), "k", id="record-field"),
         ],
     )
-    def test_a_given_slot_named_like_a_produced_component_raises(self, given, event, name):
-        with pytest.raises(ValueError, match="both as a given slot and as an output field"):
+    def test_an_input_named_like_an_output_raises(self, given, event, name):
+        with pytest.raises(ValueError, match="both as an input and as an output field"):
             _kernel(given=given, event=event, label=name)
 
     def test_an_omitted_label_uses_the_generic_symbol(self):
@@ -220,7 +222,7 @@ class TestConstructionErrors:
                 label="k",
             )
 
-    def test_an_event_with_a_type_hole_raises(self):
+    def test_an_event_with_an_unspecified_type_raises(self):
         with pytest.raises(ValueError, match="does not declare a type"):
             _kernel(event=OutputSpec(y=None))
 
@@ -229,19 +231,19 @@ class TestConstructionErrors:
         with pytest.raises(TypeError, match="given_spec"):
             _kernel(given=given)
 
-    @pytest.mark.parametrize("slot", ["m u", "lambda", "theta/a", ""])
-    def test_a_given_slot_that_is_not_an_identifier_raises(self, slot):
+    @pytest.mark.parametrize("input_name", ["m u", "lambda", "theta/a", ""])
+    def test_an_input_that_is_not_an_identifier_raises(self, input_name):
         with pytest.raises(ValueError, match="identifiers"):
-            _kernel(given={slot: SCALAR})
+            _kernel(given={input_name: SCALAR})
 
-    @pytest.mark.parametrize("slot_spec", [None, (3,), 3.0])
-    def test_a_given_slot_that_is_not_a_term_spec_raises(self, slot_spec):
+    @pytest.mark.parametrize("input_term_spec", [None, 3.0])
+    def test_an_input_that_is_not_a_term_spec_raises(self, input_term_spec):
         with pytest.raises(TypeError, match="TermSpec"):
-            _kernel(given={"mu": slot_spec})
+            _kernel(given={"mu": input_term_spec})
 
     @pytest.mark.parametrize("event", [SCALAR, _array(3)])
-    def test_a_bare_term_spec_event_raises_asking_for_a_component(self, event):
-        with pytest.raises(TypeError, match="needs a component"):
+    def test_a_bare_term_spec_event_raises_asking_for_an_output(self, event):
+        with pytest.raises(TypeError, match="needs an output"):
             _kernel(event=event, label="lik")
 
     def test_a_kernel_that_leaves_its_declaration_unset_raises(self):
@@ -260,7 +262,7 @@ class TestConstructionErrors:
 
 
 class TestViews:
-    """Both declarations are views on the one stored ``ConditionalDistributionSpec``."""
+    """The input spec and the event spec are views on the one stored ``ConditionalDistributionSpec``."""
 
     def test_the_kernel_stores_one_conditional_distribution_spec(self):
         kernel = _kernel(given={"mu": SCALAR}, event=OutputSpec(y=_array(2)))
@@ -296,10 +298,10 @@ class TestConditionalDistributionSpec:
                 OutputSpec(y=None),
                 ValueError,
                 "does not declare a type",
-                id="type-hole",
+                id="unspecified-type",
             ),
             pytest.param(
-                {"y": SCALAR}, OutputSpec(y=SCALAR), ValueError, "both as a given", id="shared"
+                {"y": SCALAR}, OutputSpec(y=SCALAR), ValueError, "both as an input", id="shared"
             ),
             pytest.param(["mu"], OutputSpec(y=SCALAR), TypeError, "given_spec", id="not-mapping"),
         ],
@@ -312,7 +314,7 @@ class TestConditionalDistributionSpec:
         spec = ConditionalDistributionSpec({"mu": SCALAR, "x": _array(3)}, OutputSpec(y=SCALAR))
         assert spec.is_valid(_kernel(given={"mu": SCALAR, "x": _array(3)}))
 
-    def test_given_slots_match_by_name_in_any_order(self):
+    def test_inputs_match_by_name_in_any_order(self):
         spec = ConditionalDistributionSpec({"a": SCALAR, "b": _array(2)}, OutputSpec(y=SCALAR))
         kernel = _kernel(given={"b": _array(2), "a": SCALAR})
         assert spec.is_valid(kernel)
@@ -322,11 +324,11 @@ class TestConditionalDistributionSpec:
     @pytest.mark.parametrize(
         ("given", "event"),
         [
-            pytest.param({"x": _array(3), "z": SCALAR}, OutputSpec(y=_array(3)), id="extra-slot"),
-            pytest.param({"w": _array(3)}, OutputSpec(y=_array(3)), id="renamed-slot"),
-            pytest.param({"x": _array(3, 2)}, OutputSpec(y=_array(3)), id="slot-rank"),
-            pytest.param({"x": _array(3)}, OutputSpec(z=_array(3)), id="other-component"),
-            pytest.param({"x": _array(3)}, RecordSpec(y=_array(3)), id="other-packaging"),
+            pytest.param({"x": _array(3), "z": SCALAR}, OutputSpec(y=_array(3)), id="extra-input"),
+            pytest.param({"w": _array(3)}, OutputSpec(y=_array(3)), id="renamed-input"),
+            pytest.param({"x": _array(3, 2)}, OutputSpec(y=_array(3)), id="input-rank"),
+            pytest.param({"x": _array(3)}, OutputSpec(z=_array(3)), id="other-output"),
+            pytest.param({"x": _array(3)}, RecordSpec(y=_array(3)), id="other-form"),
             pytest.param({"x": _array(3)}, OutputSpec(y=_array(4)), id="other-size"),
         ],
     )
@@ -416,7 +418,7 @@ class TestDimensionTransforms:
         assert bound.event_spec == OutputSpec(y=_array(3, "m"))
         assert bound.spec.free_dims == {"m"}
 
-    def test_with_dim_sizes_reaches_a_structured_given_slot(self):
+    def test_with_dim_sizes_reaches_a_structured_input(self):
         bound = self._polymorphic().with_dim_sizes(m=2)
         assert bound.given_spec["theta"] == RecordSpec(w=_array(2))
         assert bound.event_spec == OutputSpec(y=_array("n", 2))
@@ -465,32 +467,32 @@ class TestDimensionTransforms:
         assert kernel.spec.free_dims == {"n", "m"}
 
 
-# Declarations whose event side is numeric, or not.
+# Event specs that are numeric, or not.
 _NUMERIC_EVENTS = [
     pytest.param(OutputSpec(y=SCALAR), id="array"),
-    pytest.param(RecordSpec(a=SCALAR, b=_array(2)), id="exposed-record"),
-    pytest.param(OutputSpec(parameters=RecordSpec(a=SCALAR)), id="whole-record"),
+    pytest.param(RecordSpec(a=SCALAR, b=_array(2)), id="positional-record"),
+    pytest.param(OutputSpec(parameters=RecordSpec(a=SCALAR)), id="keyword-record"),
 ]
 _OTHER_EVENTS = [
     pytest.param(OutputSpec(y=LABEL), id="opaque"),
     pytest.param(RecordSpec(a=SCALAR, label=LABEL), id="record-with-opaque-field"),
     pytest.param(OutputSpec(law=DistributionSpec(OutputSpec(b=SCALAR))), id="law-valued"),
 ]
-# Given sides whose every slot is numeric, or not.
+# Given sides whose every input is numeric, or not.
 _NUMERIC_GIVENS = [
     pytest.param({"mu": SCALAR}, id="array"),
     pytest.param({"mu": SCALAR, "x": _array(3)}, id="two-arrays"),
-    pytest.param({"theta": RecordSpec(a=SCALAR, b=_array(2))}, id="numeric-record-slot"),
+    pytest.param({"theta": RecordSpec(a=SCALAR, b=_array(2))}, id="numeric-record-input"),
 ]
 _OTHER_GIVENS = [
-    pytest.param({"mu": SCALAR, "label": LABEL}, id="one-opaque-slot"),
-    pytest.param({"theta": RecordSpec(a=SCALAR, label=LABEL)}, id="record-slot-with-opaque"),
-    pytest.param({"prior": DistributionSpec(OutputSpec(b=SCALAR))}, id="law-valued-slot"),
+    pytest.param({"mu": SCALAR, "label": LABEL}, id="one-opaque-input"),
+    pytest.param({"theta": RecordSpec(a=SCALAR, label=LABEL)}, id="record-input-with-opaque"),
+    pytest.param({"prior": DistributionSpec(OutputSpec(b=SCALAR))}, id="law-valued-input"),
 ]
 
 
 class TestNumericMarkers:
-    """Membership in each marker is read from the declarations, whatever the class."""
+    """Membership in each marker is read from the input and event specs, whatever the class."""
 
     @pytest.mark.parametrize("event", _NUMERIC_EVENTS)
     def test_a_numeric_event_is_a_member_of_the_event_marker(self, event):
@@ -501,11 +503,11 @@ class TestNumericMarkers:
         assert not isinstance(_kernel(event=event), ConditionalNumericDistribution)
 
     @pytest.mark.parametrize("given", _NUMERIC_GIVENS)
-    def test_numeric_given_slots_are_members_of_the_given_marker(self, given):
+    def test_numeric_inputs_are_members_of_the_given_marker(self, given):
         assert isinstance(_kernel(given=given), NumericConditionalDistribution)
 
     @pytest.mark.parametrize("given", _OTHER_GIVENS)
-    def test_a_non_numeric_given_slot_is_not_a_member_of_the_given_marker(self, given):
+    def test_a_non_numeric_input_is_not_a_member_of_the_given_marker(self, given):
         assert not isinstance(_kernel(given=given), NumericConditionalDistribution)
 
     @pytest.mark.parametrize(
@@ -611,56 +613,56 @@ class TestPrimitive:
         np.testing.assert_allclose(_mean_of(law), 2.0)
 
 
-# Renames a kernel over the slot ``mu`` and the whole-term event ``y`` cannot take.
+# Renames a kernel over the input ``mu`` and the whole-term event ``y`` cannot take.
 _REFUSED_RENAMES = [
-    pytest.param(lambda k: k.with_path_names(sigma="s"), KeyError, id="not-a-path"),
-    pytest.param(lambda k: k.with_path_names(mu="y"), ValueError, id="slot-onto-a-component"),
-    pytest.param(lambda k: k.with_path_names(y="mu"), ValueError, id="component-onto-a-slot"),
-    pytest.param(lambda k: k.with_path_names(mu="y/mu"), ValueError, id="slot-into-a-component"),
-    pytest.param(lambda k: k.with_path_names(mu=""), ValueError, id="empty-name"),
-    pytest.param(lambda k: k.with_path_names({"mu": "a"}, mu="b"), ValueError, id="twice"),
-    pytest.param(lambda k: k.with_path_names(), ValueError, id="no-renames"),
+    pytest.param(lambda k: k.rename(sigma="s"), KeyError, id="not-a-path"),
+    pytest.param(lambda k: k.rename(mu="y"), ValueError, id="input-onto-an-output"),
+    pytest.param(lambda k: k.rename(y="mu"), ValueError, id="output-onto-an-input"),
+    pytest.param(lambda k: k.rename(mu="y/mu"), ValueError, id="input-into-an-output"),
+    pytest.param(lambda k: k.rename(mu=""), ValueError, id="empty-name"),
+    pytest.param(lambda k: k.rename({"mu": "a"}, mu="b"), ValueError, id="twice"),
+    pytest.param(lambda k: k.rename(), ValueError, id="no-renames"),
 ]
 
 
-class TestWithPathNames:
-    """``with_path_names`` renames or moves names on either side and keeps the kernel."""
+class TestRename:
+    """``rename`` renames or moves names on either side and keeps the kernel."""
 
-    def test_a_renamed_given_slot_keeps_its_position(self):
+    def test_a_renamed_input_keeps_its_position(self):
         kernel = _kernel(given={"a": SCALAR, "b": _array(2), "c": SCALAR})
-        renamed = kernel.with_path_names(b="beta")
+        renamed = kernel.rename(b="beta")
         assert list(renamed.given_spec) == ["a", "beta", "c"]
         assert renamed.given_spec["beta"] == _array(2)
         assert renamed.event_spec == kernel.event_spec
         assert renamed.label == kernel.label
 
-    def test_a_renamed_event_component_renames_the_draws(self):
+    def test_a_renamed_event_output_renames_the_draws(self):
         kernel = _kernel(event=OutputSpec(y=_array(2)))
-        renamed = kernel.with_path_names(y="obs")
+        renamed = kernel.rename(y="obs")
         assert renamed.event_spec == OutputSpec(obs=_array(2))
         assert renamed.given_spec == kernel.given_spec
 
     def test_renames_on_both_sides_apply_together(self):
-        renamed = _kernel().with_path_names(mu="loc", y="obs")
+        renamed = _kernel().rename(mu="loc", y="obs")
         assert list(renamed.given_spec) == ["loc"]
-        assert list(renamed.event_spec.components) == ["obs"]
+        assert list(renamed.event_spec.outputs) == ["obs"]
 
-    def test_the_renamed_kernel_conditions_on_the_renamed_slot(self):
-        renamed = LocationKernel().with_path_names(mu="loc", y="obs")
+    def test_the_renamed_kernel_conditions_on_the_renamed_input(self):
+        renamed = LocationKernel().rename(mu="loc", y="obs")
         law = renamed._condition_on({"loc": 2.0})
-        assert list(law.event_spec.components) == ["obs"]
+        assert list(law.event_spec.outputs) == ["obs"]
         np.testing.assert_allclose(_mean_of(law), 2.0)
 
-    def test_path_targets_group_given_slots_into_a_structured_slot(self):
+    def test_path_targets_group_inputs_into_a_structured_input(self):
         kernel = _kernel(given={"a": SCALAR, "b": _array(2)})
-        grouped = kernel.with_path_names({"a": "theta/a", "b": "theta/b"})
+        grouped = kernel.rename({"a": "theta/a", "b": "theta/b"})
         assert list(grouped.given_spec) == ["theta"]
         assert grouped.given_spec["theta"] == RecordSpec(a=SCALAR, b=_array(2))
         assert grouped.event_spec == kernel.event_spec
 
-    def test_a_path_key_splits_a_field_out_of_a_structured_slot(self):
+    def test_a_path_key_splits_a_field_out_of_a_structured_input(self):
         kernel = _kernel(given={"theta": RecordSpec(a=SCALAR, b=_array(2))})
-        split = kernel.with_path_names({"theta/a": "a"})
+        split = kernel.rename({"theta/a": "a"})
         assert list(split.given_spec) == ["theta", "a"]
         assert split.given_spec["theta"] == RecordSpec(b=_array(2))
         assert split.given_spec["a"] == SCALAR
@@ -670,19 +672,61 @@ class TestWithPathNames:
         with pytest.raises(error):
             rename(_kernel())
 
+    @pytest.mark.parametrize(
+        ("renames", "error", "message"),
+        [
+            pytest.param(
+                {"mu": ("g", "mu")}, TypeError, "a path must be a str, got tuple", id="tuple"
+            ),
+            pytest.param({"mu": "g//mu"}, ValueError, "has an empty name", id="empty-name"),
+            pytest.param({"theta/a": "theta/a/x"}, ValueError, "inside it", id="inside-itself"),
+            pytest.param(
+                {"theta/a": "h", "theta/b": "h/b"}, ValueError, "overlap", id="overlapping-targets"
+            ),
+            pytest.param({"theta/c": "c"}, KeyError, "unknown input path", id="unknown-input-path"),
+        ],
+    )
+    def test_the_paths_of_a_kernels_rename_are_read_as_a_trees_are(self, renames, error, message):
+        kernel = _kernel(given={"mu": SCALAR, "theta": RecordSpec(a=SCALAR, b=_array(2))})
+        with pytest.raises(error, match=message):
+            kernel.rename(renames)
+        if error is not KeyError:
+            tree = Record({"mu": 0.0, "theta": {"a": 0.0, "b": np.zeros(2)}})
+            with pytest.raises(error, match=message):
+                tree.rename(renames)
+
+    def test_a_key_that_is_not_a_string_raises_type_error(self):
+        with pytest.raises(TypeError, match="a path must be a str, got tuple"):
+            _kernel().rename({("mu",): "m"})
+
+    def test_a_bad_event_target_is_read_as_a_path(self):
+        kernel = _kernel(event=OutputSpec(RecordSpec(y=(), z=())))
+        with pytest.raises(ValueError, match="'y//a', since the path 'y//a' has an empty name"):
+            kernel.rename(y="y//a")
+
+    def test_a_key_on_neither_side_names_both_sides(self):
+        with pytest.raises(KeyError, match=r"neither an input nor an output\. Inputs: \['mu'\]"):
+            _kernel().rename(sigma="s")
+
+    def test_rename_takes_its_renames_by_position_and_as_keywords_only(self):
+        kernel = _kernel(given={"renames": SCALAR})
+        renamed = kernel.rename(renames="r")
+        assert list(renamed.given_spec) == ["r"]
+        assert list(kernel.rename({"renames": "r"}).given_spec) == ["r"]
+
 
 class TestNotation:
-    """A kernel reads as its label, its components, ``|``, and its given slots."""
+    """A kernel reads as its label, its outputs, ``|``, and its inputs."""
 
-    def test_a_kernel_reads_by_its_components_and_its_given_slots(self):
+    def test_a_kernel_reads_by_its_outputs_and_its_inputs(self):
         glm = _kernel(given={"beta": SCALAR}, label="glm")
         assert glm.notation == "glm(y | beta)"
 
-    def test_every_given_slot_is_listed_in_declaration_order(self):
+    def test_every_input_is_listed_in_declaration_order(self):
         glm = _kernel(given={"beta": SCALAR, "sigma": SCALAR}, label="glm")
         assert glm.notation == "glm(y | beta, sigma)"
 
-    def test_every_component_is_listed_in_declaration_order(self):
+    def test_every_output_is_listed_in_declaration_order(self):
         kernel = _kernel(event=OutputSpec(RecordSpec(y=(), z=())), label="k")
         assert kernel.notation == "k(y, z | mu)"
 
@@ -691,7 +735,7 @@ class TestNotation:
         assert str(glm) == "glm(y | beta)"
         assert repr(glm).startswith("Kernel('y', given=('beta',), label='glm'")
 
-    def test_fixed_paths_follow_the_given_slots(self):
+    def test_fixed_paths_follow_the_inputs(self):
         glm = with_fixed_paths(_kernel(given={"sigma": SCALAR}, label="glm"), "beta")
         assert glm.notation == "glm(y | sigma; beta)"
 
@@ -701,13 +745,13 @@ class TestNotation:
     @pytest.mark.parametrize(
         "copy",
         [
-            pytest.param(lambda k: k.raw(), id="raw"),
+            pytest.param(lambda k: k.raw, id="raw"),
             pytest.param(lambda k: _detached_term(k), id="detached"),
             pytest.param(lambda k: k.with_label("glm2"), id="with_label"),
             pytest.param(lambda k: k.with_dim_sizes(n=3), id="with_dim_sizes"),
             pytest.param(lambda k: k.with_dim_names(n="m"), id="with_dim_names"),
-            pytest.param(lambda k: k.with_path_names(sigma="s"), id="rename-a-slot"),
-            pytest.param(lambda k: k.with_path_names(y="obs"), id="rename-a-component"),
+            pytest.param(lambda k: k.rename(sigma="s"), id="rename-an-input"),
+            pytest.param(lambda k: k.rename(y="obs"), id="rename-an-output"),
         ],
     )
     def test_a_copy_keeps_the_fixed_paths(self, copy):
@@ -716,9 +760,9 @@ class TestNotation:
 
 
 class TestConditionOnOperation:
-    """``condition_on`` binds a kernel's given slots by applying the kernel."""
+    """``condition_on`` binds a kernel's inputs by applying the kernel."""
 
-    def test_binding_every_given_slot_returns_the_law_the_kernel_gives(self):
+    def test_binding_every_input_returns_the_law_the_kernel_gives(self):
         kernel = LocationKernel()
         law = condition_on(kernel, {"mu": 2.0})
         assert isinstance(law, Distribution)

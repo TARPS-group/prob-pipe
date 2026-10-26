@@ -70,7 +70,7 @@ class TestRandomFunction:
     def test_a_draw_is_an_unspecified_callable_by_default(self):
         assert _MinimalRandomFunction("rf").event_spec == OutputSpec(rf=FunctionSpec())
 
-    def test_a_hole_in_the_event_is_an_unspecified_callable(self):
+    def test_an_unspecified_event_type_is_an_unspecified_callable(self):
         assert _MinimalRandomFunction("g", OutputSpec(g=None)).event_spec == OutputSpec(
             g=FunctionSpec()
         )
@@ -78,7 +78,7 @@ class TestRandomFunction:
     @pytest.mark.parametrize(
         "event_spec",
         [OutputSpec(rf=NumericArraySpec(())), NumericArraySpec(())],
-        ids=["declaration", "term-spec"],
+        ids=["output-spec", "term-spec"],
     )
     def test_an_event_that_is_not_a_function_raises(self, event_spec):
         with pytest.raises(TypeError, match="FunctionSpec"):
@@ -103,7 +103,7 @@ class TestRandomFunction:
 
 
 class _Mixture(Distribution, SupportsMean):
-    """The finite mixture ``Σᵢ wᵢ pᵢ`` of laws that share one declaration, by its mean."""
+    """The finite mixture ``Σᵢ wᵢ pᵢ`` of laws that share one event spec, by its mean."""
 
     def __init__(self, components, weights, *, label="mixture"):
         super().__init__(
@@ -217,9 +217,11 @@ class TestInheritance:
         assert isinstance(rm, Distribution)
 
     def test_a_draw_is_an_opaque_law_by_default(self):
-        assert RandomMeasure("m").event_spec.spec == DistributionSpec(OutputSpec(m=OpaqueSpec()))
+        assert RandomMeasure("m").event_spec.term_spec == DistributionSpec(
+            OutputSpec(m=OpaqueSpec())
+        )
 
-    def test_a_hole_in_the_event_is_an_opaque_law(self):
+    def test_an_unspecified_event_type_is_an_opaque_law(self):
         assert RandomMeasure("g", OutputSpec(g=None)).event_spec == OutputSpec(
             g=DistributionSpec(OutputSpec(g=OpaqueSpec()))
         )
@@ -227,7 +229,7 @@ class TestInheritance:
     @pytest.mark.parametrize(
         "event_spec",
         [OutputSpec(m=NumericArraySpec(())), NumericArraySpec(())],
-        ids=["declaration", "term-spec"],
+        ids=["output-spec", "term-spec"],
     )
     def test_an_event_that_is_not_a_law_raises(self, event_spec):
         with pytest.raises(TypeError, match="DistributionSpec"):
@@ -323,7 +325,7 @@ class TestTheDrawnLawsDeclaration:
 
     @staticmethod
     def _drawn(rm):
-        return rm.event_spec.spec.event_spec.spec
+        return rm.event_spec.term_spec.event_spec.term_spec
 
     def test_the_support_of_the_drawn_laws(self):
         comps = _normals(3)

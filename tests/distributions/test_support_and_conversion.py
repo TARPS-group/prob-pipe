@@ -385,11 +385,11 @@ class TestDistributionSupport:
         atoms = NumericArrayBatch(
             jnp.ones((5, 2)),
             "atom",
-            element_spec=NumericArraySpec((2,), support=real),
+            element=NumericArraySpec((2,), support=real),
             label="x",
         )
-        assert EmpiricalDistribution(atoms, component="x").support == real
-        assert EmpiricalDistribution(jnp.ones((5, 2)), component="x").support is None
+        assert EmpiricalDistribution(atoms, output_name="x").support == real
+        assert EmpiricalDistribution(jnp.ones((5, 2)), output_name="x").support is None
 
 
 # ── Section 4: from_distribution tests ────────────────────────────────────────
@@ -465,7 +465,7 @@ class TestConvert:
     # -- multivariate --
     def test_mvn_from_empirical(self):
         samples = jax.random.normal(jax.random.PRNGKey(42), (100, 3))
-        ed = EmpiricalDistribution(samples, component="x")
+        ed = EmpiricalDistribution(samples, output_name="x")
         mvn = convert(ed, MultivariateNormal)
         assert mvn.dim == 3
 

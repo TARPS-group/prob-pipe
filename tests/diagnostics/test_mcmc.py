@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+import warnings
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -118,7 +120,7 @@ class TestAddRhat:
         for v in view.rhat.values():
             assert v == NotComputed("R-hat requires at least 2 chains")
 
-    def test_a_single_chain_posterior_reports_each_component(self):
+    def test_a_single_chain_posterior_reports_each_output(self):
         import jax.numpy as jnp
 
         from probpipe import NumericArraySpec, RecordSpec
@@ -253,7 +255,7 @@ class TestAddEss:
         from probpipe import EmpiricalDistribution
 
         law = EmpiricalDistribution(
-            np.random.default_rng(0).standard_normal((50, 2)), component="theta"
+            np.random.default_rng(0).standard_normal((50, 2)), output_name="theta"
         )
         with pytest.raises(ValueError, match=r"ℙ\(theta\) has no chains: .* \['theta'\]"):
             add_ess(law)
@@ -441,7 +443,7 @@ class TestAddMcmcDiagnostics:
         import jax.numpy as jnp
 
         from probpipe import MultivariateNormal
-        from probpipe.inference._approximate_distribution import make_posterior
+        from probpipe.inference._approximate_distribution import _posterior_from_chains
         from probpipe.inference._inference_utils import build_mcmc_datatree
 
         rng = np.random.default_rng(0)
@@ -450,7 +452,7 @@ class TestAddMcmcDiagnostics:
         diverging[0, [3, 7]] = True
         diverging[1, 11] = True
         prior = MultivariateNormal("z", loc=jnp.zeros(2), cov=jnp.eye(2))
-        posterior = make_posterior(
+        posterior = _posterior_from_chains(
             chains,
             parents=(prior,),
             method="test",
@@ -459,7 +461,52 @@ class TestAddMcmcDiagnostics:
         add_mcmc_diagnostics(posterior)
         assert posterior.diagnostics.mcmc.n_divergences == 3
 
-    def test_vector_parameter_diagnostics_are_written_by_component(self):
+    @staticmethod
+    def _summary_of_chains(chains, diverging):
+        import jax.numpy as jnp
+
+        from probpipe import MultivariateNormal
+        from probpipe.inference._approximate_distribution import _posterior_from_chains
+        from probpipe.inference._inference_utils import build_mcmc_datatree
+
+        chains = [jnp.asarray(chain) for chain in chains]
+        prior = MultivariateNormal("z", loc=jnp.zeros(2), cov=jnp.eye(2))
+        posterior = _posterior_from_chains(
+            chains,
+            parents=(prior,),
+            method="test",
+            annotations=build_mcmc_datatree(chains, {"diverging": diverging}),
+        )
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            add_mcmc_diagnostics(posterior)
+        return posterior.diagnostics.summary_table()
+
+    def test_a_run_with_divergences_is_not_reported_as_passing(self):
+        rng = np.random.default_rng(0)
+        chains = [rng.normal(size=(200, 2)) for _ in range(4)]
+        diverging = np.zeros((4, 200), dtype=bool)
+        diverging[0, [3, 7]] = True
+        table = self._summary_of_chains(chains, diverging)
+        assert table.splitlines()[-1] == "✗  Not passed: 2 divergent transitions."
+        assert "All available diagnostics passed" not in table
+
+    def test_chains_that_never_move_are_not_reported_as_passing(self):
+        chains = [np.full((200, 2), 0.5) for _ in range(4)]
+        table = self._summary_of_chains(chains, np.ones((4, 200), dtype=bool))
+        # Chains that never move have no spread, so ArviZ's R-hat is NaN.
+        assert re.fullmatch(
+            r"✗  Not passed: 800 divergent transitions and R-hat not computed for \S+\[0\], \S+\[1\]\.",
+            table.splitlines()[-1],
+        )
+
+    def test_a_run_without_divergences_or_warnings_passes(self):
+        rng = np.random.default_rng(0)
+        chains = [rng.normal(size=(200, 2)) for _ in range(4)]
+        table = self._summary_of_chains(chains, np.zeros((4, 200), dtype=bool))
+        assert table.splitlines()[-1] == "✓  All available diagnostics passed."
+
+    def test_vector_parameter_diagnostics_are_written_by_entry(self):
         posterior = _posterior_of_draws(_vector_draws())
 
         add_mcmc_diagnostics(posterior)

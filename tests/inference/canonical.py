@@ -103,7 +103,7 @@ class _Observations(TFPDistribution):
 
 
 def _top(given: Any) -> dict[str, Any]:
-    """The values of *given*, a record or a mapping, by slot name."""
+    """The values of *given*, a record or a mapping, by input name."""
     return dict(given.children if isinstance(given, Record) else given)
 
 
@@ -113,7 +113,7 @@ class ObservationKernel(
     """The kernel of an observation vector whose law a backend distribution gives at its givens.
 
     Its event is the response, a whole term under the kernel's label, and its law
-    at a value of every given slot is ``build(**values)``, a backend distribution
+    at a value of every input is ``build(**values)``, a backend distribution
     whose event is the response. It claims conditional sampling and the
     normalized conditional density, so a joint of it and normalized priors is
     normalized.
@@ -121,13 +121,13 @@ class ObservationKernel(
     Parameters
     ----------
     label : str
-        The kernel's label and the component of the response.
+        The kernel's label and the output name of the response.
     given : Mapping[str, NumericArraySpec]
-        The given slots, each the event spec of the prior factor that produces it.
+        The inputs, each the event spec of the prior factor that produces it.
     response : NumericArraySpec
         The declared response vector.
     build : callable
-        ``build(**values)``, the backend law of the response at the slot values.
+        ``build(**values)``, the backend law of the response at the input values.
     """
 
     def __init__(
@@ -146,7 +146,7 @@ class ObservationKernel(
         object.__setattr__(self, "_support", response.support)
 
     def _law(self, given: Any) -> Distribution:
-        values = {slot: jnp.asarray(value) for slot, value in _top(given).items()}
+        values = {input_name: jnp.asarray(value) for input_name, value in _top(given).items()}
         return _Observations(
             self.label, self._build(**values), self._support, event_spec=self.event_spec
         )
@@ -233,7 +233,7 @@ class ModelTestCase:
     model : Distribution
         The joint law of the parameters and the observations, composed with ``*``.
     data : Mapping[str, Any]
-        The observed values, keyed by the components of the model they condition.
+        The observed values, keyed by the outputs of the model they condition.
     reference : PosteriorReference
         The posterior of the parameters given *data*.
     tags : frozenset of str
@@ -315,7 +315,7 @@ def gaussian_linear(num_features: int = 3, num_observations: int = 40) -> ModelT
     prior = MultivariateNormal(
         "beta", jnp.zeros(num_features), cov=prior_variance * jnp.eye(num_features)
     )
-    model = glm_likelihood("y", GaussianFamily(), X=X, dispersion=1.0) * prior
+    model = glm_likelihood("y", GaussianFamily(), X=X, dispersion=1.0) & prior
 
     def pymc_model() -> Any:
         import pymc as pm
@@ -385,7 +385,7 @@ def beta_bernoulli() -> ModelTestCase:
     prior = Beta("theta", 1.0, 1.0)
     likelihood = ObservationKernel(
         "y",
-        {"theta": prior.event_spec.spec},
+        {"theta": prior.event_spec.term_spec},
         NumericArraySpec((trials,), jnp.float32, boolean),
         lambda theta: tfd.Independent(
             tfd.Bernoulli(probs=jnp.full(trials, theta), dtype=jnp.float32), 1
@@ -420,7 +420,7 @@ def beta_bernoulli() -> ModelTestCase:
     """
     return ModelTestCase(
         name="beta_bernoulli",
-        model=likelihood * prior,
+        model=(likelihood & prior),
         data={"y": y},
         reference=reference,
         tags=frozenset({"skewed", "constrained"}),
@@ -448,7 +448,7 @@ def gamma_poisson() -> ModelTestCase:
     n = counts.shape[0]
     likelihood = ObservationKernel(
         "y",
-        {"lam": prior.event_spec.spec},
+        {"lam": prior.event_spec.term_spec},
         NumericArraySpec((n,), jnp.float32, non_negative_integer),
         lambda lam: tfd.Independent(tfd.Poisson(rate=jnp.full(n, lam)), 1),
     )
@@ -481,7 +481,7 @@ def gamma_poisson() -> ModelTestCase:
     """
     return ModelTestCase(
         name="gamma_poisson",
-        model=likelihood * prior,
+        model=(likelihood & prior),
         data={"y": counts},
         reference=reference,
         tags=frozenset({"skewed", "constrained", "discrete-likelihood"}),
@@ -524,7 +524,7 @@ def dirichlet_multinomial() -> ModelTestCase:
     draws, categories = counts.shape
     likelihood = ObservationKernel(
         "y",
-        {"p": prior.event_spec.spec},
+        {"p": prior.event_spec.term_spec},
         NumericArraySpec((draws, categories), jnp.float32, non_negative_integer),
         lambda p: tfd.Independent(
             tfd.Multinomial(total_count=total, probs=jnp.broadcast_to(p, (draws, categories))), 1
@@ -563,7 +563,7 @@ def dirichlet_multinomial() -> ModelTestCase:
     """
     return ModelTestCase(
         name="dirichlet_multinomial",
-        model=likelihood * prior,
+        model=(likelihood & prior),
         data={"y": counts},
         reference=reference,
         tags=frozenset({"simplex", "constrained", "discrete-likelihood"}),
@@ -628,7 +628,7 @@ def poisson_regression(num_observations: int = 40) -> ModelTestCase:
         return np.array([_grid_quantile(axes[i], marginals[i], q) for i in range(2)])
 
     reference = PosteriorReference({"beta": _leaf(mean, variance, ppf)}, "quadrature")
-    model = glm_likelihood("y", PoissonFamily(), X=X) * MultivariateNormal(
+    model = glm_likelihood("y", PoissonFamily(), X=X) & MultivariateNormal(
         "beta", jnp.zeros(2), cov=jnp.eye(2)
     )
 
@@ -829,9 +829,9 @@ def eight_schools() -> ModelTestCase:
     likelihood = ObservationKernel(
         "y",
         {
-            "mu": mu.event_spec.spec,
-            "tau": tau.event_spec.spec,
-            "theta_tilde": theta_tilde.event_spec.spec,
+            "mu": mu.event_spec.term_spec,
+            "tau": tau.event_spec.term_spec,
+            "theta_tilde": theta_tilde.event_spec.term_spec,
         },
         NumericArraySpec((J,), jnp.float32, real),
         lambda mu, tau, theta_tilde: tfd.Independent(
@@ -874,7 +874,7 @@ def eight_schools() -> ModelTestCase:
     """
     return ModelTestCase(
         name="eight_schools",
-        model=likelihood * theta_tilde * tau * mu,
+        model=(((likelihood & theta_tilde) & tau) & mu),
         data={"y": jnp.asarray(SCHOOL_EFFECTS, jnp.float32)},
         reference=reference,
         tags=frozenset({"hierarchical", "constrained"}),
