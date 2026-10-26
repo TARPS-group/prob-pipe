@@ -6,10 +6,12 @@
 [![DOI](https://img.shields.io/badge/DOI-10.5281%2Fzenodo.20683559-blue)](https://doi.org/10.5281/zenodo.20683559)
 
 <!-- --8<-- [start:intro] -->
-ProbPipe is a Python framework that makes it easy to build probabilistic workflows with automated uncertainty quantification.
-Workflows are built from familiar mathematical objects, such as distributions, conditional distributions, and functions, and standard operations such as composition, conditioning, and expectation.
-Each ProbPipe object declares its computational capabilities based on its type, such as drawing random samples for a distribution, evaluating the density for a conditional distribution, or inversion for a function.
-By default, ProbPipe hides computational details, but it provides access to them when you need it.
+ProbPipe is a Python framework that enables you to connect the tools you already use into a single, coherent probabilistic workflow, from data preparation through prediction and decision-making.
+ProbPipe makes workflows maintainable and reliable by keeping the mathematics separate from the computational implementation.
+You express the workflow in mathematical terms: distributions, conditional distributions, and functions, combined by operations such as conditioning, expectation, and quantiles.
+Each mathematical object declares what it can do, such as drawing samples or evaluating a density, and each operation uses those capabilities to choose how to compute its result.
+You can specify a different algorithm when you want to, and your own Python functions, simulators, and PyMC, Stan, or TFP models work without a rewrite.
+Every result records how it was computed, and random number seeds are managed automatically, so workflows are traceable and reproducible.
 <!-- --8<-- [end:intro] -->
 
 ## What you can do
@@ -27,8 +29,6 @@ ProbPipe streamlines and automates those tasks, so you can:
 <!-- --8<-- [end:capabilities] -->
 
 ## A short example
-
-> **AI-generated section.** An AI assistant changed this section after the page was reviewed, and no maintainer has reviewed the change yet.
 
 <!-- --8<-- [start:quick-example] -->
 Consider a Bayesian logistic regression for the [Challenger O-ring data](https://en.wikipedia.org/wiki/Space_Shuttle_Challenger_disaster), which consists of temperatures of 23 shuttle launches and an indicator as to whether an O-ring was damaged.
@@ -134,7 +134,8 @@ def challenger_damage_probability(beta: jax.Array) -> jax.Array:
     return jax.nn.sigmoid(beta[0] + beta[1] * 31.0)
 
 
-# Called on the posterior, the function returns the distribution of the probability.
+# Called on the posterior, which is a distribution, the function returns the
+# distribution of the probability.
 with workflow_run(seed=2):
     damage_prob = challenger_damage_probability(posterior["beta"])
 
@@ -175,4 +176,4 @@ The [installation page](https://tarps-group.github.io/prob-pipe/get_started/inst
 - [The API reference](https://tarps-group.github.io/prob-pipe/api/) provides complete documentation of ProbPipe capabilities.
 - [How to cite ProbPipe](https://tarps-group.github.io/prob-pipe/cite/), [getting help](https://tarps-group.github.io/prob-pipe/help/), and [contributing](CONTRIBUTING.md).
 
-> **Human-validated** by Jonathan Huggins on 2026-10-04.
+> **Human-validated** by Jonathan Huggins on 2026-10-25.
