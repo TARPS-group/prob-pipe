@@ -15,6 +15,8 @@ If you don't want to run code locally, you can try out the [quickstart](quicksta
 
 You can follow the [installation](installation.md) instructions, paste the prompt below into your coding agent, such as Claude Code, Codex, or Cursor, or follow the prompt's steps yourself.
 The setup takes about fifteen minutes.
+Both prompts on this page use `~/probpipe` for the clone of ProbPipe and `~/probpipe-env` for its Python environment.
+If your clone or environment is somewhere else, replace those paths in both prompts.
 
 ```text
 Set up ProbPipe on this computer for the ProbPipe design assistant.
