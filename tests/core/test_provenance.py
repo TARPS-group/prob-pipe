@@ -836,7 +836,147 @@ class TestProvenanceAncestors:
 
 
 # ===========================================================================
-# 9. provenance_dag
+# 9. The printed lineage, str(provenance)
+# ===========================================================================
+
+
+def _law(label: str, operation: str | None = None, parents=(), **fields):
+    """A law under *label*, recording *operation* on *parents* when one is given."""
+    law = Normal("x", loc=0.0, scale=1.0, label=label)
+    if operation is not None:
+        law.with_provenance(Provenance.create(operation, parents=list(parents), **fields))
+    return law
+
+
+def _diamond():
+    """A root, one step on it, two steps on that step, and a step on both."""
+    root = _law("root")
+    shared = _law("shared", "load", [root])
+    left = _law("left", "f", [shared])
+    right = _law("right", "g", [shared])
+    return _law("top", "h", [left, right])
+
+
+class TestProvenanceStr:
+    def test_repr_stays_short(self):
+        top = _diamond()
+        assert repr(top.provenance) == "Provenance('h', parents=[left, right])"
+
+    def test_term_without_parents_is_one_line(self):
+        assert str(Provenance("load")) == "1. load()"
+
+    def test_linear_chain_reads_from_the_root(self):
+        root = _law("root")
+        a = _law("a", "f", [root])
+        b = _law("b", "g", [a])
+        c = _law("c", "h", [b])
+        assert str(c.provenance) == "1. a = f(root)\n2. b = g(1)\n3. h(2)"
+
+    def test_shared_ancestor_is_listed_once(self):
+        top = _diamond()
+        lines = str(top.provenance).splitlines()
+        assert lines == [
+            "1. shared = load(root)",
+            "2. left = f(1)",
+            "3. right = g(1)",
+            "4. h(2, 3)",
+        ]
+
+    def test_shared_ancestor_is_listed_once_in_full_mode(self, full_provenance_mode):
+        top = _diamond()
+        assert str(top.provenance).count("load(root)") == 1
+
+    def test_steps_are_the_ancestors_that_record_provenance(self):
+        top = _diamond()
+        with_provenance = [a for a in provenance_ancestors(top) if a.provenance is not None]
+        assert len(str(top.provenance).splitlines()) == len(with_provenance) + 1
+
+    def test_exact_and_approximate_annotations(self):
+        root = _law("root")
+        fit = _law(
+            "fit",
+            "condition_on",
+            [root],
+            metadata={"route": "mcmc", "method": "nuts", "exact": False},
+        )
+        answer = _law("answer", "mean", [fit], metadata={"route": "closed_form", "exact": True})
+        assert str(answer.provenance) == (
+            "1. fit = condition_on(root)  route mcmc, method nuts, approximate\n"
+            "2. mean(1)                   route closed_form, exact"
+        )
+
+    def test_plain_inputs_are_named_in_the_call(self):
+        root = _law("root")
+        top = _law("top", "scale", [root], inputs={"factor": 2.0})
+        assert str(top.provenance) == "1. scale(root, factor)"
+
+    def test_view_is_folded_into_its_consumer(self):
+        record = NumericRecord({"a": 1.0, "b": 2.0}, label="data")
+        record.with_provenance(Provenance.create("load"))
+        field_a = record["a"]
+        top = _law("top", "f", [field_a])
+        assert str(top.provenance) == "1. data = load()\n2. f(1['a'])"
+
+    def test_managed_call_names_its_function_once(self):
+        def double(x: float) -> float:
+            return 2 * x
+
+        loaded = NumericRecord({"a": 1.0}, label="data")
+        loaded.with_provenance(Provenance.create("load"))
+        doubled = Function(double, output_spec=OutputSpec(double=None))(loaded["a"])
+        assert str(doubled.provenance) == ("1. data = load()\n2. double(1['a'])  route body, exact")
+
+    @pytest.mark.parametrize("operation", ["mean", "workflow.mean", "workflow.stack"])
+    def test_root_operand_can_share_the_operation_name(self, operation):
+        name = operation.removeprefix("workflow.")
+        root = _law(name)
+        assert str(Provenance.create(operation, parents=[root])) == f"1. {name}({name})"
+
+    def test_managed_call_keeps_an_operand_with_the_function_name(self):
+        def double(x: float) -> float:
+            return 2 * x
+
+        value = probpipe.NumericArray(1.0, label="double")
+        result = Function(double, output_spec=OutputSpec(double=None))(value)
+        assert str(result.provenance) == "1. double(double)  route body, exact"
+
+    @pytest.mark.parametrize(
+        "literal", ["'data.csv'", '"data.csv"', "r'data.csv'", "'''data.csv'''", "'data\\'s.csv'"]
+    )
+    def test_parent_references_preserve_string_literals(self, literal):
+        data = _law("data", "load")
+        intermediate = _law(f"f(data, filename={literal})", "f", [data])
+        top = _law("top", "g", [intermediate])
+        assert str(top.provenance).splitlines() == [
+            "1. data = load()",
+            f"2. f(1, filename={literal})",
+            "3. g(2)",
+        ]
+
+    def test_parent_reference_can_contain_a_string_literal(self):
+        data = _law("load('data.csv')", "load")
+        intermediate = _law("f(load('data.csv'), filename='data.csv')", "f", [data])
+        top = _law("top", "g", [intermediate])
+        assert str(top.provenance).splitlines() == [
+            "1. load('data.csv')",
+            "2. f(1, filename='data.csv')",
+            "3. g(2)",
+        ]
+
+    def test_label_with_a_digest_shows_its_first_eight_digits(self):
+        digest = "0123456789abcdef" * 4
+        loaded = _law(f"load_data('data.csv', '{digest}')", "workflow.load_data", [])
+        top = _law("top", "f", [loaded])
+        assert str(top.provenance).splitlines()[0] == "1. load_data('data.csv', '01234567…')"
+
+    def test_same_lineage_gives_the_same_string(self):
+        first, second = _diamond(), _diamond()
+        assert str(first.provenance) == str(second.provenance)
+        assert str(first.provenance) == str(first.provenance)
+
+
+# ===========================================================================
+# 10. provenance_dag
 # ===========================================================================
 
 
@@ -945,7 +1085,7 @@ class TestProvenanceDag:
 
 
 # ===========================================================================
-# 10. ProvenanceMode behaviour
+# 11. ProvenanceMode behaviour
 # ===========================================================================
 
 
