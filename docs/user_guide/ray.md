@@ -10,7 +10,7 @@ The configuration below changes where evaluations run while preserving the mathe
 
 ProbPipe runs functions in the current process by default.
 Enable Prefect orchestration explicitly to use a task runner such as `RayTaskRunner`.
-Prefect chooses its evaluation pattern from the callable's traceability:
+ProbPipe chooses the work it submits to Prefect from the callable's traceability:
 
 | Callable | Work submitted with `WorkflowKind.TASK` |
 |---|---|

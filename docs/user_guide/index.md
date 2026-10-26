@@ -2,7 +2,7 @@
 
 # User guide
 
-The user guide explains ProbPipe one feature at a time, on small examples.
+The user guide explains ProbPipe one feature at a time.
 Each chapter explains a calling rule or a group of operations with a small example.
 You describe the mathematical objects and operations; ProbPipe selects a computation from the available representations and capabilities.
 Start with the short example in [Terms](01_terms.ipynb), which combines a known value with a distribution through a function.
