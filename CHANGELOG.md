@@ -4446,10 +4446,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- `predictive_check` rejects a model passed as its kernel before sampling and
-  asks for the likelihood.
+- Functions that consume kernels reject a law before sampling, both in `check`
+  and in a call. `predictive_check` preserves sweeps over batches of kernels.
 
-- MCMC warnings summarize each parameter's failing coordinates and worst value.
+- MCMC warnings summarize each original parameter's failing coordinates and worst value.
   Diagnostic tables size the parameter column to fit long names.
 
 - **Default workflow streams continue across notebook cells.** IPython cells

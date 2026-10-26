@@ -33,7 +33,7 @@ from __future__ import annotations
 
 import json
 import warnings
-from collections.abc import Mapping
+from collections.abc import Callable, Iterator, Mapping
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -137,63 +137,46 @@ def _values_from_dataset(ds: xr.Dataset) -> dict[str, float]:
     return _dataset_values(ds)
 
 
-def _rhat_warnings(values: dict[str, Any], threshold: float) -> list[str]:
-    """Report the failing coordinate count and maximum R-hat per parameter."""
-    from ._datatree import NotComputed
-
-    failing: dict[str, list[float]] = {}
-
-    for param, val in values.items():
-        if isinstance(val, NotComputed):
-            continue
-
+def _failing_by_parameter(
+    values: Mapping[str, Any], fails: Callable[[np.ndarray], np.ndarray]
+) -> Iterator[tuple[str, np.ndarray]]:
+    """Yield each original parameter's coordinates that fail the diagnostic."""
+    for param, value in values.items():
         try:
-            numeric_val = float(val)
-        except Exception:
+            array = np.asarray(value, dtype=float)
+        except (TypeError, ValueError):
             continue
+        failing = array[fails(array)]
+        if failing.size:
+            yield param, failing
 
-        if numeric_val > threshold:
-            failing.setdefault(param.rsplit("[", 1)[0], []).append(numeric_val)
 
+def _rhat_warnings(values: Mapping[str, Any], threshold: float) -> list[str]:
+    """Report the failing coordinate count and maximum R-hat per parameter."""
     return [
         f"R-hat > {threshold} for '{param}' "
-        f"({count(len(vals), 'coordinate')}, worst {max(vals):.4f}) -- "
+        f"({count(vals.size, 'coordinate')}, worst {vals.max():.4f}) -- "
         "chains may not have converged."
-        for param, vals in failing.items()
+        for param, vals in _failing_by_parameter(values, lambda value: value > threshold)
     ]
 
 
 def _ess_warnings(
-    bulk: dict[str, Any],
-    tail: dict[str, Any],
+    bulk: Mapping[str, Any],
+    tail: Mapping[str, Any],
     threshold: int,
 ) -> list[str]:
     """Report the failing coordinate count and minimum ESS per parameter and kind."""
-    from ._datatree import NotComputed
-
     msgs: list[str] = []
 
     for kind, values, advice in (
         ("bulk", bulk, "consider more iterations."),
         ("tail", tail, "tail estimates may be unreliable."),
     ):
-        failing: dict[str, list[float]] = {}
-        for param, val in values.items():
-            if isinstance(val, NotComputed):
-                continue
-
-            try:
-                numeric_val = float(val)
-            except Exception:
-                continue
-
-            if numeric_val < threshold:
-                failing.setdefault(param.rsplit("[", 1)[0], []).append(numeric_val)
-
         msgs.extend(
             f"Low ESS ({kind}) for '{param}' "
-            f"({count(len(vals), 'coordinate')}, worst {min(vals):.0f}) -- {advice}"
-            for param, vals in failing.items()
+            f"({count(vals.size, 'coordinate')}, worst {vals.min():.0f}) -- {advice}"
+            for param, vals in _failing_by_parameter(values, lambda value: value < threshold)
         )
 
     return msgs
@@ -284,7 +267,7 @@ def _compute_rhat_op(
 
     values = _values_from_dataset(rhat_ds)
 
-    warns = _rhat_warnings(values, threshold)
+    warns = _rhat_warnings(rhat_ds, threshold)
 
     attrs = {
         "rhat_method": method,
@@ -338,7 +321,7 @@ def _compute_ess_op(
     bulk = _values_from_dataset(bulk_ds)
     tail = _values_from_dataset(tail_ds)
 
-    warns = _ess_warnings(bulk, tail, threshold)
+    warns = _ess_warnings(bulk_ds, tail_ds, threshold)
 
     bulk_attrs = {
         "ess_method": "bulk",

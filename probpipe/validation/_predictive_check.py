@@ -26,7 +26,7 @@ __all__ = ["predictive_check"]
 
 @function
 def predictive_check[D](
-    kernel: Any,
+    kernel: ConditionalDistribution,
     law: Distribution,
     test_fns: Callable[[D], float] | Sequence[Callable[[D], float]],
     observed_data: D | None = None,

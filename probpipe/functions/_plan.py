@@ -28,7 +28,7 @@ from ..distributions._distribution import Distribution
 from ..distributions._empirical import EmpiricalDistribution
 from ..values import _binding
 from . import _descendants, _normalization
-from ._call import ApplicabilityError, arrived_kind, role_admits, role_lift
+from ._call import ApplicabilityError, _expects_value, arrived_kind, role_admits, role_lift
 
 BroadcastRegime = Literal["none", "distribution", "sweep", "nested"]
 Lift = Literal["whole", "sweep", "broadcast"]
@@ -235,16 +235,11 @@ def is_swept(value: Any, expected: Any) -> bool:
 def is_broadcast(value: Any, expected: Any) -> bool:
     """Whether the call samples *value* at a parameter whose lifting annotation is *expected*.
 
-    A distribution is broadcast unless it is batched, in which case the call
-    sweeps it or passes it whole, or the annotation names a distribution, which
-    consumes it, or is ``Any``, which accepts every kind as it arrives.
+    A distribution is broadcast at a value parameter. A batched distribution
+    is swept or passed whole, and parameters that consume laws or kernels,
+    or accept ``Any``, receive the object whole.
     """
-    return (
-        isinstance(value, Distribution)
-        and not _is_batched(value)
-        and _binding.resolved_hint(expected) is not Any
-        and not _normalization.is_distribution_hint(expected)
-    )
+    return isinstance(value, Distribution) and not _is_batched(value) and _expects_value(expected)
 
 
 def lift_of(value: Any, expected: Any, role: tuple[type[TermSpec], ...] | None = None) -> Lift:

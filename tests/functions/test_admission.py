@@ -36,7 +36,10 @@ from probpipe import (
     workflow_run,
 )
 from probpipe.distributions import ConditionalDistribution
-from probpipe.distributions._capabilities import SupportsExactConditioning
+from probpipe.distributions._capabilities import (
+    SupportsConditionalSampling,
+    SupportsExactConditioning,
+)
 
 from ._design_helpers import error_of, standard_normal
 
@@ -261,6 +264,29 @@ class TestConversionPlanning:
 
 
 class TestAdmission:
+    @pytest.mark.parametrize(
+        "annotation", [ConditionalDistribution, _KernelAlias, SupportsConditionalSampling]
+    )
+    def test_a_law_at_a_kernel_parameter_is_refused(self, annotation):
+        def consume(kernel):
+            pytest.fail("body was called")
+
+        consume.__annotations__ = {"kernel": annotation}
+        consume = Function(consume, label="consume")
+        law = Normal("mu", 0.0, 1.0)
+        for call in (consume.check, consume):
+            with pytest.raises(ApplicabilityError, match=r"'kernel'.*Normal.*likelihood"):
+                call(law)
+
+    def test_a_union_can_consume_a_law_or_a_kernel(self):
+        @function
+        def consume(kernel: ConditionalDistribution | Distribution):
+            return 1.0
+
+        for value in (Normal("mu", 0.0, 1.0), _kernel()):
+            assert consume.check(value).lifted == ()
+            assert float(consume(value)) == 1.0
+
     def test_applicability_error_is_a_type_error(self):
         assert issubclass(ApplicabilityError, TypeError)
 

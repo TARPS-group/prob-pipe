@@ -579,9 +579,10 @@ def admit_arguments(
     argument whose elements or draws are of such a kind (VI.0). Any other
     argument is admitted against its parameter's own annotation, so an
     argument that a variadic parameter annotated ``Any`` collects is admitted
-    whatever its kind. A conditional distribution at a parameter that expects a
-    value is refused, since a kernel has no marginal law to lift over. Where an
-    *input_spec* declares an input, the argument's kind must be the input's: a
+    whatever its kind. A law at a kernel-only parameter is refused. A conditional
+    distribution at a value parameter is refused, since a kernel has no marginal
+    law to lift over. Where an *input_spec* declares an input, the argument's
+    kind must be the input's: a
     value's own kind, the event kind of a law the input lifts, or the element
     kind of a batch it sweeps (V.4).
 
@@ -621,9 +622,18 @@ def admit_arguments(
         if role is not None:
             _admit_by_role(info, ref, value, role, function_name=function_name, lifts=lifts)
             continue
-        if isinstance(value, ConditionalDistribution) and _expects_value(
-            info.hints.get(ref.parameter_name)
+        expected = info.hints.get(ref.parameter_name)
+        if (
+            isinstance(value, Distribution)
+            and _consumes_kernel(expected)
+            and not _normalization.is_distribution_hint(expected)
         ):
+            owner = f"{function_name}: " if function_name else ""
+            raise ApplicabilityError(
+                f"{owner}parameter {ref.label!r} expects a ConditionalDistribution, but got "
+                f"{type_name(value)} {value.label!r}. Pass the kernel itself, such as the likelihood"
+            )
+        if isinstance(value, ConditionalDistribution) and _expects_value(expected):
             owner = f"{function_name}: " if function_name else ""
             raise ApplicabilityError(
                 f"{owner}parameter {ref.label!r} expects a value, but got {type_name(value)} "

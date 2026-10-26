@@ -362,6 +362,30 @@ class TestAddMcse:
 
 
 class TestAddMcmcDiagnostics:
+    def test_grouping_uses_original_names_and_counts_matrix_coordinates(self):
+        rng = np.random.default_rng(648)
+        draws = rng.normal(size=(2, 30, 6)) * 0.1
+        draws[0] -= 4
+        draws[1] += 4
+        posterior = posterior_of(
+            list(draws),
+            event_spec=RecordSpec(
+                **{
+                    "theta[0]": NumericArraySpec(()),
+                    "theta[1]": NumericArraySpec(()),
+                    "beta": NumericArraySpec((2, 2)),
+                }
+            ),
+        )
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            add_mcmc_diagnostics(posterior)
+        assert len(caught) == 9
+        for name, count in (("theta[0]", 1), ("theta[1]", 1), ("beta", 4)):
+            messages = [str(w.message) for w in caught if f"for '{name}'" in str(w.message)]
+            assert len(messages) == 3
+            assert all(f"({count} coordinate" in message for message in messages)
+
     def test_warnings_group_coordinates_by_parameter(self):
         draws = _vector_draws()
         draws["beta"][0] -= 4
