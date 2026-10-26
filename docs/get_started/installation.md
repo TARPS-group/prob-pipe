@@ -1,9 +1,9 @@
 # Installation
 
 ProbPipe requires Python 3.12 or later, and it installs JAX as a dependency.
-ProbPipe is not yet on PyPI, so every command on this page installs it from GitHub.
+ProbPipe is not yet on PyPI, so for now it needs to be installed directly from GitHub.
 Until a release, the commands install the `main` branch, which is the version this documentation describes.
-pip and uv clone the repository to install it, so they need [Git](https://git-scm.com/downloads).
+Since pip or uv needs to clone the repository to install it, you will also need [Git](https://git-scm.com/downloads).
 
 ## The two distributions
 
@@ -14,7 +14,7 @@ ProbPipe has two distributions, and both install the same import package, `probp
 | `probpipe-core` | ProbPipe with JAX, BlackJAX, TensorFlow Probability, and ArviZ | A minimal install, to which you add the extras you need |
 | `probpipe` | `probpipe-core` with the extras `pymc`, `nutpie`, and `pyabc`, and with `bayesflow` on Python 3.12 and 3.13 | Running the tutorials |
 
-The `probpipe` distribution depends on `probpipe-core==0.1.0`, which is not yet on PyPI.
+The `probpipe` distribution depends on `probpipe-core==0.2.0.dev0`, which is not yet on PyPI.
 Until it is, install the tutorials' set of extras through `probpipe-core`, as the commands below do.
 
 ## Google Colab
@@ -87,7 +87,7 @@ The extras add optional backends and tools:
 | `prefect` | Prefect | To run a pipeline's functions as Prefect tasks and flows, and on a Ray cluster through Prefect, as [Ray via Prefect](../user_guide/ray.md) describes |
 | `viz` | matplotlib and graphviz | To draw the plots of the quickstart and the tutorials, and a provenance graph with `provenance_dag` |
 
-Two extras need more than their packages:
+Two extras need additional tools installed:
 
 1. **`stan`:** CmdStan and a C++ toolchain, which compile Stan programs. CmdStanPy's command `install_cmdstan` installs CmdStan, and the [CmdStanPy installation guide](https://mc-stan.org/cmdstanpy/installation.html) lists the toolchain each operating system needs.
 2. **`bayesflow`:** Python 3.12 or 3.13, and the JAX backend of Keras. ProbPipe sets the environment variable `KERAS_BACKEND` to `jax` when it first imports BayesFlow, unless the variable is already set. A program that imports Keras before then, or sets the variable to another backend, must set `KERAS_BACKEND=jax` before its first import of Keras.
@@ -99,7 +99,7 @@ The extras `docs` and `dev` are for contributors, and the [contributing guide](h
 Neither of these two ways needs Python installed beforehand:
 
 - **In the browser:** open the [quickstart](quickstart.ipynb) in Google Colab from the badge at its top, which needs only a Google account.
-- **On your computer:** install uv by following its [installation guide](https://docs.astral.sh/uv/getting-started/installation/). uv downloads a suitable Python when it needs one. The command `uv init my-analysis` creates a project in the folder `my-analysis`, and the `uv add` command of the [uv section](#uv) run in that folder installs ProbPipe into it. The command `uv run python` then starts Python in the project's environment.
+- **On your computer:** install uv by following its [installation guide](https://docs.astral.sh/uv/getting-started/installation/). uv downloads a suitable Python version when it needs one. The command `uv init my-analysis` creates a project in the folder `my-analysis`, and the `uv add` command of the [uv section](#uv) run in that folder installs ProbPipe into it. The command `uv run python` then starts Python in the project's environment.
 
 The [Python tutorial](https://docs.python.org/3/tutorial/) introduces the language itself.
 
@@ -125,7 +125,7 @@ print("standard deviation of the draws:", round(float(jnp.std(draws.raw)), 2))
 It prints:
 
 ```text
-ProbPipe version: 0.1.0
+ProbPipe version: 0.2.0.dev0
 number of draws: 1000
 mean of the draws: 3.0
 standard deviation of the draws: 1.0
