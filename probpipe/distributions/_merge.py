@@ -8,7 +8,8 @@ never a label. The result is a ``FactoredDistribution`` when no input is left
 unmet and a ``FactoredConditionalDistribution`` over the unmet inputs
 otherwise; it is unlabeled, so its expression is the product of the operands'
 expressions: its label joins the operands' current labels with ``·`` and it
-displays operand by operand, a labeled operand by its label.
+displays operand by operand, a labeled operand by its label. Its provenance
+records the step ``&`` with the two operands as its parents, left first.
 
 The base classes expose the operator through ``__and__``, which delegates to the
 engine this module installs at import.
@@ -18,6 +19,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
+from ..core.provenance import _MERGE_OPERATION, Provenance
 from ._capabilities import SupportsMarginals, _capability_guard
 from ._conditional import ConditionalDistribution
 from ._distribution import Distribution, _install_merge
@@ -34,7 +36,7 @@ from ._views import CoupledMarginal, _is_within
 __all__: list[str] = []
 
 
-def _merge(
+def _merge_distributions(
     left: Distribution | ConditionalDistribution, right: Distribution | ConditionalDistribution
 ) -> FactoredDistribution | FactoredConditionalDistribution:
     """The joint ``left & right``, the most specific factored kind of the flat factor graph.
@@ -53,7 +55,10 @@ def _merge(
         The joint, or ``NotImplemented`` when *right* is neither distribution
         kind. The joint is unlabeled, so its notation joins its operands'
         notations with ``·``, an unlabeled product operand entering as its
-        factors, as ``lik(y | mu)·prior(mu)`` or ``model(y, mu)·d(z)``.
+        factors, as ``lik(y | mu)·prior(mu)`` or ``model(y, mu)·d(z)``. Its
+        provenance records the operation ``&`` with *left* and *right* as its
+        parents, in that order, as written rather than flattened, wherever
+        :meth:`~probpipe.core.provenance.Provenance.create` records one.
 
     Raises
     ------
@@ -84,7 +89,7 @@ def _merge(
             label=label,
         )
     joint._store_expression(_product_of(operands))
-    return joint
+    return joint.with_provenance(Provenance.create(_MERGE_OPERATION, parents=operands))
 
 
 _root_ancestor: Callable[[Distribution], Distribution] | None = None
@@ -237,4 +242,4 @@ def _coupled_marginals_message(left: CoupledMarginal, right: CoupledMarginal) ->
     return ". ".join(sentences)
 
 
-_install_merge(_merge)
+_install_merge(_merge_distributions)

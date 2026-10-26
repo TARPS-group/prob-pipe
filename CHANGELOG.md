@@ -4446,6 +4446,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A law or a kernel built with `&` records its lineage.** Before, `(a &
+  b).provenance` was `None`, so a result computed from a merge, such as a
+  quantile of a posterior predictive `likelihood.rename(y="y_pred") &
+  posterior`, lost the lineage of the posterior and stopped short of
+  `condition_on`. Now the merge records the operation `&` with its two
+  operands as parents, left first, and `print(x.provenance)` shows it as `1 &
+  4`. A chain such as `a & b & c` prints as one line, and so does
+  `lik & (a & b)`. A law that a constructor builds, `FactoredDistribution(...)`
+  included, still records none. Provenance is write-once, so
+  `(a & b).with_provenance(p)` now raises `RuntimeError`; to attach a record of
+  your own, build the product with `FactoredDistribution((a, b))`.
+
+  ```text
+  >>> print(median.provenance)
+  1. likelihood = rename(likelihood)
+  2. likelihood & (prior_mu & prior_sigma)
+  3. likelihood·prior_mu·prior_sigma = condition_on(2, given)  route inference_methods, method blackjax_nuts, approximate
+  4. posterior = with_label(3)
+  5. 1 & 4
+  6. quantile(5['y_pred'], q, given)                   route monte_carlo, approximate
+  ```
+
 - **Default workflow streams continue across notebook cells.** IPython cells
   with top-level `await` and kernels that change tasks between cells keep the
   configured stream. User-created tasks retain their own ownership checks.

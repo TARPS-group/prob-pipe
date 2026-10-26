@@ -1194,6 +1194,9 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
         operands' factors. The joint is a product that no one gave a label, so
         its label joins the operands' labels with ``·``, as ``lik·prior``, and
         its notation joins its factors' notations, as ``lik(y | mu)·prior(mu)``.
+        Its provenance records the step ``&`` with this law and *other* as its
+        parents, in that order, so ``print(joint.provenance)`` includes the
+        lineage of both operands.
 
         Parameters
         ----------
