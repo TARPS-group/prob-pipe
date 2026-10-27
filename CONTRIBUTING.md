@@ -6,8 +6,8 @@
 
 If the change is significant, start by opening a GitHub **issue**
 containing the plan: motivation, proposed design, trade-offs, and a
-task checklist for the implementation work. Tag with an appropriate
-label (typically `enhancement`).
+task checklist for the implementation work. Label it as
+[Issue triage](#issue-triage) describes, typically with `type:feature`.
 [#196](https://github.com/TARPS-group/prob-pipe/issues/196) is a
 representative model.
 
@@ -87,7 +87,7 @@ example). If you must rename after a PR is open, use the web UI.
 
 ### Labels
 
-ProbPipe uses three label families:
+PRs and issues share three label families:
 
 - **`area:*`** — the affected subsystem (`area:core`, `area:distributions`,
   `area:records`, `area:inference`, `area:workflow`, `area:orchestration`,
@@ -97,13 +97,211 @@ ProbPipe uses three label families:
   `.github/labeler.yml`), so a PR that touches several areas gets several
   `area:*` labels. On *issues*, apply them by hand — the auto-labeler runs
   on PRs only.
-- **`kind:*`** — the nature of the change (`kind:refactor`,
-  `kind:breaking-change`, `kind:deprecation`, `kind:tracking`). Always
-  human-set; paths cannot infer intent.
+- **`kind:*`** — the nature of the change: `kind:breaking-change` when it
+  changes a user-visible API, and `kind:deprecation` when it deprecates one.
+  Always set by hand, because paths cannot show intent.
 - **`status:*`** — workflow state (`status:blocked`, `status:needs-design`,
   `status:needs-review`). Human-set.
 
-`enhancement` and `documentation` remain the catch-all tags for issues.
+An issue also carries the type, severity, and priority labels that
+[Issue triage](#issue-triage) defines.
+
+---
+
+## Issue triage
+
+Triage gives each open issue labels that say what the issue is, how much harm
+it does if it is a bug, and when the team works on it. The labels and the
+milestones are the record of triage, which the issue forms, the triage script,
+and the GitHub Project read.
+
+### Label axes
+
+An issue carries labels on four axes:
+
+1. **Type**, exactly one:
+   - `type:bug`: shipped behavior or shipped documentation disagrees with its
+     contract, so a wrong example in the docs is a bug;
+   - `type:feature`: new behavior;
+   - `type:docs`: new or better documentation where nothing shipped is wrong;
+   - `type:maintenance`: refactors, tests, CI, packaging, and dependencies;
+   - `type:tracking`: an issue that lists other work;
+   - `type:question`: a request for help, which is closed once answered.
+2. **Severity**, on a bug only: `severity:S1` to `severity:S4`, which
+   [Severity](#severity) assigns.
+3. **Priority**, on every issue except a tracking issue and a question:
+   `priority:P0` to `priority:P3`, which [Priority](#priority) assigns.
+4. **Area**, at least one: the `area:*` labels of [Labels](#labels).
+
+The flags `kind:breaking-change` and `kind:deprecation` and the `status:*`
+labels apply to issues as they apply to PRs. Two status labels serve triage:
+`status:needs-triage` marks an issue that awaits triage, and
+`status:needs-repro` marks a bug that no maintainer has reproduced yet.
+
+Within one priority, work goes in the order bug, feature, docs, maintenance.
+Within one type, it goes by severity and then by age.
+
+### Severity
+
+The severity of a bug measures the harm the bug does. A triager reads it from
+two properties of the bug: how it fails, and its exposure, which is how often
+users run the failing code.
+
+A bug fails in one of four ways:
+
+1. **Silently:** a wrong value, draw, density, or probability, a false claim in
+   provenance such as an approximate result recorded as exact, or a seeded run
+   that changes its draws, with no error or warning.
+2. **Loudly, with no workaround:** an error, crash, or hang that the user
+   cannot avoid and still get the result.
+3. **Loudly, with a workaround:** an error, crash, or hang where another
+   documented call gives the result.
+4. **Degraded:** a correct result that is slow, approximate where an exact
+   route exists, or reported with a misleading message or a cosmetic fault.
+
+The exposure of a bug is **common** if any one of these holds:
+
+1. **Defaults:** the code runs under the default settings of the public API,
+   such as automatic route and executor selection, or float32 when 64-bit
+   floats are off.
+2. **Documented use:** the README, Get Started, the User Guide, the tutorials,
+   or the workshop materials run the code.
+3. **Recommended options:** the documentation recommends the non-default
+   option, method, or backend for a common task, as it recommends
+   `executor="process"` for a slow simulator.
+4. **Common inputs:** ordinary models produce the input, such as record-valued
+   draws, batches from `sample`, or a hierarchical joint.
+5. **Reports:** two or more people have hit the bug independently.
+
+The exposure is **uncommon** if none of these holds and the failing code
+needs one of these:
+
+- an option, input, or backend that the documentation mentions without
+  recommending;
+- an edge input, such as an empty array, a NaN, or an extreme size;
+- an optional extra outside the documented install;
+- a feature marked experimental.
+
+The exposure is **internal** if only private API, developer tooling, or tests
+run the failing code. A triager who cannot decide between common and uncommon
+takes common.
+
+| How it fails | Common | Uncommon | Internal |
+|---|---|---|---|
+| Silently | S1 | S1 | S3 |
+| Loudly, with no workaround | S2 | S3 | S4 |
+| Loudly, with a workaround | S3 | S3 | S4 |
+| Degraded | S3 | S4 | S4 |
+
+Four adjustments then apply to the severity the table gives:
+
+1. **Regression:** a bug that the last release did not have moves up one
+   level, as from S3 to S2.
+2. **Install or import:** a failure to install or import ProbPipe on a
+   supported Python version with supported dependency versions is S1.
+3. **Unsupported versions:** a bug that appears only on a dependency version
+   outside the declared range moves down one level, as from S2 to S3.
+4. **Data:** a bug that corrupts or loses saved work, such as provenance or
+   replay records that cannot be read back, is at least S2.
+
+### Priority
+
+The priority of an issue says when the team works on it, and a maintainer
+sets it.
+
+| Priority | Meaning | Release target |
+|---|---|---|
+| P0 | work on it now, ahead of other work | a patch release as soon as it is fixed |
+| P1 | fix it in the next release | the next release's milestone |
+| P2 | planned, within about three months | a minor release's milestone, once someone plans the work |
+| P3 | worth doing, not planned | no milestone, and contributions are welcome |
+
+The default priority of a bug follows its severity: S1 gives P0, S2 gives P1,
+S3 gives P2, and S4 gives P3.
+
+A feature, docs, or maintenance issue has no severity. Its default priority is
+the highest priority whose criterion for the issue's type holds:
+
+| Priority | Feature | Docs | Maintenance |
+|---|---|---|---|
+| P0 | the current release cannot ship without it, as a committed feature of the release | none | CI on `main` is red, or a dependency release breaks installation |
+| P1 | it is committed for the next release, a deadline such as a workshop or a paper needs it, or users hit its absence in a documented workflow | a public API with common exposure has no documentation, or the next release adds an API that needs it | it blocks planned work or a release, closes a gap in the tests of code that can fail silently, or addresses a security advisory |
+| P2 | it is on the roadmap for a later release, or two or more people have asked for it | an API with uncommon exposure has no documentation, or a guide would answer questions users keep asking | it lowers the cost of planned work, such as a refactor that a planned feature needs |
+| P3 | anything else worth doing | polish and reorganization | cleanup that no planned work depends on |
+
+A triager may move the default priority of any issue one step, with a
+one-line reason in a comment:
+
+- **Up:** the issue blocks work planned for a release, it blocks a deadline
+  such as a workshop or a paper, several users report it, or the fix takes
+  under an hour.
+- **Down:** the issue is in code that planned work removes or replaces, or in
+  a feature marked experimental.
+
+A feature or maintenance issue that needs a breaking change carries
+`kind:breaking-change` and targets a minor release. Before 1.0, a triager may
+raise such an issue one step when planned work needs the breaking change
+anyway, because fewer users depend on the old behavior the earlier the change
+ships.
+
+### Releases
+
+1. **Milestones:** each planned release has one milestone, such as 0.2.1 or
+   0.3.0. A P3 issue has no milestone.
+2. **Patch or minor:** a bug fix without a breaking change can go in a patch
+   release. A feature or a breaking change goes in a minor release, as
+   semantic versioning prescribes before 1.0.
+3. **Assignment:** a P0 issue goes to the current patch milestone, a P1 issue
+   to the next release's milestone, and a P2 issue to a minor release's
+   milestone once someone plans the work.
+4. **Release gate:** a release ships when its milestone has no open P0 or S1
+   issue and no open P1 issue. Before the release, each open P1 issue is
+   closed or moved to the next milestone with a comment that gives the reason.
+5. **Milestone review:** a week before a release's due date, the release
+   manager reviews the open issues of its milestone and applies the gate.
+
+[Releasing](#releasing) gives the steps of a release.
+
+### Process
+
+1. **Intake.** The issue forms add the type label, and the bug and feature
+   forms add `status:needs-triage`. The bug form asks the three questions that
+   the severity table reads: whether ProbPipe gave a wrong result without an
+   error or warning, whether an earlier version worked, and whether there is a
+   workaround. The workflow `.github/workflows/triage-label.yml` adds
+   `status:needs-triage` to each new issue that does not carry it, such as a
+   blank issue.
+2. **Weekly triage.** **@jhuggins** and **@arob5** take turns at a weekly
+   triage session, so each new issue is triaged within a week. The session
+   clears `status:needs-triage` and reviews every P0 and P1 issue. Any
+   maintainer may triage an issue between sessions.
+3. **Triaged.** An issue is triaged when it is closed with a reason, such as a
+   duplicate, won't fix, or answered. An open issue is triaged when it has
+   exactly one type, at least one area, a severity if it is a bug, a priority
+   unless it is a tracking issue or a question, a milestone where
+   [Releases](#releases) assigns one, and no `status:needs-triage`.
+4. **Re-triage.** An issue returns to triage, with `status:needs-triage` added
+   and its priority kept, when the review of its milestone finds it open, or
+   when it is a P1 or P2 issue with no activity for 90 days. The triager
+   applies [Severity](#severity) and [Priority](#priority) again and keeps,
+   raises, or lowers the priority with a reason in a comment. Only a triager
+   changes a priority.
+5. **Report.** `scripts/triage/report.py` writes a report in four parts:
+   - the untriaged issues;
+   - the issues that break a rule of this section;
+   - the issues due for re-triage;
+   - the release gate of each open milestone.
+
+   Run `python3 scripts/triage/report.py` to print the report. The workflow
+   `.github/workflows/triage-report.yml` runs the script early each Monday and
+   writes the report to the body of the pinned tracking issue whose number is
+   the repository variable `TRIAGE_ISSUE`.
+6. **Board.** A GitHub Project shows the open issues on a board, and the
+   labels and milestones stay the source of truth. The board's columns are the
+   values of the Project's Status field: Triage, Ready, In progress, and Done.
+   The Project's built-in workflows set the Status when an issue is added or
+   closed. The Project has a saved view for the weekly triage and one for each
+   open release, which filter by `priority:*` label and group by milestone.
 
 ---
 
