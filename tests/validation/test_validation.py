@@ -590,7 +590,10 @@ class TestErrors:
             type(model), "_sample", lambda *args, **kwargs: pytest.fail("kernel was sampled")
         )
         for call in (predictive_check.check, predictive_check):
-            with pytest.raises(ApplicabilityError, match=r"got FactoredDistribution.*likelihood"):
+            with pytest.raises(
+                ApplicabilityError,
+                match=r"parameter 'kernel' expects a ConditionalDistribution, but got the law FactoredDistribution",
+            ):
                 call(model, prior, sample_mean)
 
     def test_a_law_that_misses_an_input_raises_naming_it(self, prior, observed_data):

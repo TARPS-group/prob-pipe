@@ -275,8 +275,32 @@ class TestAdmission:
         consume = Function(consume, label="consume")
         law = Normal("mu", 0.0, 1.0)
         for call in (consume.check, consume):
-            with pytest.raises(ApplicabilityError, match=r"'kernel'.*Normal.*likelihood"):
+            with pytest.raises(
+                ApplicabilityError,
+                match=r"parameter 'kernel' expects a ConditionalDistribution, but got the law "
+                r"Normal .*annotate 'kernel' as Distribution",
+            ):
                 call(law)
+
+    def test_an_optional_kernel_parameter_refuses_a_law(self):
+        @function
+        def consume(kernel: ConditionalDistribution | None = None) -> float:
+            pytest.fail("body was called")
+
+        with pytest.raises(ApplicabilityError, match="expects a ConditionalDistribution"):
+            consume(Normal("mu", 0.0, 1.0))
+
+    def test_a_union_of_a_value_and_a_kernel_lifts_a_law(self):
+        @function
+        def scale(x: float | ConditionalDistribution) -> float:
+            return 2.0 if isinstance(x, ConditionalDistribution) else x * 2.0
+
+        law = Normal("x", 0.0, 1.0)
+        assert scale.check(law).lifted == ("x",)
+        with workflow_run(seed=0):
+            lifted = scale.using(max_evaluations=8)(law)
+        assert lifted.num_atoms == 8
+        assert float(scale(_kernel())) == 2.0
 
     def test_a_union_can_consume_a_law_or_a_kernel(self):
         @function

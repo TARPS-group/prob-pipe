@@ -28,7 +28,13 @@ from ..distributions._distribution import Distribution
 from ..distributions._empirical import EmpiricalDistribution
 from ..values import _binding
 from . import _descendants, _normalization
-from ._call import ApplicabilityError, _expects_value, arrived_kind, role_admits, role_lift
+from ._call import (
+    ApplicabilityError,
+    _consumes_only_kernels,
+    arrived_kind,
+    role_admits,
+    role_lift,
+)
 
 BroadcastRegime = Literal["none", "distribution", "sweep", "nested"]
 Lift = Literal["whole", "sweep", "broadcast"]
@@ -235,9 +241,18 @@ def is_swept(value: Any, expected: Any) -> bool:
 def is_broadcast(value: Any, expected: Any) -> bool:
     """Whether the call samples *value* at a parameter whose lifting annotation is *expected*.
 
-    An unbatched law broadcasts only when its parameter expects a value.
+    An unbatched law broadcasts unless the annotation is ``Any``, names a law
+    class or a distribution capability, which receives the law whole, or names
+    only kernels, at which admission refuses the law. A union of a value type
+    and a kernel class lifts a law through its value arm.
     """
-    return isinstance(value, Distribution) and not _is_batched(value) and _expects_value(expected)
+    return (
+        isinstance(value, Distribution)
+        and not _is_batched(value)
+        and _binding.resolved_hint(expected) is not Any
+        and not _normalization.is_distribution_hint(expected)
+        and not _consumes_only_kernels(expected)
+    )
 
 
 def lift_of(value: Any, expected: Any, role: tuple[type[TermSpec], ...] | None = None) -> Lift:

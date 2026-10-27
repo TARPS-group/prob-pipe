@@ -188,11 +188,15 @@ class TestMcmcHelpers:
                 "missing": NotComputed("single chain"),
                 "bad": _BadFloat(),
                 "alpha": np.array([1.0, 1.2, 1.3]),
+                "gamma": 1.5,
             },
             threshold=1.01,
         )
         assert any("alpha" in msg for msg in rhat_messages)
         assert "2 coordinates, worst 1.3000" in rhat_messages[0]
+        assert rhat_messages[1] == (
+            "R-hat > 1.01 for 'gamma' (1.5000) -- chains may not have converged."
+        )
 
         ess_messages = _ess_warnings(
             {"missing": NotComputed("no bulk"), "bad": _BadFloat(), "alpha": np.array([100, 500])},
@@ -373,7 +377,7 @@ class TestAddMcse:
 
 
 class TestAddMcmcDiagnostics:
-    def test_grouping_uses_original_names_and_counts_matrix_coordinates(self):
+    def test_grouping_uses_original_names_and_counts_only_array_coordinates(self):
         rng = np.random.default_rng(648)
         draws = rng.normal(size=(2, 30, 6)) * 0.1
         draws[0] -= 4
@@ -392,10 +396,13 @@ class TestAddMcmcDiagnostics:
             warnings.simplefilter("always")
             add_mcmc_diagnostics(posterior)
         assert len(caught) == 9
-        for name, count in (("theta[0]", 1), ("theta[1]", 1), ("beta", 4)):
+        for name in ("theta[0]", "theta[1]", "beta"):
             messages = [str(w.message) for w in caught if f"for '{name}'" in str(w.message)]
             assert len(messages) == 3
-            assert all(f"({count} coordinate" in message for message in messages)
+            if name == "beta":
+                assert all("(4 coordinates, worst " in message for message in messages)
+            else:
+                assert not any("coordinate" in message for message in messages)
 
     def test_warnings_group_coordinates_by_parameter(self):
         draws = _vector_draws()

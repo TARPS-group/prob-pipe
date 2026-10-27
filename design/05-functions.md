@@ -173,7 +173,7 @@ A `Function` compares each admitted argument against the kind its parameter expe
 **The trigger.** An input with a declared spec expects the kind its spec names (V.1): an input whose spec is a `DistributionSpec` or a `ConditionalDistributionSpec` consumes the law or kernel passed to it, and an input of a value kind lifts a law. For a parameter with no declared spec, the annotation decides:
 - unannotated, or a value type: the parameter expects a value, so a distribution passed there is lifted;
 - `Distribution` or a subclass of it, or a distribution capability protocol of III.8: the function consumes the distribution itself, which passes through unlifted;
-- `ConditionalDistribution` or a subclass of it, or a conditional capability: the function consumes the kernel itself. A law passed there raises `ApplicabilityError` unless the annotation also names a law class or a distribution capability;
+- `ConditionalDistribution` or a subclass of it, or a conditional capability: the function consumes the kernel itself. A law passed there raises `ApplicabilityError` when every arm of the annotation names a kernel. In a union, an arm that names a law class or a distribution capability receives the law itself, and otherwise an arm that names a value type lifts it;
 - `Function` (III.3) or a function capability: the parameter expects a value, as for a value type;
 - `Any`: the parameter accepts every kind as it arrives, so a law or a batch passes whole, and an author who wants the lift leaves the parameter unannotated.
 

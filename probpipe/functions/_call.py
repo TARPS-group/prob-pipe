@@ -335,16 +335,29 @@ def _consumes_kernel(expected: Any) -> bool:
     ``ConditionalDistribution`` class or a conditional capability, after
     :func:`_normalization._arms` resolves the arm's type aliases.
     """
-    for arm in _normalization._arms(expected):
-        if arm in _KERNEL_HINT_PROTOCOLS:
-            return True
-        named = _normalization._hint_class(arm)
-        try:
-            if isinstance(named, type) and issubclass(named, ConditionalDistribution):
-                return True
-        except TypeError:
-            continue
-    return False
+    return any(_names_kernel(arm) for arm in _normalization._arms(expected))
+
+
+def _consumes_only_kernels(expected: Any) -> bool:
+    """Whether every arm of an annotation names a kernel, so its parameter admits no law.
+
+    ``None`` is not an arm, so ``ConditionalDistribution | None`` admits only
+    kernels. A union with an arm that names a law class or a value type admits
+    a law, whole or lifted.
+    """
+    arms = _normalization._arms(expected)
+    return bool(arms) and all(_names_kernel(arm) for arm in arms)
+
+
+def _names_kernel(arm: Any) -> bool:
+    """Whether one resolved arm of an annotation names a ``ConditionalDistribution`` class or a conditional capability."""
+    if arm in _KERNEL_HINT_PROTOCOLS:
+        return True
+    named = _normalization._hint_class(arm)
+    try:
+        return isinstance(named, type) and issubclass(named, ConditionalDistribution)
+    except TypeError:
+        return False
 
 
 def _expects_value(expected: Any) -> bool:
@@ -579,12 +592,12 @@ def admit_arguments(
     argument whose elements or draws are of such a kind (VI.0). Any other
     argument is admitted against its parameter's own annotation, so an
     argument that a variadic parameter annotated ``Any`` collects is admitted
-    whatever its kind. A law at a kernel-only parameter is refused. A conditional
-    distribution at a value parameter is refused, since a kernel has no marginal
-    law to lift over. Where an *input_spec* declares an input, the argument's
-    kind must be the input's: a
-    value's own kind, the event kind of a law the input lifts, or the element
-    kind of a batch it sweeps (V.4).
+    whatever its kind. A law at a parameter whose every arm names a kernel is
+    refused, since a lift would pass the body draws where it expects a kernel. A
+    conditional distribution at a value parameter is refused, since a kernel has
+    no marginal law to lift over. Where an *input_spec* declares an input, the
+    argument's kind must be the input's: a value's own kind, the event kind of a
+    law the input lifts, or the element kind of a batch it sweeps (V.4).
 
     Parameters
     ----------
@@ -623,15 +636,12 @@ def admit_arguments(
             _admit_by_role(info, ref, value, role, function_name=function_name, lifts=lifts)
             continue
         expected = info.hints.get(ref.parameter_name)
-        if (
-            isinstance(value, Distribution)
-            and _consumes_kernel(expected)
-            and not _normalization.is_distribution_hint(expected)
-        ):
+        if isinstance(value, Distribution) and _consumes_only_kernels(expected):
             owner = f"{function_name}: " if function_name else ""
             raise ApplicabilityError(
-                f"{owner}parameter {ref.label!r} expects a ConditionalDistribution, but got "
-                f"{type_name(value)} {value.label!r}. Pass the kernel itself, such as the likelihood"
+                f"{owner}parameter {ref.label!r} expects a ConditionalDistribution, but got the "
+                f"law {type_name(value)} {value.label!r}. Pass a ConditionalDistribution, or "
+                f"annotate {ref.parameter_name!r} as Distribution to receive the law as is"
             )
         if isinstance(value, ConditionalDistribution) and _expects_value(expected):
             owner = f"{function_name}: " if function_name else ""

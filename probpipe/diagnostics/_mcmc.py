@@ -139,8 +139,11 @@ def _values_from_dataset(ds: xr.Dataset) -> dict[str, float]:
 
 def _failing_by_parameter(
     values: Mapping[str, Any], fails: Callable[[np.ndarray], np.ndarray]
-) -> Iterator[tuple[str, np.ndarray]]:
-    """Yield each original parameter's coordinates that fail the diagnostic."""
+) -> Iterator[tuple[str, np.ndarray, bool]]:
+    """Yield each parameter's failing values, and whether the parameter is a scalar.
+
+    A value that is not numeric, such as a ``NotComputed``, is skipped.
+    """
     for param, value in values.items():
         try:
             array = np.asarray(value, dtype=float)
@@ -148,16 +151,22 @@ def _failing_by_parameter(
             continue
         failing = array[fails(array)]
         if failing.size:
-            yield param, failing
+            yield param, failing, array.ndim == 0
+
+
+def _worst_value(failing: np.ndarray, is_scalar: bool, worst: float, precision: int) -> str:
+    """The value a warning reports: a scalar's value, or the failing count and the worst value."""
+    if is_scalar:
+        return f"{worst:.{precision}f}"
+    return f"{count(failing.size, 'coordinate')}, worst {worst:.{precision}f}"
 
 
 def _rhat_warnings(values: Mapping[str, Any], threshold: float) -> list[str]:
-    """Report the failing coordinate count and maximum R-hat per parameter."""
+    """Report each parameter's R-hat above *threshold*: its value, or its failing count and maximum."""
     return [
         f"R-hat > {threshold} for '{param}' "
-        f"({count(vals.size, 'coordinate')}, worst {vals.max():.4f}) -- "
-        "chains may not have converged."
-        for param, vals in _failing_by_parameter(values, lambda value: value > threshold)
+        f"({_worst_value(vals, is_scalar, vals.max(), 4)}) -- chains may not have converged."
+        for param, vals, is_scalar in _failing_by_parameter(values, lambda value: value > threshold)
     ]
 
 
@@ -166,7 +175,7 @@ def _ess_warnings(
     tail: Mapping[str, Any],
     threshold: int,
 ) -> list[str]:
-    """Report the failing coordinate count and minimum ESS per parameter and kind."""
+    """Report each parameter's ESS below *threshold*, per kind: its value, or its failing count and minimum."""
     msgs: list[str] = []
 
     for kind, values, advice in (
@@ -175,8 +184,10 @@ def _ess_warnings(
     ):
         msgs.extend(
             f"Low ESS ({kind}) for '{param}' "
-            f"({count(vals.size, 'coordinate')}, worst {vals.min():.0f}) -- {advice}"
-            for param, vals in _failing_by_parameter(values, lambda value: value < threshold)
+            f"({_worst_value(vals, is_scalar, vals.min(), 0)}) -- {advice}"
+            for param, vals, is_scalar in _failing_by_parameter(
+                values, lambda value: value < threshold
+            )
         )
 
     return msgs
@@ -477,8 +488,9 @@ def add_rhat(
     This is the in-place wrapper around :func:`_compute_rhat_op`.
 
     Skips computation if R-hat is already present unless ``force=True``.
-    Emits one warning per parameter with R-hat > ``threshold``, reporting
-    the number of coordinates above the threshold and the maximum R-hat.
+    Emits one warning per parameter with R-hat > ``threshold``, reporting a
+    scalar parameter's R-hat, or an array parameter's number of coordinates
+    above the threshold and its maximum R-hat.
     """
     from ._datatree import _mcmc_has_field
 
@@ -514,7 +526,8 @@ def add_ess(
 
     Skips computation if ESS is already present unless ``force=True``.
     Emits one warning per parameter and ESS kind below ``threshold``, reporting
-    the number of coordinates below the threshold and the minimum ESS.
+    a scalar parameter's ESS, or an array parameter's number of coordinates
+    below the threshold and its minimum ESS.
     """
     from ._datatree import _mcmc_has_field
 
