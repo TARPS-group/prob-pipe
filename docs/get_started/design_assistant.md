@@ -1,7 +1,5 @@
 # Pipeline Design Assistant
 
-> **AI-generated section.** An AI assistant changed this section after the page was reviewed, and no maintainer has reviewed the change yet.
-
 ProbPipe includes a **design assistant**, which is a set of instructions for an AI coding agent.
 The agent interviews you about your scientific problem, your data, and your existing models.
 A model can come as code, such as a PyMC, Stan, or JAX model, as a simulator, or as a description in words.
@@ -101,8 +99,6 @@ some females attract none at all.
 ```
 
 ## Troubleshooting
-
-> **AI-generated section.** An AI assistant changed this section after the page was reviewed, and no maintainer has reviewed the change yet.
 
 | Problem | What to do |
 |---|---|

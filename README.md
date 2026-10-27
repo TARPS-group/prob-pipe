@@ -182,8 +182,6 @@ The [installation page](https://tarps-group.github.io/prob-pipe/get_started/inst
 
 ## Learn more
 
-> **AI-generated section.** An AI assistant changed this section after the page was reviewed, and no maintainer has reviewed the change yet.
-
 - [The quickstart](https://tarps-group.github.io/prob-pipe/get_started/quickstart/) works through this example in more detail, including demonstrating how to use built-in diagnostics and perform a predictive check.
 - [The design assistant](https://tarps-group.github.io/prob-pipe/get_started/design_assistant/) is a set of instructions for an AI coding agent, which designs and builds a ProbPipe pipeline for your own problem and data with you.
 - [The tutorials](https://tarps-group.github.io/prob-pipe/tutorials/01_first_analysis/) work through a statistical analysis of a moose population, from a first model through model checks and a revised model to forecasts with uncertainty.

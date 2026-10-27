@@ -27,8 +27,6 @@ Six ideas make this work:
 
 ## Where to go next
 
-> **AI-generated section.** An AI assistant changed this section after the page was reviewed, and no maintainer has reviewed the change yet.
-
 - [Installation](get_started/installation.md) gives the install commands, and the [quickstart](get_started/quickstart.ipynb) works through the example above in ten minutes.
 - The [design assistant](get_started/design_assistant.md) is a set of instructions for an AI coding agent, which designs and builds a ProbPipe pipeline for your own problem and data with you.
 - The tutorials follow one analysis of a moose population, from a first model through model checks and a revised model to forecasts with uncertainty. They start with [Tutorial 1: A first look at ProbPipe](tutorials/01_first_analysis.ipynb).
