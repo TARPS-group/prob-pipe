@@ -3421,6 +3421,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Tutorials 1 to 4 are revised and shown on the site again.** They follow one
+  analysis of the moose counts:
+  1. a first look at ProbPipe: a population model, a statistical model built
+     with `&`, its fit, and predictions from the fit;
+  2. checks of the modeling assumptions: prior and posterior predictions,
+     predictive checks, and provenance;
+  3. the model revised with a yearly shock to the growth, fit again, and
+     checked again;
+  4. forecasts of the counts with uncertainty, the probability of a low count,
+     and provenance.
+  Tutorials 5 to 7 stay out of the site's navigation while they are revised,
+  and the design assistant reads tutorials 1 to 4 again.
+
 - **The documentation installs ProbPipe from `main`.** The install commands,
   the Colab cells of the tutorials and user guide, their data URLs, and the
   design assistant's prompt name the `main` branch.

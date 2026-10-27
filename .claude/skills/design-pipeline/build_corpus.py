@@ -96,6 +96,13 @@ TIERS = (
         ("README.md", "docs/index.md", "docs/get_started/quickstart.ipynb"),
     ),
     Tier(
+        "2-tutorials",
+        "Tutorials",
+        "End-to-end worked analyses of one dataset, from a first model through "
+        "model checks and a revised model to forecasts with uncertainty.",
+        ("docs/tutorials/",),
+    ),
+    Tier(
         "3-user-guide",
         "User guide",
         "One feature per page: terms, values and records, distributions, joint "
@@ -142,7 +149,7 @@ TIERS = (
 )
 
 #: The tiers whose pages the contents of ``INDEX.md`` lists.
-INDEXED_TIERS = ("3-user-guide",)
+INDEXED_TIERS = ("2-tutorials", "3-user-guide")
 
 
 def warn(message: str) -> None:
