@@ -3421,6 +3421,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Reorganize the user guide around a short statistics example and task-based reading paths.
+  Clarify distribution lifting, exactness, diagnostic interpretation, and Ray execution,
+  and refresh the notebook outputs.
+
 - **The documentation installs ProbPipe from `main`.** The install commands,
   the Colab cells of the tutorials and user guide, their data URLs, and the
   design assistant's prompt name the `main` branch.
