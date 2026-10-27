@@ -5,7 +5,7 @@
 The user guide explains ProbPipe one feature at a time, on small examples.
 Each chapter covers one kind of object or one group of operations, so you can read the chapter you need when you need it.
 [Terms](01_terms.ipynb) introduces the properties that every object shares, so read it first.
-The [API reference](../api/index.md) documents every public name.
+The [tutorials](../tutorials/01_first_analysis.ipynb) instead follow one analysis from start to finish, and the [API reference](../api/index.md) documents every public name.
 
 | Chapter | What it covers |
 |---|---|
