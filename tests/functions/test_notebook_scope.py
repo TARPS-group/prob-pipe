@@ -511,3 +511,26 @@ next_draw()
             pending.remove(parent_id)
     assert not errors
     _execute_cell(kernel_client, "next_draw()")
+
+
+def test_kernel_loop_thread_is_unknown_without_a_running_asyncio_loop():
+    from types import SimpleNamespace
+
+    from probpipe.functions._notebook_scope import _kernel_loop_thread_id
+
+    running_loop = SimpleNamespace(_thread_id=1234)
+    stopped_loop = SimpleNamespace(_thread_id=None)
+    shells = {
+        "no kernel": SimpleNamespace(),
+        "no io loop": SimpleNamespace(kernel=SimpleNamespace()),
+        "no asyncio loop": SimpleNamespace(kernel=SimpleNamespace(io_loop=SimpleNamespace())),
+        "stopped loop": SimpleNamespace(
+            kernel=SimpleNamespace(io_loop=SimpleNamespace(asyncio_loop=stopped_loop))
+        ),
+    }
+    for name, shell in shells.items():
+        assert _kernel_loop_thread_id(shell) is None, name
+    running = SimpleNamespace(
+        kernel=SimpleNamespace(io_loop=SimpleNamespace(asyncio_loop=running_loop))
+    )
+    assert _kernel_loop_thread_id(running) == 1234

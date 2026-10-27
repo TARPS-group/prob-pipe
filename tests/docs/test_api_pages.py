@@ -9,7 +9,7 @@ the test matches the pages' paths to the public names by object identity.
 Each ``::: dotted.path`` line of ``docs/api/*.md`` is a mkdocstrings directive,
 which renders the object at that path. The test checks three things:
 
-1. each directive names a public object or one of ``workflow_run``'s methods;
+1. each directive names a public object, or a method of an exported instance;
 2. each public object has a directive on exactly one page;
 3. the docstring of each documented object starts with a summary, a line that
    ends with a period and that a blank line or the end of the docstring follows.
@@ -18,8 +18,9 @@ mkdocstrings reads docstrings from the source through griffe, so the third check
 reads them through griffe too. An instance at module level, such as
 ``probpipe.real``, therefore needs a docstring of its own after its assignment,
 since the docstring of its class is not rendered for it.
-``workflow_run``'s methods are rendered from their defining class because
-griffe represents the exported instance as an attribute.
+griffe represents such an instance as an attribute with no members, so a page
+renders the instance's methods, such as ``workflow_run.set_default``, from the
+class that defines them.
 """
 
 from __future__ import annotations
@@ -28,6 +29,7 @@ import functools
 import importlib
 import pkgutil
 import re
+import types
 from collections import defaultdict
 from pathlib import Path
 
@@ -116,17 +118,32 @@ def _summary_problem(docstring: str) -> str | None:
     return None
 
 
-def test_each_directive_names_a_public_object():
-    public = set(_public_objects())
-    public.update(
-        id(method.__func__)
-        for method in (
-            probpipe.workflow_run.__call__,
-            probpipe.workflow_run.set_default,
-            probpipe.workflow_run.clear_default,
+def _methods_of_exported_instances() -> set[int]:
+    """The ids of the methods defined by the class of each exported instance, such as ``workflow_run``.
+
+    An exported instance is a public object that is not a class, a module, or a
+    function, and whose class ProbPipe defines.
+    """
+    methods: set[int] = set()
+    for path in _public_objects().values():
+        exported = _resolve(path)
+        if isinstance(exported, (type, types.ModuleType, types.FunctionType)):
+            continue
+        if not type(exported).__module__.startswith("probpipe"):
+            continue
+        methods.update(
+            id(attribute)
+            for attribute in vars(type(exported)).values()
+            if isinstance(attribute, types.FunctionType)
         )
-    )
-    stray = [f"{page}: {path}" for page, path in _directives() if id(_resolve(path)) not in public]
+    return methods
+
+
+def test_each_directive_names_a_public_object():
+    documentable = set(_public_objects()) | _methods_of_exported_instances()
+    stray = [
+        f"{page}: {path}" for page, path in _directives() if id(_resolve(path)) not in documentable
+    ]
     assert stray == []
 
 

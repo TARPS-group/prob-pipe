@@ -111,9 +111,9 @@ def _remember_notebook_default() -> None:
     if adapter is None:
         if not _cell_on_stack(shell):
             return
-        kernel_loop = getattr(getattr(shell, "kernel", None), "io_loop", None)
-        if kernel_loop is not None:
-            if kernel_loop.asyncio_loop._thread_id != threading.get_ident():
+        kernel_thread_id = _kernel_loop_thread_id(shell)
+        if kernel_thread_id is not None:
+            if kernel_thread_id != threading.get_ident():
                 return
         # In-process and terminal shells can run without a kernel event loop.
         # A worker's nested cell leaves installation to the outer shell thread.
@@ -131,3 +131,14 @@ def _remember_notebook_default() -> None:
         current = _context._DEFAULT_WORKFLOW_STATE.get()
         adapter.before_cell()
         _context._DEFAULT_WORKFLOW_STATE.set(current)
+
+
+def _kernel_loop_thread_id(shell: Any) -> int | None:
+    """The thread running the event loop of *shell*'s kernel, or ``None`` when that is unknown.
+
+    A shell with no kernel, a kernel without an asyncio event loop, and a loop
+    that is not running give ``None``.
+    """
+    kernel_loop = getattr(getattr(shell, "kernel", None), "io_loop", None)
+    asyncio_loop = getattr(kernel_loop, "asyncio_loop", None)
+    return getattr(asyncio_loop, "_thread_id", None)
