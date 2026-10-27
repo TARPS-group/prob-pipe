@@ -1,6 +1,6 @@
 # ProbPipe Consolidated Design Reference
 
-This reference is the single source of truth for the design intent of ProbPipe, a Python framework for building probabilistic pipelines with automated uncertainty quantification. It is meant to stand on its own and to be the reference from which more granular documentation is later derived. It always describes the *target state*, so where it disagrees with the current code, the design should be treated as ahead of implementation. The repository's contributor documentation should describe the code as it stands.
+This reference is the single source of truth for the design intent of ProbPipe, a probabilistic workflow language (PWL) for Python. It is meant to stand on its own and to be the reference from which more granular documentation is later derived. It always describes the *target state*, so where it disagrees with the current code, the design should be treated as ahead of implementation. The repository's contributor documentation should describe the code as it stands.
 
 ### Mathematical scope
 

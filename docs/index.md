@@ -2,6 +2,8 @@
 
 --8<-- "README.md:intro"
 
+![The tools you already use, such as Stan, PyMC, BlackJAX, NumPy, pandas, and ArviZ, supported by the ProbPipe layer, which provides provenance tracking, random key management, model format conversion, uncertainty propagation, and swappable execution backends and inference algorithms](assets/probpipe-workflow-language.png)
+
 ## What you can do
 
 --8<-- "README.md:capabilities"
@@ -31,4 +33,4 @@ Six ideas make this work:
 - The [API reference](api/index.md) documents every public name, grouped by topic.
 - [Cite](cite.md) gives the citation, and [Help](help.md) says where to ask questions.
 
-> **Human-validated** by Jonathan Huggins on 2026-10-25.
+> **Human-validated** by Jonathan Huggins on 2026-10-26.
