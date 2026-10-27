@@ -68,6 +68,14 @@ Two plans written during step E6 (#618) and deferred by the maintainer on 2026-1
 | No "array pytree" view of a law for BlackJAX: BlackJAX ravels a pytree position for its mass matrix and covariances anyway, a benchmark found no consistent speed difference (fixed-work parity within 10%), ProbPipe's own records fail as BlackJAX positions, and a `dict` position reorders the vector. A per-leaf "parts" view for TFP or BayesFlow, derived from the same order, waits until a backend needs it | `plans/deferred/vector-interface.md` § 6 |
 | A public reading of a target's traceability for inference methods written outside ProbPipe, with the public execution claims of E3a | #618; decided 2026-10-21 |
 
+### Batches
+
+A plan written on 2026-10-27, after the workshop's code freeze, in `plans/deferred/` and not yet approved; it lists its open questions, which are reviewed before any of it is implemented.
+
+| Work | Source |
+|---|---|
+| One contract for every batch: every element conforms to one element spec in one dimension scope, so a `FunctionBatch` refuses functions of different specs as a `DistributionBatch` refuses laws of different event specs; the element spec inferred as the common spec of the elements, independent of their order; one storage interface and `Batch.stack` in place of the `isinstance` checks of fourteen modules; and `output`, `rename`, `without`, `&`, and equality by value on every batch by one lifted-operation rule, which takes over the batch parts of S4b, G5, and the deferred `&` and `without` entries above (steps B1 to B6) | `plans/deferred/batch-contract.md` |
+
 ## Open issues the push changes
 
 Each row says what the push does for an open issue before the workshop, and what the issue keeps for after it.
