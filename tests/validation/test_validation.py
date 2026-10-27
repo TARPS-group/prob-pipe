@@ -592,7 +592,8 @@ class TestErrors:
         for call in (predictive_check.check, predictive_check):
             with pytest.raises(
                 ApplicabilityError,
-                match=r"parameter 'kernel' expects a ConditionalDistribution, but got the law FactoredDistribution",
+                match=r"parameter 'kernel' expects a ConditionalDistribution, but got FactoredDistribution "
+                r"'[^']*', which is a law",
             ):
                 call(model, prior, sample_mean)
 

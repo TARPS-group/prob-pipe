@@ -142,7 +142,8 @@ def _failing_by_parameter(
 ) -> Iterator[tuple[str, np.ndarray, bool]]:
     """Yield each parameter's failing values, and whether the parameter is a scalar.
 
-    A value that is not numeric, such as a ``NotComputed``, is skipped.
+    *values* maps each parameter to its diagnostic, such as a dataset's data
+    variables. A diagnostic that is not numeric is skipped.
     """
     for param, value in values.items():
         try:
@@ -154,18 +155,18 @@ def _failing_by_parameter(
             yield param, failing, array.ndim == 0
 
 
-def _worst_value(failing: np.ndarray, is_scalar: bool, worst: float, precision: int) -> str:
+def _worst_value(num_failing: int, is_scalar: bool, worst: float, precision: int) -> str:
     """The value a warning reports: a scalar's value, or the failing count and the worst value."""
     if is_scalar:
         return f"{worst:.{precision}f}"
-    return f"{count(failing.size, 'coordinate')}, worst {worst:.{precision}f}"
+    return f"{count(num_failing, 'coordinate')}, worst {worst:.{precision}f}"
 
 
 def _rhat_warnings(values: Mapping[str, Any], threshold: float) -> list[str]:
     """Report each parameter's R-hat above *threshold*: its value, or its failing count and maximum."""
     return [
         f"R-hat > {threshold} for '{param}' "
-        f"({_worst_value(vals, is_scalar, vals.max(), 4)}) -- chains may not have converged."
+        f"({_worst_value(vals.size, is_scalar, vals.max(), 4)}) -- chains may not have converged."
         for param, vals, is_scalar in _failing_by_parameter(values, lambda value: value > threshold)
     ]
 
@@ -184,7 +185,7 @@ def _ess_warnings(
     ):
         msgs.extend(
             f"Low ESS ({kind}) for '{param}' "
-            f"({_worst_value(vals, is_scalar, vals.min(), 0)}) -- {advice}"
+            f"({_worst_value(vals.size, is_scalar, vals.min(), 0)}) -- {advice}"
             for param, vals, is_scalar in _failing_by_parameter(
                 values, lambda value: value < threshold
             )

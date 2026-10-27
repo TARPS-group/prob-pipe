@@ -341,12 +341,25 @@ def _consumes_kernel(expected: Any) -> bool:
 def _consumes_only_kernels(expected: Any) -> bool:
     """Whether every arm of an annotation names a kernel, so its parameter admits no law.
 
-    ``None`` is not an arm, so ``ConditionalDistribution | None`` admits only
-    kernels. A union with an arm that names a law class or a value type admits
-    a law, whole or lifted.
+    ``None`` is not an arm, so ``ConditionalDistribution | None`` admits no
+    law either. A union with an arm that names a law class or a value type
+    admits a law, whole or lifted.
     """
     arms = _normalization._arms(expected)
     return bool(arms) and all(_names_kernel(arm) for arm in arms)
+
+
+def _law_kind(value: Any) -> str | None:
+    """``"a law"`` or ``"a batch of laws"`` when *value* is one, for a refusal's message; ``None`` otherwise."""
+    if isinstance(value, Distribution) and not isinstance(value, Batch):
+        return "a law"
+    if (
+        isinstance(value, Batch)
+        and len(value.batch_shape) > 0
+        and isinstance(value.element_spec.term_spec, DistributionSpec)
+    ):
+        return "a batch of laws"
+    return None
 
 
 def _names_kernel(arm: Any) -> bool:
@@ -592,8 +605,9 @@ def admit_arguments(
     argument whose elements or draws are of such a kind (VI.0). Any other
     argument is admitted against its parameter's own annotation, so an
     argument that a variadic parameter annotated ``Any`` collects is admitted
-    whatever its kind. A law at a parameter whose every arm names a kernel is
-    refused, since a lift would pass the body draws where it expects a kernel. A
+    whatever its kind. A law, or a batch of laws, at a parameter whose every arm
+    names a kernel is refused, since a lift or a sweep would pass the body draws
+    or laws where it expects a kernel. A
     conditional distribution at a value parameter is refused, since a kernel has
     no marginal law to lift over. Where an *input_spec* declares an input, the
     argument's kind must be the input's: a value's own kind, the event kind of a
@@ -636,15 +650,15 @@ def admit_arguments(
             _admit_by_role(info, ref, value, role, function_name=function_name, lifts=lifts)
             continue
         expected = info.hints.get(ref.parameter_name)
-        if isinstance(value, Distribution) and _consumes_only_kernels(expected):
-            owner = f"{function_name}: " if function_name else ""
+        owner = f"{function_name}: " if function_name else ""
+        law_kind = _law_kind(value)
+        if law_kind is not None and _consumes_only_kernels(expected):
             raise ApplicabilityError(
-                f"{owner}parameter {ref.label!r} expects a ConditionalDistribution, but got the "
-                f"law {type_name(value)} {value.label!r}. Pass a ConditionalDistribution, or "
-                f"annotate {ref.parameter_name!r} as Distribution to receive the law as is"
+                f"{owner}parameter {ref.label!r} expects a ConditionalDistribution, but got "
+                f"{type_name(value)} {value.label!r}, which is {law_kind}. Pass a "
+                "ConditionalDistribution instead"
             )
         if isinstance(value, ConditionalDistribution) and _expects_value(expected):
-            owner = f"{function_name}: " if function_name else ""
             raise ApplicabilityError(
                 f"{owner}parameter {ref.label!r} expects a value, but got {type_name(value)} "
                 f"{value.label!r}, which has no marginal to broadcast over. Condition "

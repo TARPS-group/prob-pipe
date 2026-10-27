@@ -57,8 +57,7 @@ def predictive_check[D](
     ----------
     kernel : ConditionalDistribution
         The law of the observations given the parameters, such as the
-        likelihood of a model ``likelihood & prior``. An invalid kernel
-        raises ``TypeError`` before any sampling.
+        likelihood of a model ``likelihood & prior``.
     law : Distribution
         A law over the kernel's inputs: the posterior for a posterior
         predictive check, or the prior for a prior predictive check. A
@@ -98,7 +97,10 @@ def predictive_check[D](
     TypeError
         If *kernel* is not a ``ConditionalDistribution``, *law* does not
         sample, *test_fns* is neither a callable nor an iterable, a statistic
-        is not callable, or *num_replications* is not an integer.
+        is not callable, or *num_replications* is not an integer. A *kernel*
+        that is a law or a batch of laws, such as the model ``likelihood &
+        prior``, raises ``ApplicabilityError``, a ``TypeError``, before
+        anything is sampled.
     ValueError
         If *law* has no output for some input of *kernel*, naming the
         missing inputs; if *law* has an output of the same name as an output
