@@ -284,24 +284,34 @@ def _execute_cell(client, code, expected_error=None, *, silent=False):
     ), (code, errors)
 
 
+def _first_cell_code(code: str, first_cell: str) -> str:
+    """The first cell of `_CELLS` in the form *first_cell* names: ``ordinary``, ``await``, or ``child``.
+
+    The ``child`` form makes the session's first setting in a child task, before
+    the cell hooks exist, which must stay local to that task.
+    """
+    if first_cell == "await":
+        return "import asyncio\nawait asyncio.sleep(0)\n" + code
+    if first_cell == "child":
+        return code.replace(
+            "workflow_run.set_default(seed=17)",
+            "async def first_child():\n"
+            "    workflow_run.set_default(seed=99)\n"
+            "    draw()\n"
+            "await asyncio.create_task(first_child())\n"
+            "from probpipe.functions import _context\n"
+            "assert _context._DEFAULT_WORKFLOW_STATE.get() is None\n"
+            "workflow_run.set_default(seed=17)",
+            1,
+        )
+    return code
+
+
 @pytest.mark.parametrize("first_cell", ["ordinary", "await", "child"])
 def test_default_stream_across_kernel_cells(kernel_client, first_cell):
     for index, (name, code, expected_error) in enumerate(_CELLS):
-        if index == 0 and first_cell == "await":
-            code = "import asyncio\nawait asyncio.sleep(0)\n" + code
-        elif index == 0 and first_cell == "child":
-            # The first default is local to the child, before cell hooks exist.
-            code = code.replace(
-                "workflow_run.set_default(seed=17)",
-                "async def first_child():\n"
-                "    workflow_run.set_default(seed=99)\n"
-                "    draw()\n"
-                "await asyncio.create_task(first_child())\n"
-                "from probpipe.functions import _context\n"
-                "assert _context._DEFAULT_WORKFLOW_STATE.get() is None\n"
-                "workflow_run.set_default(seed=17)",
-                1,
-            )
+        if index == 0:
+            code = _first_cell_code(code, first_cell)
         _execute_cell(kernel_client, code, expected_error, silent=name == "silent-cell")
 
 
@@ -366,18 +376,18 @@ next_draw()
     _execute_cell(kernel_client, "await asyncio.sleep(0)\nnext_draw()")
 
 
-@pytest.mark.parametrize("first_cell", ["ordinary", "await"])
+@pytest.mark.parametrize("first_cell", ["ordinary", "await", "child"])
 def test_default_stream_across_terminal_cells(first_cell, tmp_path):
     pytest.importorskip("IPython")
     script = """
 import sys
 from IPython.terminal.interactiveshell import TerminalInteractiveShell
-from tests.functions.test_notebook_scope import _CELLS
+from tests.functions.test_notebook_scope import _CELLS, _first_cell_code
 
 shell = TerminalInteractiveShell.instance()
 for index, (name, code, expected_error) in enumerate(_CELLS):
-    if index == 0 and sys.argv[1] == 'await':
-        code = 'import asyncio\\nawait asyncio.sleep(0)\\n' + code
+    if index == 0:
+        code = _first_cell_code(code, sys.argv[1])
     result = shell.run_cell(code, silent=name == 'silent-cell')
     error = result.error_before_exec or result.error_in_exec
     assert (None if error is None else type(error).__name__) == expected_error, (name, error)
@@ -393,21 +403,23 @@ for index, (name, code, expected_error) in enumerate(_CELLS):
     assert result.returncode == 0, result.stdout + result.stderr
 
 
-@pytest.mark.parametrize("first_default", ["shell", "worker", "async-worker"])
+@pytest.mark.parametrize("first_default", ["shell", "worker", "async-worker", "child"])
 def test_default_stream_in_application_thread(first_default, tmp_path):
     pytest.importorskip("ipykernel")
     script = """
 import sys
 from concurrent.futures import ThreadPoolExecutor
 from ipykernel.inprocess.manager import InProcessKernelManager
-from tests.functions.test_notebook_scope import _CELLS
+from tests.functions.test_notebook_scope import _CELLS, _first_cell_code
 
 def run_cells():
     manager = InProcessKernelManager()
     manager.start_kernel()
     try:
         for index, (name, code, expected_error) in enumerate(_CELLS):
-            if index == 0:
+            if index == 0 and sys.argv[1] == 'child':
+                code = _first_cell_code(code, 'child')
+            elif index == 0:
                 code = 'import asyncio\\nawait asyncio.sleep(0)\\n' + code
                 if sys.argv[1] != 'shell':
                     code = code.replace(

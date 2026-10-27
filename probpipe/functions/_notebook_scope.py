@@ -15,16 +15,44 @@ if TYPE_CHECKING:
     from ._context import _DefaultWorkflowState, _WorkflowOwner
 
 
-def _cell_on_stack(shell: Any, frame: FrameType | None = None) -> bool:
-    """Whether this shell's cell execution is on the supplied or current stack."""
+def _cell_on_stack(shell: Any) -> bool:
+    """Whether this shell's cell coroutine runs on the current stack.
+
+    A task the cell creates runs on a stack of its own, without the cell
+    coroutine, so a setting it makes stays local to it.
+    """
     from IPython.core.interactiveshell import InteractiveShell
 
-    codes = (InteractiveShell.run_cell_async.__code__, InteractiveShell._run_cell.__code__)
-    if frame is None:
-        frame = inspect.currentframe()
+    return _shell_code_on_stack(
+        shell, (InteractiveShell.run_cell_async.__code__,), inspect.currentframe()
+    )
+
+
+def _cell_running_in_thread(shell: Any, frame: FrameType) -> bool:
+    """Whether another thread's stack, from *frame*, is running a cell of this shell.
+
+    A terminal cell suspended at ``await`` keeps only IPython's synchronous
+    runner on its thread's stack, so the runner counts as well as the cell
+    coroutine.
+    """
+    from IPython.core.interactiveshell import InteractiveShell
+
+    codes = tuple(
+        method.__code__
+        for method in (
+            InteractiveShell.run_cell_async,
+            getattr(InteractiveShell, "_run_cell", None),
+        )
+        if method is not None
+    )
+    return _shell_code_on_stack(shell, codes, frame)
+
+
+def _shell_code_on_stack(shell: Any, codes: tuple[Any, ...], frame: FrameType | None) -> bool:
+    """Whether a frame running one of *codes* for this shell is on the stack from *frame*."""
     try:
         while frame is not None:
-            if frame.f_code in codes and frame.f_locals["self"] is shell:
+            if frame.f_code in codes and frame.f_locals.get("self") is shell:
                 return True
             frame = frame.f_back
         return False
@@ -118,7 +146,7 @@ def _remember_notebook_default() -> None:
         # In-process and terminal shells can run without a kernel event loop.
         # A worker's nested cell leaves installation to the outer shell thread.
         elif threading.current_thread() is not threading.main_thread() and any(
-            thread_id != threading.get_ident() and _cell_on_stack(shell, frame)
+            thread_id != threading.get_ident() and _cell_running_in_thread(shell, frame)
             for thread_id, frame in sys._current_frames().items()
         ):
             return

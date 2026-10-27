@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import functools
 import importlib
+import inspect
 import pkgutil
 import re
 import types
@@ -119,10 +120,12 @@ def _summary_problem(docstring: str) -> str | None:
 
 
 def _methods_of_exported_instances() -> set[int]:
-    """The ids of the methods defined by the class of each exported instance, such as ``workflow_run``.
+    """The ids of the public methods of each exported instance's class, such as ``workflow_run``'s.
 
     An exported instance is a public object that is not a class, a module, or a
-    function, and whose class ProbPipe defines.
+    function, and whose class ProbPipe defines. Its public methods are those
+    whose names start with no underscore, and ``__call__``, inherited ones
+    included.
     """
     methods: set[int] = set()
     for path in _public_objects().values():
@@ -132,9 +135,9 @@ def _methods_of_exported_instances() -> set[int]:
         if not type(exported).__module__.startswith("probpipe"):
             continue
         methods.update(
-            id(attribute)
-            for attribute in vars(type(exported)).values()
-            if isinstance(attribute, types.FunctionType)
+            id(method)
+            for name, method in inspect.getmembers(type(exported), inspect.isfunction)
+            if name == "__call__" or not name.startswith("_")
         )
     return methods
 

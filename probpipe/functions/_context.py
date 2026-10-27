@@ -311,8 +311,7 @@ class _WorkflowRun:
             If ``seed`` is outside ``[0, 2**64 - 1]``.
         UnmanagedConcurrentWorkflowEntryError
             If the active scope belongs to another process, thread, or asyncio
-            task, or a copied scope has already closed. ProbPipe evaluation
-            points carry their calling workflow's assigned random events.
+            task, or a copied scope has already closed.
         ReplayCompatibilityError
             If the scope opens inside ``replay_run``.
         RuntimeError

@@ -408,9 +408,10 @@ class PrefectConfig(_Section):
 class ProvenanceMode(Enum):
     """Choose the data retained by new provenance records.
 
-    A bare call fixes its mode when it starts. The outermost ``workflow_run``
-    fixes the mode for its block when entered. Changing the mode inside that
-    block raises ``RuntimeError``. Existing records retain their original contents.
+    A top-level call fixes its mode when it starts, and the outermost
+    ``workflow_run`` fixes the mode for its block when entered. Changing the
+    mode while such a call or block is open raises ``RuntimeError``. Existing
+    records retain their original contents.
 
     Members
     -------
@@ -483,7 +484,7 @@ class ProvenanceConfig(_Section):
 
     ``PROBPIPE_PROVENANCE_MODE`` supplies the initial mode. Its values are
     ``full``, ``lightweight``, and ``off``, case-insensitive.
-    ``workflow_run`` defines when each call's mode is fixed.
+    :class:`ProvenanceMode` states when each call's mode is fixed.
     """
 
     _name = "provenance"
@@ -892,7 +893,7 @@ class Config:
     session's values as they were when the outermost call opened, except
     those of ``prefect``, so a session assignment made while the call runs
     reaches none of that work. Inside a workflow run, a block or an
-    assignment cannot change the provenance mode, as :class:`ProvenanceConfig`
+    assignment cannot change the provenance mode, as :class:`ProvenanceMode`
     states. Assigning a setting inside a block sets
     the session's value, which applies once the block exits, and
     :meth:`reset` inside a block restores the session's values while the block
