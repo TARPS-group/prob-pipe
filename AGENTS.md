@@ -5,7 +5,7 @@ It owns the everyday commands and the verification steps, and every other rule i
 
 ## Project
 
-ProbPipe is a Python framework for probabilistic pipelines with automated uncertainty quantification.
+ProbPipe is a probabilistic workflow language (PWL) for Python, which connects the tools a user already has into one coherent workflow, from data preparation through prediction and decision-making.
 The design reference in `design/` describes the target state, and the documents below describe the code as it stands.
 
 ## Read first

@@ -6,19 +6,18 @@
 [![DOI](https://img.shields.io/badge/DOI-10.5281%2Fzenodo.20683559-blue)](https://doi.org/10.5281/zenodo.20683559)
 
 <!-- --8<-- [start:intro] -->
-ProbPipe is a Python framework that enables you to connect the tools you already use into a single, coherent probabilistic workflow, from data preparation through prediction and decision-making.
-ProbPipe makes workflows maintainable and reliable by keeping the mathematics separate from the computational implementation.
-You express the workflow in mathematical terms: distributions, conditional distributions, and functions, combined by operations such as conditioning, expectation, and quantiles.
-Each mathematical object declares what it can do, such as drawing samples or evaluating a density, and each operation uses those capabilities to choose how to compute its result.
-You can specify a different algorithm when you want to, and your own Python functions, simulators, and PyMC, Stan, or TFP models work without a rewrite.
-Every result records how it was computed, and random number seeds are managed automatically, so workflows are traceable and reproducible.
+ProbPipe is a *probabilistic workflow language* (PWL) for Python.
+It lets you describe a *statistical* workflow in terms of standard mathematical operations and employing
+the tools you already use, including probabilistic programming languages (PPLs) such as Stan and PyMC,
+and numeric packages like NumPy, pandas, and xarray.
+At the same time, ProbPipe handles all of the *computational* workflow details like random key management,
+provenance tracking, and execution backends that so often create friction that slows you down.
+By keeping the mathematics separate from the computational implementation, ProbPipe makes workflows maintainable and reliable.
 <!-- --8<-- [end:intro] -->
 
+![The tools you already use, such as Stan, PyMC, BlackJAX, NumPy, pandas, and ArviZ, supported by the ProbPipe layer, which provides provenance tracking, random key management, model format conversion, uncertainty propagation, and swappable execution backends and inference algorithms](docs/assets/probpipe-workflow-language.png)
+
 ## What you can do
-
-> **AI-generated section.** An AI assistant changed this section after the page was reviewed, and no maintainer has reviewed the change yet.
-
-![The tools you already use, such as Stan, PyMC, BlackJAX, NumPy, pandas, and Prefect, on top of the ProbPipe layer, which provides provenance tracking, random key management, model format conversion, uncertainty propagation, and swappable execution backends and inference algorithms](docs/assets/probpipe-workflow-language.png)
 
 <!-- --8<-- [start:capabilities] -->
 Carrying out a probabilistic analysis means translating its mathematics into a computational procedure.
@@ -30,6 +29,9 @@ ProbPipe streamlines and automates those tasks, so you can:
 - **Push uncertainty through any Python function.** Write a forecast or a decision rule in plain Python as a function of known inputs, such as one value of each parameter, and decorate it with `@function` to make it a ProbPipe-native function. Called on a posterior, or on any other distribution of its inputs, the function returns the distribution of its output, which ProbPipe computes by evaluating the function at draws from that distribution.
 - **Get exact answers when feasible.** ProbPipe computes a result exactly when a formula or an exact algorithm applies, such as the update to a discrete distribution, and approximately otherwise.
 - **Know how each result was computed.** Every result records how it was computed and whether that computation is exact. Moreover, uniform random seed control helps improve reproducibility.
+
+At the same time, ProbPipe manages random number seeds, provides end-to-end provenance tracking, batched
+and parallel evaluation, and automatic conversion between data and distribution representations.
 <!-- --8<-- [end:capabilities] -->
 
 ## A short example
@@ -185,4 +187,4 @@ The [installation page](https://tarps-group.github.io/prob-pipe/get_started/inst
 - [The API reference](https://tarps-group.github.io/prob-pipe/api/) provides complete documentation of ProbPipe capabilities.
 - [How to cite ProbPipe](https://tarps-group.github.io/prob-pipe/cite/), [getting help](https://tarps-group.github.io/prob-pipe/help/), and [contributing](CONTRIBUTING.md).
 
-> **Human-validated** by Jonathan Huggins on 2026-10-25.
+> **Human-validated** by Jonathan Huggins on 2026-10-26.

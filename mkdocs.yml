@@ -1,5 +1,5 @@
 site_name: ProbPipe
-site_description: Probabilistic pipelines with automated uncertainty quantification
+site_description: A probabilistic workflow language (PWL) for Python
 site_url: https://tarps-group.github.io/prob-pipe
 repo_url: https://github.com/TARPS-group/prob-pipe
 repo_name: TARPS-group/prob-pipe
