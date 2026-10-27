@@ -119,6 +119,9 @@ markers = [
     "stan: marks tests requiring BridgeStan (select with '-m stan')",
 ]
 
+[tool.coverage.run]
+patch = ["subprocess"]
+
 [tool.ruff]
 target-version = "py312"
 line-length = 100

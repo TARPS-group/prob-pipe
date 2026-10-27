@@ -271,22 +271,31 @@ class _WorkflowRunScope:
 
 
 class _WorkflowRun:
-    """Create explicit workflow scopes and manage the current context's default scope.
+    """Manage explicit workflow scopes and a continuing default stream.
 
-    ``workflow_run(seed)`` creates an explicit context manager. Its seed and
-    nesting rules are stated by ``__call__``. ``set_default`` starts a stream
-    for successive bare calls, and ``clear_default`` removes that stream.
+    Use ``with workflow_run(seed=...)`` to group calls in an explicit scope.
+    Use ``workflow_run.set_default(seed=...)`` to continue a stream between
+    bare calls, and ``workflow_run.clear_default()`` to remove that default.
     """
 
     def __call__(self, seed: int | None = None) -> _WorkflowRunScope:
-        """Create a workflow-owned random execution scope.
+        """Return a synchronous context manager for an explicit workflow scope.
+
+        Re-entering a seeded scope with the same stochastic structure reproduces
+        its workflow-owned random events. An anonymous scope reads system
+        entropy at its first random event. A nested scope extends its parent's
+        structural positions and inherits its root unless it supplies a seed.
+        An explicit scope entered between bare calls preserves the default
+        stream's next position.
+
+        The scope fixes provenance mode for its whole block at entry. Draws
+        supplied with explicit keys preserve the scope's random positions.
 
         Parameters
         ----------
         seed : int or None
-            Non-boolean unsigned 64-bit root seed. Re-entering the same seeded
-            scope with the same stochastic structure reproduces its workflow-owned
-            random events. ``None`` requests a lazy anonymous root.
+            Non-boolean unsigned 64-bit root seed. ``None`` creates an anonymous
+            scope. The context manager validates the seed when entered.
 
         Returns
         -------
@@ -296,163 +305,96 @@ class _WorkflowRun:
         Raises
         ------
         TypeError
-            If ``seed`` is not an integer or is a boolean.
+            If ``seed`` is not an integer or is a boolean, or the scope opens
+            during a JAX transformation that forbids workflow-owned randomness.
         ValueError
             If ``seed`` is outside ``[0, 2**64 - 1]``.
         UnmanagedConcurrentWorkflowEntryError
-            If an active workflow context was copied into a foreign thread or
-            asyncio task without a ProbPipe evaluation point frame.
-
-        Notes
-        -----
-        The outermost scope fixes the run's provenance mode, the
-        ``config.provenance.mode`` in effect when it is entered, and nested scopes
-        keep it. Inside the run, a ``config.provenance.using`` block, an
-        assignment, or a ``reset`` that would set another mode raises
-        ``RuntimeError``, naming the run's mode, so set the mode before the run
-        opens.
-
-        ProbPipe operations that omit a key share this scope's structural random
-        event stream. Explicit caller-owned keys do not consume that stream.
-        Anonymous and nested scopes remain unmaterialized until their first
-        workflow-owned random event. A bare omitted-key operation uses the configured
-        default scope, or its own ephemeral scope when no default is configured.
+            If the active scope belongs to another process, thread, or asyncio
+            task, or a copied scope has already closed.
+        ReplayCompatibilityError
+            If the scope opens inside ``replay_run``.
+        RuntimeError
+            If the context manager is entered while already active, exits out of
+            nesting order, or its block changes provenance mode.
         """
         return _WorkflowRunScope(seed)
 
     def set_default(self, *, seed: int | None = None) -> None:
         """Create or replace the current context's continuing default random scope.
 
-        Each bare top-level call continues the same root and random positions.
-        Setting the default again resets those positions. Invalid seeds leave
-        the previous default intact. An explicit workflow scope or replay uses
-        its own stream, and the default resumes after it closes. A failed call
-        keeps the positions it consumed.
+        Return ``None``. Successive bare calls use the same keys as successive
+        calls in one explicit scope with the same seed. Setting the default
+        again restarts the stream. Invalid seeds leave the current default
+        intact. A failed call keeps the random positions it consumed.
 
-        Each top-level call fixes its provenance mode when it opens. The mode
-        can change between calls without changing the random stream.
-        ``config.reset()`` leaves the default scope intact.
+        Explicit scopes entered between bare calls and ``replay_run`` preserve
+        the default stream's next position. Draws supplied with explicit keys
+        preserve its positions too. ``config.reset()`` leaves the default intact.
 
-        The default belongs to the process, thread, and asyncio task that sets
-        it. In an IPython notebook, it continues across cells, including cells
-        with top-level ``await``. Each cell's execution task takes ownership
-        while user-created tasks remain isolated. Using an inherited default
-        in another owner raises
-        ``UnmanagedConcurrentWorkflowEntryError``; set or clear a default in
-        that context first. ProbPipe evaluation points use the calling
-        workflow's assigned random events. A new thread without a copied context has
-        no default scope.
+        Each top-level call fixes its provenance mode at entry. Changing the
+        mode between calls preserves the stream's root and positions.
+
+        The default belongs to its configuring process, thread, and asyncio
+        task. In an IPython notebook or terminal session, cells continue the
+        configured stream, including cells with top-level ``await``. Changes
+        made in child tasks stay local to those tasks. A new thread without a
+        copied context starts with no default. Using an inherited default from
+        another owner raises ``UnmanagedConcurrentWorkflowEntryError``. Set or
+        clear the default, or open an explicit scope, in the new context.
+        ProbPipe evaluation points carry their calling workflow's assigned
+        random events.
 
         Parameters
         ----------
         seed : int or None
-            Non-boolean unsigned 64-bit root seed. ``None`` creates an anonymous
-            continuing stream, reading system entropy on its first random event.
+            Non-boolean unsigned 64-bit root seed. ``None`` creates a continuing
+            anonymous stream that reads system entropy at its first random event.
 
         Raises
         ------
         TypeError
-            If ``seed`` is neither an integer nor ``None``, or is a boolean.
+            If ``seed`` is not an integer or is a boolean.
         ValueError
             If ``seed`` is outside ``[0, 2**64 - 1]``.
         RuntimeError
-            Inside a Function call, workflow scope, replay, function check, or caller-owned
-            JAX transformation. Set the default outside these contexts.
+            During a Function call, a ``workflow_run`` or ``replay_run`` block,
+            a check of whether JAX can trace a Function, or a caller-owned JAX
+            transformation. Set the default before entering these contexts.
         """
         _guard_default_scope_change()
         seed_words = None if seed is None else seed_to_root_words(seed)
         _set_default_workflow_state(_DefaultWorkflowState(_current_workflow_owner(), seed_words))
 
     def clear_default(self) -> None:
-        """Remove the current context's default scope, if any.
+        """Remove the current context's default scope and return ``None``.
 
-        Subsequent bare calls receive independent anonymous scopes. Clearing
-        an inherited default removes it only from the current context.
-        In a notebook cell, clearing also removes the default for later cells.
+        Subsequent bare calls each open their own anonymous scope. Clearing an
+        absent default is a no-op. Clearing an inherited default affects the
+        current context. In an IPython cell, clearing also removes the default
+        for later cells.
 
         Raises
         ------
         RuntimeError
-            Inside a Function call, workflow scope, replay, function check, or caller-owned
-            JAX transformation. Clear the default outside these contexts.
+            During a Function call, a ``workflow_run`` or ``replay_run`` block,
+            a check of whether JAX can trace a Function, or a caller-owned JAX
+            transformation. Clear the default before entering these contexts.
         """
         _guard_default_scope_change()
         _set_default_workflow_state(None)
 
 
 workflow_run = _WorkflowRun()
-"""Open explicit workflow scopes and manage the current context's default scope.
-
-# `workflow_run(seed=None)` {#workflow-run-call}
-
-Return a synchronous context manager for an explicit workflow scope.
-An integer seed reproduces its random events when the stochastic structure
-is unchanged. At the outermost scope, `None` uses system entropy on the first
-random event. A nested scope inherits the root unless it supplies a seed,
-and extends its parent's structural positions even when it supplies a seed.
-An explicit scope entered between bare calls does not consume the default
-stream. The scope fixes provenance mode for its whole block.
-
-**Parameter:** `seed` is `None` or a non-boolean integer in `[0, 2**64 - 1]`.
-Validation occurs when the context manager is entered. An invalid type raises
-`TypeError`, and an out-of-range integer raises `ValueError`.
-Using an explicit scope copied into another process, thread, or asyncio task
-raises `UnmanagedConcurrentWorkflowEntryError` unless ProbPipe dispatched
-that work through its worker mechanism. Changing provenance mode within an
-active scope raises `RuntimeError`.
-
-# `workflow_run.set_default(*, seed=None)` {#workflow-run-set-default}
-
-Create or replace the default stream for successive bare calls. Return `None`.
-Setting the default restarts its random positions, including when the seed
-is unchanged. Calls with the same stochastic structure use the same keys as
-successive calls in one explicit scope with the same seed. Explicit scopes
-entered between calls and replay use their own streams. A failed call keeps
-the random positions it consumed. Explicit-key numerical functions consume
-none of the workflow's random stream.
-
-**Parameter:** `seed` is `None` or a non-boolean integer in `[0, 2**64 - 1]`.
-`None` creates a continuing anonymous stream, reading system entropy on its
-first random event. An invalid type raises `TypeError`, and an out-of-range
-integer raises `ValueError`. Validation precedes replacement, so an invalid
-seed leaves the existing default intact.
-
-Each top-level call fixes its provenance mode. The mode can change between
-calls without changing the random stream. Changing it within an active call
-raises `RuntimeError`. `config.reset()` leaves the default intact.
-
-A default belongs to its configuring process, thread, and asyncio task. A new
-thread without a copied context has no default. In an IPython notebook, the
-default continues across cells, including top-level `await`, with ownership
-passing to the task executing each cell. Tasks the user creates remain
-isolated. Using an inherited default from another owner raises
-`UnmanagedConcurrentWorkflowEntryError`. That owner can set or clear its own
-default, or open an explicit scope. A child task's setting does not change
-the notebook's default. ProbPipe workers use the random events assigned by
-their calling workflow.
-
-**Restrictions:** setting the default raises `RuntimeError` during a Function
-call, an explicit workflow scope, or replay. It also raises during a function
-check or a caller-owned JAX transformation, such as `jit`, `vmap`, or `grad`.
-
-# `workflow_run.clear_default()` {#workflow-run-clear-default}
-
-Remove the current context's default stream and return `None`. Subsequent
-bare calls receive independent anonymous scopes. If no default exists, this
-method does nothing. Clearing an inherited default affects only the current
-context. In a notebook cell, clearing also removes the default for later cells.
-
-**Restrictions:** the same contexts that forbid `set_default` also forbid
-`clear_default`, raising `RuntimeError` before changing the default.
-"""
+"""Open explicit workflow scopes and manage the current context's default scope."""
 
 
 def _set_default_workflow_state(state: _DefaultWorkflowState | None) -> None:
-    """Install a default and retain a notebook cell's setting for subsequent cells."""
+    """Install a default and retain an IPython cell's setting for subsequent cells."""
     from ._notebook_scope import _remember_notebook_default
 
     _DEFAULT_WORKFLOW_STATE.set(state)
-    _remember_notebook_default(state)
+    _remember_notebook_default()
 
 
 def _guard_default_scope_change() -> None:
@@ -467,9 +409,9 @@ def _guard_default_scope_change() -> None:
         or _jax_transformation_active()
     ):
         raise RuntimeError(
-            "cannot change the default workflow scope during a call, workflow_run, "
-            "replay_run, function check, or JAX transformation. Set or clear the default "
-            "outside the computation."
+            "cannot change the default workflow scope during a Function call, a workflow_run "
+            "or replay_run block, a check of whether JAX can trace a Function, or a JAX "
+            "transformation. Set or clear the default before starting the computation."
         )
 
 
