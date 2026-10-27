@@ -35,8 +35,11 @@ from probpipe import (
     function,
     workflow_run,
 )
-from probpipe.distributions import ConditionalDistribution
-from probpipe.distributions._capabilities import SupportsExactConditioning
+from probpipe.distributions import ConditionalDistribution, DistributionBatch
+from probpipe.distributions._capabilities import (
+    SupportsConditionalSampling,
+    SupportsExactConditioning,
+)
 
 from ._design_helpers import error_of, standard_normal
 
@@ -261,6 +264,64 @@ class TestConversionPlanning:
 
 
 class TestAdmission:
+    @pytest.mark.parametrize(
+        "annotation", [ConditionalDistribution, _KernelAlias, SupportsConditionalSampling]
+    )
+    def test_a_law_at_a_kernel_parameter_is_refused(self, annotation):
+        def consume(kernel):
+            pytest.fail("body was called")
+
+        consume.__annotations__ = {"kernel": annotation}
+        consume = Function(consume, label="consume")
+        law = Normal("mu", 0.0, 1.0)
+        for call in (consume.check, consume):
+            with pytest.raises(
+                ApplicabilityError,
+                match=r"parameter 'kernel' expects a ConditionalDistribution, but got Normal "
+                r"'[^']*', which is a law\. Pass a ConditionalDistribution instead",
+            ):
+                call(law)
+
+    def test_a_batch_of_laws_at_a_kernel_parameter_is_refused(self):
+        @function
+        def consume(kernel: ConditionalDistribution) -> float:
+            pytest.fail("body was called")
+
+        laws = DistributionBatch([Normal("mu", 0.0, 1.0), Normal("mu", 1.0, 1.0)], "laws")
+        for call in (consume.check, consume):
+            with pytest.raises(ApplicabilityError, match="which is a batch of laws"):
+                call(laws)
+
+    def test_an_optional_kernel_parameter_refuses_a_law(self):
+        @function
+        def consume(kernel: ConditionalDistribution | None = None) -> float:
+            pytest.fail("body was called")
+
+        for call in (consume.check, consume):
+            with pytest.raises(ApplicabilityError, match="expects a ConditionalDistribution"):
+                call(Normal("mu", 0.0, 1.0))
+
+    def test_a_union_of_a_value_and_a_kernel_lifts_a_law(self):
+        @function
+        def scale(x: float | ConditionalDistribution) -> float:
+            return 2.0 if isinstance(x, ConditionalDistribution) else x * 2.0
+
+        law = Normal("x", 0.0, 1.0)
+        assert scale.check(law).lifted == ("x",)
+        with workflow_run(seed=0):
+            lifted = scale.using(max_evaluations=8)(law)
+        assert lifted.num_atoms == 8
+        assert float(scale(_kernel())) == 2.0
+
+    def test_a_union_can_consume_a_law_or_a_kernel(self):
+        @function
+        def consume(kernel: ConditionalDistribution | Distribution):
+            return 1.0
+
+        for value in (Normal("mu", 0.0, 1.0), _kernel()):
+            assert consume.check(value).lifted == ()
+            assert float(consume(value)) == 1.0
+
     def test_applicability_error_is_a_type_error(self):
         assert issubclass(ApplicabilityError, TypeError)
 

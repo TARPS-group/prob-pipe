@@ -4452,6 +4452,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A law passed where a kernel is required is rejected before sampling, both in
+  `check` and in a call. `predictive_check` preserves sweeps over batches of kernels.
+
+- MCMC warnings summarize each original parameter's failing coordinates and worst value.
+  Diagnostic tables size the parameter column to fit long names.
+
+- **Default workflow streams continue across terminal IPython cells.** Ordinary
+  cells and cells with top-level `await` continue the configured stream.
+  Setting or clearing the default in an `await` cell applies to later cells.
+  Kernel shells running in an application thread continue their stream too.
+
+- **Copied contexts keep default-scope changes local.** Setting or
+  clearing a default in a copied context leaves later cells on the notebook's
+  stream. A background thread's first setting leaves the main kernel free to
+  configure its own default. Wrapping a shell's `run_cell_async` method preserves
+  cross-cell continuation. An ipykernel subshell's completion preserves the
+  main cell's ownership handoff.
+
 - **A law or a kernel built with `&` records its lineage.** Before, `(a &
   b).provenance` was `None`, so a result computed from a merge, such as a
   quantile of a posterior predictive `likelihood.rename(y="y_pred") &

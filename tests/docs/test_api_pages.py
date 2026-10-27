@@ -9,7 +9,7 @@ the test matches the pages' paths to the public names by object identity.
 Each ``::: dotted.path`` line of ``docs/api/*.md`` is a mkdocstrings directive,
 which renders the object at that path. The test checks three things:
 
-1. each directive names a public object;
+1. each directive names a public object, or a method of an exported instance;
 2. each public object has a directive on exactly one page;
 3. the docstring of each documented object starts with a summary, a line that
    ends with a period and that a blank line or the end of the docstring follows.
@@ -18,14 +18,19 @@ mkdocstrings reads docstrings from the source through griffe, so the third check
 reads them through griffe too. An instance at module level, such as
 ``probpipe.real``, therefore needs a docstring of its own after its assignment,
 since the docstring of its class is not rendered for it.
+griffe represents such an instance as an attribute with no members, so a page
+renders the instance's methods, such as ``workflow_run.set_default``, from the
+class that defines them.
 """
 
 from __future__ import annotations
 
 import functools
 import importlib
+import inspect
 import pkgutil
 import re
+import types
 from collections import defaultdict
 from pathlib import Path
 
@@ -114,9 +119,34 @@ def _summary_problem(docstring: str) -> str | None:
     return None
 
 
+def _methods_of_exported_instances() -> set[int]:
+    """The ids of the public methods of each exported instance's class, such as ``workflow_run``'s.
+
+    An exported instance is a public object that is not a class, a module, or a
+    function, and whose class ProbPipe defines. Its public methods are those
+    whose names start with no underscore, and ``__call__``, inherited ones
+    included.
+    """
+    methods: set[int] = set()
+    for path in _public_objects().values():
+        exported = _resolve(path)
+        if isinstance(exported, (type, types.ModuleType, types.FunctionType)):
+            continue
+        if not type(exported).__module__.startswith("probpipe"):
+            continue
+        methods.update(
+            id(method)
+            for name, method in inspect.getmembers(type(exported), inspect.isfunction)
+            if name == "__call__" or not name.startswith("_")
+        )
+    return methods
+
+
 def test_each_directive_names_a_public_object():
-    public = _public_objects()
-    stray = [f"{page}: {path}" for page, path in _directives() if id(_resolve(path)) not in public]
+    documentable = set(_public_objects()) | _methods_of_exported_instances()
+    stray = [
+        f"{page}: {path}" for page, path in _directives() if id(_resolve(path)) not in documentable
+    ]
     assert stray == []
 
 

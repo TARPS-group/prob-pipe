@@ -1,7 +1,7 @@
 cff-version: 1.2.0
 message: "If you use ProbPipe in your research, please cite it using the metadata below."
 title: "ProbPipe"
-abstract: "A Python framework for building scalable probabilistic pipelines with automated uncertainty quantification."
+abstract: "A probabilistic workflow language (PWL) for Python, which connects the tools you already use into one coherent workflow, from data preparation through prediction and decision-making."
 type: software
 authors:
   - given-names: Jonathan

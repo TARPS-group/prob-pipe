@@ -14,7 +14,7 @@ to pin a specific version (each release also gets its own version DOI).
 @software{probpipe,
   author  = {Huggins, Jonathan and Roberts, Andrew and Zhu, Jiaqiang and
              Erozer, Can and Lim, Yongho},
-  title   = {{ProbPipe}: Probabilistic pipelines with automated uncertainty quantification},
+  title   = {{ProbPipe}: A probabilistic workflow language for {Python}},
   year    = {2026},
   version = {0.2.0.dev0},
   doi     = {10.5281/zenodo.20683559},

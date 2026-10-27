@@ -97,7 +97,10 @@ def predictive_check[D](
     TypeError
         If *kernel* is not a ``ConditionalDistribution``, *law* does not
         sample, *test_fns* is neither a callable nor an iterable, a statistic
-        is not callable, or *num_replications* is not an integer.
+        is not callable, or *num_replications* is not an integer. A *kernel*
+        that is a law or a batch of laws, such as the model ``likelihood &
+        prior``, raises ``ApplicabilityError``, a ``TypeError``, before
+        anything is sampled.
     ValueError
         If *law* has no output for some input of *kernel*, naming the
         missing inputs; if *law* has an output of the same name as an output
@@ -254,7 +257,7 @@ def _predictive_joint(
     if not isinstance(kernel, ConditionalDistribution):
         raise TypeError(
             f"{operation}: kernel must be a ConditionalDistribution of the observations given "
-            f"the parameters; got {type(kernel).__name__}"
+            f"the parameters; got {type(kernel).__name__}. Pass the likelihood as kernel."
         )
     if not isinstance(law, Distribution) or not callable(getattr(law, "_sample", None)):
         raise TypeError(
