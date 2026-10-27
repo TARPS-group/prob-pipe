@@ -4,6 +4,10 @@
 
 ## What you can do
 
+> **AI-generated section.** An AI assistant changed this section after the page was reviewed, and no maintainer has reviewed the change yet.
+
+![The tools you already use, such as Stan, PyMC, BlackJAX, NumPy, pandas, and Prefect, on top of the ProbPipe layer, which provides provenance tracking, random key management, model format conversion, uncertainty propagation, and swappable execution backends and inference algorithms](assets/probpipe-workflow-language.png)
+
 --8<-- "README.md:capabilities"
 
 ## How it works

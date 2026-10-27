@@ -16,6 +16,10 @@ Every result records how it was computed, and random number seeds are managed au
 
 ## What you can do
 
+> **AI-generated section.** An AI assistant changed this section after the page was reviewed, and no maintainer has reviewed the change yet.
+
+![The tools you already use, such as Stan, PyMC, BlackJAX, NumPy, pandas, and Prefect, on top of the ProbPipe layer, which provides provenance tracking, random key management, model format conversion, uncertainty propagation, and swappable execution backends and inference algorithms](docs/assets/probpipe-workflow-language.png)
+
 <!-- --8<-- [start:capabilities] -->
 Carrying out a probabilistic analysis means translating its mathematics into a computational procedure.
 In practice you have to choose among algorithms with different trade-offs and convert between the formats that different tools expect.
