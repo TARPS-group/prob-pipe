@@ -56,6 +56,16 @@ From `execution-layer.md` §13, "After the workshop":
 | Tests on a GPU or TPU | §8 |
 | The remaining design text, and a User Guide notebook on opaque code, executors, failures, and the memo | §11 |
 
+### Numeric terms
+
+A plan written on 2026-10-27, after the workshop's code freeze, in `plans/deferred/` and not yet approved; it lists its open questions, which are reviewed before any of it is implemented. The vector-interface plan below builds on it, and its § 6 lists the edits that plan needs.
+
+| Work | Source |
+|---|---|
+| One definition of "numeric" for every kind: a numeric value is an array or a record of arrays, and a law, kernel, function, or batch is numeric when its events, inputs, and outputs hold numeric values; `TermSpec.is_numeric` in place of ten private predicates; one `VectorLayout` that every vector conversion uses; `to_vector()` on every numeric kind, returning a term of the same kind, with one `from_vector(spec, vec)`; `NumericFunction`, `NumericConditionalDistribution` meaning both sides numeric, and six markers removed; and `free_dims`, `with_dim_sizes`, and `with_dim_names` on `Function` (steps N1 to N5) | `plans/deferred/numeric-contract.md` |
+| Arithmetic on dimension names, so a vector of a `("n",)` array and a `(2,)` array has the symbolic size `n + 2` | `plans/deferred/numeric-contract.md` § 4.5 |
+| How a symbolic shape crosses a JAX trace, and how a constructor that evaluates a Python function abstractly, as `conditional_distribution` does, accepts an input of symbolic shape or an opaque input | `plans/deferred/numeric-contract.md` § 4.5, § 5.5 |
+
 ### The inference interface and vectors
 
 Two plans written during step E6 (#618) and deferred by the maintainer on 2026-10-21, so as to add no work before the workshop. Both are in `plans/deferred/`, not yet approved; each lists its open questions, which are reviewed before any of it is implemented.
