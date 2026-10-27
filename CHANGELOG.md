@@ -4452,6 +4452,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A law passed where a kernel is required is rejected before sampling, both in
+  `check` and in a call. `predictive_check` preserves sweeps over batches of kernels.
+
+- MCMC warnings summarize each original parameter's failing coordinates and worst value.
+  Diagnostic tables size the parameter column to fit long names.
 - **A law or a kernel built with `&` records its lineage.** Before, `(a &
   b).provenance` was `None`, so a result computed from a merge, such as a
   quantile of a posterior predictive `likelihood.rename(y="y_pred") &
