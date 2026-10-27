@@ -51,10 +51,17 @@ From `execution-layer.md` §13, "After the workshop":
 | Whether V.8's and #554's "random event" is renamed, for example to "random draw" | Q16 |
 | Supplied derivatives (`vjp`, `jacobian`, `jvp`) after #522, and the `jacobian` operation with `grad`. Their docstrings, V.13, and the user guide must state clearly that a backward pass run after its call closed (an eager `grad` or a kept `vjp`) uses the default context, with an example (decision M18) | §6.9, Q11; § 6.16, "Lifecycle", registration rule 7 |
 | The opt-in executors `futures` and `prefect` | §6.8, Q9 |
-| The rest of the compiled layer: compiled lifting if it did not join the core, the mixture sampler, the persistent cache, public `count_compilations` | §6.10 |
+| The rest of the compiled layer: compiled lifting if it did not join the core, the mixture sampler, the persistent cache, public `count_compilations`, which `plans/deferred/execution-introspection.md` replaces with `execution_log()` (its Q3) | §6.10 |
 | pyabc and BayesFlow on sets of evaluation points and executors; see jhuggins's lighter pyabc route below | §6.12 |
 | Tests on a GPU or TPU | §8 |
 | The remaining design text, and a User Guide notebook on opaque code, executors, failures, and the memo | §11 |
+
+A plan written on 2026-10-25, after the code freeze, is in `plans/deferred/`, not yet approved. It lets a user see how a call will run and how it ran, and it lists its open questions in its Appendix D, which are reviewed before any of it is implemented.
+
+| Work | Source |
+|---|---|
+| Reports of how a call runs: `check` describes each function a call will evaluate (its traceability, whether it is called back from a compiled JAX program, its executor and how it was chosen, whether it is vectorized or compiled, and the probe result it read) and each capability of a distribution the selected route runs; `ProbeResult` is public; `execution_status()` on a `Function`, and on a `Distribution` or `ConditionalDistribution` per capability; provenance records the runs of JAX programs; `execution_log()` in `probpipe.diagnostics` | `plans/deferred/execution-introspection.md` |
+| Three bugs the plan found against rules the design already states: an operation's `check` reports no embedded function (#679), an operation's provenance leaves out its evaluations (#680), and a rejected executor's reason prints JAX's raw error text (#681) | `plans/deferred/execution-introspection.md`, Appendix A |
 
 ### The inference interface and vectors
 
@@ -66,7 +73,7 @@ Two plans written during step E6 (#618) and deferred by the maintainer on 2026-1
 | Every built-in inference method's adapter onto that interface, with `make_posterior(..., coordinates=)`, `initial_vectors`, one key split per run, a start per chain, `factors()`'s order check, and checks that draw and compile nothing (step P2). It changes seeded draws once, a silent change. It rewrites the runners E4 makes module-level, so it reads E4's merged runners first | `plans/deferred/inference-interface.md` |
 | Whether `sampler(d)` (#554 § 7) ships with the vector interface or with #554 | `plans/deferred/vector-interface.md` § 4.5 |
 | No "array pytree" view of a law for BlackJAX: BlackJAX ravels a pytree position for its mass matrix and covariances anyway, a benchmark found no consistent speed difference (fixed-work parity within 10%), ProbPipe's own records fail as BlackJAX positions, and a `dict` position reorders the vector. A per-leaf "parts" view for TFP or BayesFlow, derived from the same order, waits until a backend needs it | `plans/deferred/vector-interface.md` § 6 |
-| A public reading of a target's traceability for inference methods written outside ProbPipe, with the public execution claims of E3a | #618; decided 2026-10-21 |
+| A public reading of a target's traceability for inference methods written outside ProbPipe, with the public execution claims of E3a; `plans/deferred/execution-introspection.md` § 4.4 proposes it as `execution_status()` on a law, with a traceability per capability | #618; decided 2026-10-21 |
 
 ## Open issues the push changes
 
