@@ -33,12 +33,12 @@ from __future__ import annotations
 
 import json
 import warnings
-from collections.abc import Mapping
+from collections.abc import Callable, Iterator, Mapping
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from .._messages import unknown_names
+from .._messages import count, unknown_names
 from ..core._shapes import NamesLike, _as_names
 from ._utils import _dataset_values
 
@@ -137,68 +137,59 @@ def _values_from_dataset(ds: xr.Dataset) -> dict[str, float]:
     return _dataset_values(ds)
 
 
-def _rhat_warnings(values: dict[str, Any], threshold: float) -> list[str]:
-    """Generate R-hat warning messages."""
-    from ._datatree import NotComputed
+def _failing_by_parameter(
+    values: Mapping[str, Any], fails: Callable[[np.ndarray], np.ndarray]
+) -> Iterator[tuple[str, np.ndarray, bool]]:
+    """Yield each parameter's failing values, and whether the parameter is a scalar.
 
-    msgs: list[str] = []
-
-    for param, val in values.items():
-        if isinstance(val, NotComputed):
-            continue
-
+    *values* maps each parameter to its diagnostic, such as a dataset's data
+    variables. A diagnostic that is not numeric is skipped.
+    """
+    for param, value in values.items():
         try:
-            numeric_val = float(val)
-        except Exception:
+            array = np.asarray(value, dtype=float)
+        except (TypeError, ValueError):
             continue
+        failing = array[fails(array)]
+        if failing.size:
+            yield param, failing, array.ndim == 0
 
-        if numeric_val > threshold:
-            msgs.append(
-                f"R-hat > {threshold} for '{param}' ({numeric_val:.4f}) -- "
-                f"chains may not have converged."
-            )
 
-    return msgs
+def _worst_value(num_failing: int, is_scalar: bool, worst: float, precision: int) -> str:
+    """The value a warning reports: a scalar's value, or the failing count and the worst value."""
+    if is_scalar:
+        return f"{worst:.{precision}f}"
+    return f"{count(num_failing, 'coordinate')}, worst {worst:.{precision}f}"
+
+
+def _rhat_warnings(values: Mapping[str, Any], threshold: float) -> list[str]:
+    """Report each parameter's R-hat above *threshold*: its value, or its failing count and maximum."""
+    return [
+        f"R-hat > {threshold} for '{param}' "
+        f"({_worst_value(vals.size, is_scalar, vals.max(), 4)}) -- chains may not have converged."
+        for param, vals, is_scalar in _failing_by_parameter(values, lambda value: value > threshold)
+    ]
 
 
 def _ess_warnings(
-    bulk: dict[str, Any],
-    tail: dict[str, Any],
+    bulk: Mapping[str, Any],
+    tail: Mapping[str, Any],
     threshold: int,
 ) -> list[str]:
-    """Generate ESS warning messages."""
-    from ._datatree import NotComputed
-
+    """Report each parameter's ESS below *threshold*, per kind: its value, or its failing count and minimum."""
     msgs: list[str] = []
 
-    for param, val in bulk.items():
-        if isinstance(val, NotComputed):
-            continue
-
-        try:
-            numeric_val = float(val)
-        except Exception:
-            continue
-
-        if numeric_val < threshold:
-            msgs.append(
-                f"Low ESS (bulk) for '{param}' ({numeric_val:.0f}) -- consider more iterations."
+    for kind, values, advice in (
+        ("bulk", bulk, "consider more iterations."),
+        ("tail", tail, "tail estimates may be unreliable."),
+    ):
+        msgs.extend(
+            f"Low ESS ({kind}) for '{param}' "
+            f"({_worst_value(vals.size, is_scalar, vals.min(), 0)}) -- {advice}"
+            for param, vals, is_scalar in _failing_by_parameter(
+                values, lambda value: value < threshold
             )
-
-    for param, val in tail.items():
-        if isinstance(val, NotComputed):
-            continue
-
-        try:
-            numeric_val = float(val)
-        except Exception:
-            continue
-
-        if numeric_val < threshold:
-            msgs.append(
-                f"Low ESS (tail) for '{param}' ({numeric_val:.0f}) -- "
-                f"tail estimates may be unreliable."
-            )
+        )
 
     return msgs
 
@@ -288,7 +279,7 @@ def _compute_rhat_op(
 
     values = _values_from_dataset(rhat_ds)
 
-    warns = _rhat_warnings(values, threshold)
+    warns = _rhat_warnings(rhat_ds, threshold)
 
     attrs = {
         "rhat_method": method,
@@ -342,7 +333,7 @@ def _compute_ess_op(
     bulk = _values_from_dataset(bulk_ds)
     tail = _values_from_dataset(tail_ds)
 
-    warns = _ess_warnings(bulk, tail, threshold)
+    warns = _ess_warnings(bulk_ds, tail_ds, threshold)
 
     bulk_attrs = {
         "ess_method": "bulk",
@@ -498,7 +489,9 @@ def add_rhat(
     This is the in-place wrapper around :func:`_compute_rhat_op`.
 
     Skips computation if R-hat is already present unless ``force=True``.
-    Emits a Python warning for any parameter with R-hat > ``threshold``.
+    Emits one warning per parameter with R-hat > ``threshold``, reporting a
+    scalar parameter's R-hat, or an array parameter's number of coordinates
+    above the threshold and its maximum R-hat.
     """
     from ._datatree import _mcmc_has_field
 
@@ -533,7 +526,9 @@ def add_ess(
     This is the in-place wrapper around :func:`_compute_ess_op`.
 
     Skips computation if ESS is already present unless ``force=True``.
-    Emits Python warnings for parameters below ``threshold``.
+    Emits one warning per parameter and ESS kind below ``threshold``, reporting
+    a scalar parameter's ESS, or an array parameter's number of coordinates
+    below the threshold and its minimum ESS.
     """
     from ._datatree import _mcmc_has_field
 
