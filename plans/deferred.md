@@ -93,6 +93,15 @@ A plan written on 2026-10-27, after the workshop's code freeze, in `plans/deferr
 |---|---|
 | One contract for every batch: every element conforms to one element spec in one dimension scope, so a `FunctionBatch` refuses functions of different specs as a `DistributionBatch` refuses laws of different event specs; the element spec inferred as the common spec of the elements, independent of their order; one storage interface and `Batch.stack` in place of the `isinstance` checks of fourteen modules; and `output`, `rename`, `without`, `&`, and equality by value on every batch by one lifted-operation rule, which takes over the batch parts of S4b, G5, and the deferred `&` and `without` entries above (steps B1 to B6) | `plans/deferred/batch-contract.md` |
 
+### Derivatives
+
+A plan written on 2026-10-28, in `plans/deferred/` and not yet approved; it lists its open questions, which are reviewed before any of it is implemented. It builds on the numeric-contract and vector-interface plans, and it answers the execution plan's Q11.
+
+| Work | Source |
+|---|---|
+| One contract for derivatives: a continuous leaf is a leaf of a real floating dtype whose support `Constraint.is_discrete` does not call discrete; the derivative of a map is a `LinOp`, its Jacobian operator; every `Function` has a `Differentiability` (inputs, modes, order, source), claimed with paths or `False` and otherwise presumed from traceability; supplied `vjp`, `jvp`, and `jacobian` are installed as JAX rules; a law's derivatives are those of `log_prob_function(d)` and `sampler(d)`; the operations `jacobian`, `grad`, and `hessian`, with `inverse` and `log_det_jacobian` implemented; and gradient methods dispatched on `is_differentiable` rather than on traceability (steps D1 to D6) | `plans/deferred/differentiability.md` |
+| An `optimize` operation with Newton, gradient, and gradient-free routes, and the mode and the Laplace approximation of a law derived from it | `plans/deferred/differentiability.md` § 6.2 |
+
 ## Open issues the push changes
 
 Each row says what the push does for an open issue before the workshop, and what the issue keeps for after it.
