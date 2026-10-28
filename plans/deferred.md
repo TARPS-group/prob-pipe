@@ -63,6 +63,16 @@ A plan written on 2026-10-25, after the code freeze, is in `plans/deferred/`, no
 | Reports of how a call runs: `check` describes each function a call will evaluate (its traceability, whether it is called back from a compiled JAX program, its executor and how it was chosen, whether it is vectorized or compiled, and the probe result it read) and each capability of a distribution the selected route runs; `ProbeResult` is public; `execution_status()` on a `Function`, and on a `Distribution` or `ConditionalDistribution` per capability; provenance records the runs of JAX programs; `execution_log()` in `probpipe.diagnostics` | `plans/deferred/execution-introspection.md` |
 | Three bugs the plan found against rules the design already states: an operation's `check` reports no embedded function (#679), an operation's provenance leaves out its evaluations (#680), and a rejected executor's reason prints JAX's raw error text (#681) | `plans/deferred/execution-introspection.md`, Appendix A |
 
+### Numeric terms
+
+A plan written on 2026-10-27, after the workshop's code freeze, in `plans/deferred/` and not yet approved; it lists its open questions, which are reviewed before any of it is implemented. The vector-interface plan below builds on it, and its § 6 lists the edits that plan needs.
+
+| Work | Source |
+|---|---|
+| One definition of "numeric" for every kind: a numeric value is an array or a record of arrays, and a law, kernel, function, or batch is numeric when its events, inputs, and outputs hold numeric values; `TermSpec.is_numeric` in place of ten private predicates; one `VectorLayout` that every vector conversion uses; `to_vector()` on every numeric kind, returning a term of the same kind, with one `from_vector(spec, vec)`; `NumericFunction`, `NumericConditionalDistribution` meaning both sides numeric, and six markers removed; and `free_dims`, `with_dim_sizes`, and `with_dim_names` on `Function` (steps N1 to N5) | `plans/deferred/numeric-contract.md` |
+| Arithmetic on dimension names, so a vector of a `("n",)` array and a `(2,)` array has the symbolic size `n + 2` | `plans/deferred/numeric-contract.md` § 4.5 |
+| How a symbolic shape crosses a JAX trace, and how a constructor that evaluates a Python function abstractly, as `conditional_distribution` does, accepts an input of symbolic shape or an opaque input | `plans/deferred/numeric-contract.md` § 4.5, § 5.5 |
+
 ### The inference interface and vectors
 
 Two plans written during step E6 (#618) and deferred by the maintainer on 2026-10-21, so as to add no work before the workshop. Both are in `plans/deferred/`, not yet approved; each lists its open questions, which are reviewed before any of it is implemented.
