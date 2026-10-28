@@ -93,6 +93,14 @@ A plan written on 2026-10-27, after the workshop's code freeze, in `plans/deferr
 |---|---|
 | One contract for every batch: every element conforms to one element spec in one dimension scope, so a `FunctionBatch` refuses functions of different specs as a `DistributionBatch` refuses laws of different event specs; the element spec inferred as the common spec of the elements, independent of their order; one storage interface and `Batch.stack` in place of the `isinstance` checks of fourteen modules; and `output`, `rename`, `without`, `&`, and equality by value on every batch by one lifted-operation rule, which takes over the batch parts of S4b, G5, and the deferred `&` and `without` entries above (steps B1 to B6) | `plans/deferred/batch-contract.md` |
 
+### Controls and options
+
+A plan written on 2026-10-28, in `plans/deferred/` and not yet approved; it lists its open questions, which are reviewed before any of it is implemented. Every operation takes controls, so its § 6 lists the edits the other deferred plans need, the inference-interface plan's first.
+
+| Work | Source |
+|---|---|
+| One contract for `using`: controls (ProbPipe's names), options (a registered entry's names), and settings (`config`), each declared once by an `Option` that validation, defaults, provenance, the catalog, and the documentation all read; option names checked against every method a call could select; a warning, `UnusedControlWarning`, for each given control or option a call does not read (#675); one vocabulary of common options, which renames `num_results` to `num_draws`; `backend_options` for backend arguments; `describe_using()` and `CallReport.unused`; and the hand-kept lists of control names replaced by one `passes` field (steps C1 to C5) | `plans/deferred/controls-and-options.md` |
+
 ## Open issues the push changes
 
 Each row says what the push does for an open issue before the workshop, and what the issue keeps for after it.
