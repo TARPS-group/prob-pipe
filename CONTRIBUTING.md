@@ -138,6 +138,13 @@ labels apply to issues as they apply to PRs. Two status labels serve triage:
 `status:needs-triage` marks an issue that awaits triage, and
 `status:needs-repro` marks a bug that no maintainer has reproduced yet.
 
+Two flags invite contributors. `good first issue` marks an issue that a
+newcomer can finish in a few hours. Its change stays within one module, the
+issue states the expected behavior and where the change goes, and it needs no
+design decision. GitHub lists these issues on the repository's contribute
+page. `help wanted` marks an issue of any size that no maintainer plans to
+take on, usually a P3 issue.
+
 Within one priority, work goes in the order bug, feature, docs, maintenance.
 Within one type, it goes by severity and then by age.
 
