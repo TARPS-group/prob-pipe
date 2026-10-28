@@ -90,6 +90,10 @@ not_in_nav: |
   tutorials/06_simulating.ipynb
   tutorials/07_posterior.ipynb
 
+# The logo's README is for readers of the repository on GitHub.
+exclude_docs: |
+  assets/logo/README.md
+
 nav:
   - Home: index.md
   - Get started:
