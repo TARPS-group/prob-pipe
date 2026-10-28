@@ -13,6 +13,6 @@ Section 6 of that license withholds rights to the ProbPipe name and logo as mark
 
 You are welcome to use the logo to refer to ProbPipe, for example in a talk, a paper, or a list of tools that work with ProbPipe.
 When the logo refers to ProbPipe, use it unmodified: scale it proportionally and keep its colors.
-Naming another project or product with the ProbPipe name or logo, or using them to suggest that the ProbPipe authors endorse it, needs the authors' permission.
+Naming another project or product with the ProbPipe name or logo, or using them to suggest that the ProbPipe authors endorse it, requires the authors' permission.
 
-The name in the logo is set in [Figtree](https://github.com/erikdkennedy/figtree) Bold, under the SIL Open Font License, and converted to outlines, so the SVG files need no font.
+The name in the logo is set in [Figtree](https://github.com/erikdkennedy/figtree) Bold, under the SIL Open Font License, and converted to outlines.

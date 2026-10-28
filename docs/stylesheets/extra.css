@@ -20,3 +20,10 @@
   --md-accent-fg-color--transparent: rgba(143, 179, 224, 0.1);
   --md-typeset-a-color: #8FB3E0;
 }
+
+
+/* "Pipe" of the site name in the header takes the collar color of the logo on
+   dark backgrounds, as in the logo's wordmark. mkdocs_hooks.py adds the span. */
+.md-header__topic .pp-pipe {
+  color: #D26446;
+}
