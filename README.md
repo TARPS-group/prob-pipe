@@ -1,6 +1,9 @@
-# ProbPipe
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/logo/probpipe-lockup-dark.svg">
+  <img alt="ProbPipe logo" src="docs/assets/logo/probpipe-lockup.svg" width="360">
+</picture>
 
-> **AI-generated section.** An AI assistant changed this section after the page was reviewed, and no maintainer has reviewed the change yet.
+# Connect the Tools You Already Use into One Reliable Workflow
 
 [![CI](https://github.com/TARPS-group/prob-pipe/actions/workflows/ci.yml/badge.svg)](https://github.com/TARPS-group/prob-pipe/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/TARPS-group/prob-pipe/branch/main/graph/badge.svg)](https://codecov.io/gh/TARPS-group/prob-pipe)
@@ -17,7 +20,7 @@ provenance tracking, and execution backends that so often create friction that s
 By keeping the mathematics separate from the computational implementation, ProbPipe makes workflows maintainable and reliable.
 <!-- --8<-- [end:intro] -->
 
-![The tools you already use, such as Stan, PyMC, BlackJAX, NumPy, pandas, and ArviZ, joined by the ProbPipe layer, which provides provenance tracking, random key management, model format conversion, uncertainty propagation, and swappable execution backends and inference algorithms](docs/assets/probpipe-workflow-language.png)
+![The tools you already use, such as Stan, PyMC, BlackJAX, NumPy, pandas, and ArviZ, joined together by ProbPipe, which provides provenance tracking, random key management, model format conversion, uncertainty propagation, and swappable execution backends and inference algorithms](docs/assets/probpipe-workflow-language.png)
 
 ## What you can do
 
