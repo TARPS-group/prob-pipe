@@ -1,7 +1,7 @@
 <img alt="ProbPipe logo" src="assets/logo/probpipe-lockup.svg#only-light" width="360">
 <img alt="ProbPipe logo" src="assets/logo/probpipe-lockup-dark.svg#only-dark" width="360">
 
-# Connect the Tools You Already Use into One Reliable Workflow
+# Connect the Tools You Already Use into a Unified, Reliable Workflow
 
 --8<-- "README.md:intro"
 

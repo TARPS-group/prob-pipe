@@ -3,7 +3,7 @@
   <img alt="ProbPipe logo" src="docs/assets/logo/probpipe-lockup.svg" width="360">
 </picture>
 
-# Connect the Tools You Already Use into One Reliable Workflow
+# Connect the Tools You Already Use into a Unified, Reliable Workflow
 
 [![CI](https://github.com/TARPS-group/prob-pipe/actions/workflows/ci.yml/badge.svg)](https://github.com/TARPS-group/prob-pipe/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/TARPS-group/prob-pipe/branch/main/graph/badge.svg)](https://codecov.io/gh/TARPS-group/prob-pipe)
@@ -11,13 +11,16 @@
 [![DOI](https://img.shields.io/badge/DOI-10.5281%2Fzenodo.20683559-blue)](https://doi.org/10.5281/zenodo.20683559)
 
 <!-- --8<-- [start:intro] -->
-ProbPipe is a *probabilistic workflow language* (PWL) for Python.
-It lets you describe a *statistical* workflow in terms of standard mathematical operations and employing
-the tools you already use, including probabilistic programming languages (PPLs) such as Stan and PyMC,
-and numeric packages like NumPy, pandas, and xarray.
-At the same time, ProbPipe handles all of the *computational* workflow details like random key management,
-provenance tracking, and execution backends that so often create friction that slows you down.
-By keeping the mathematics separate from the computational implementation, ProbPipe makes workflows maintainable and reliable.
+ProbPipe is a **probabilistic workflow language** (PWL) designed for building traceable, reproducible, scalable, and flexible pipelines for
+data analysis, forecasting, and prediction.
+
+ProbPipe makes it easy to describe a *statistical* workflow in terms of standard mathematical operations
+while still using the tools you're familiar with (PyMC, JAX, pandas, xarray, ...).
+But when you use ProbPipe, it handles all of the *computational* workflow aspects such as random key management, provenance tracking, and execution backends,
+which, when done right, lead to reliable, high-quality pipelines.
+And, because it's based on mathematical operations, ProbPipe also provides a uniform interface to operations like conditioning, sampling, and evaluation, no matter
+what package is being used to implement the operation (Stan, NumPyro, BlackJAX, ...).
+This leads to simpler, easier to read, and more maintainable code.
 <!-- --8<-- [end:intro] -->
 
 <picture>
@@ -80,19 +83,21 @@ model = likelihood & prior
 with workflow_run(seed=0):
     posterior = condition_on(model, {"damage": damage})
 
-print("posterior mean of beta:", mean(posterior["beta"]).raw)
+print("posterior mean of beta:", mean(posterior["beta"]).raw, "\n")
 
 # Every result records how it was computed.
 print("provenance of the prior's mean:")
-print(mean(prior).provenance)
+print(mean(prior).provenance, "\n")
 print("provenance of the posterior:")
 print(posterior.provenance)
 ```
 
 ```text
 posterior mean of beta: [11.66378    -0.18358812]
+
 provenance of the prior's mean:
 1. mean(prior, given)  route closed_form, exact
+
 provenance of the posterior:
 1. likelihood & prior
 2. condition_on(1, given)  route inference_methods, method blackjax_nuts, approximate
@@ -155,7 +160,7 @@ with workflow_run(seed=2):
     damage_prob = challenger_damage_probability(posterior["beta"])
 
 print("P(damage at 31°F), posterior mean:", round(float(mean(damage_prob)), 3))
-print("P(damage at 31°F), 90% interval:", quantile(damage_prob, jnp.array([0.05, 0.95])).raw)
+print("P(damage at 31°F), 90% interval:", quantile(damage_prob, jnp.array([0.05, 0.95])).raw, "\n")
 
 # The forecast records each step from the posterior to it.
 print("provenance of the forecast:")
@@ -165,6 +170,7 @@ print(damage_prob.provenance)
 ```text
 P(damage at 31°F), posterior mean: 0.974
 P(damage at 31°F), 90% interval: [0.86161655 0.999984  ]
+
 provenance of the forecast:
 1. likelihood & prior
 2. likelihood·prior = condition_on(1, given)         route inference_methods, method blackjax_nuts, approximate
