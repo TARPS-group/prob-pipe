@@ -210,8 +210,6 @@ f = Function(fit, return_spec=d.spec, output_name="posterior")
 f["mu"]                           # TypeError: its value spec is a DistributionSpec
 ```
 
-An object has paths exactly when its outputs are the top-level names of its value spec (§ 4.3).
-
 **Kept:** the part of each kind at a path: the coupled marginal of a law (III.7), the coupled marginal of a kernel (III.9), the selected function `f[s]` (III.3), and the marginal batch (II.5).
 A law, its draws, its mean, and a batch of its draws share one set of paths (II.2).
 
