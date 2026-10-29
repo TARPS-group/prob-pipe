@@ -44,7 +44,7 @@ from ..distributions._distribution import (
 )
 from ..distributions._empirical import EmpiricalDistribution
 from ..distributions._factored import _outputs_of, _raw_leaves
-from ..functions._resolution import PointReport, RouteOutcome
+from ..functions._resolution import PointReport
 from ..linalg import DenseLinOp, LinOp
 from ..operations import _mixture, _moments
 from ..operations._condition import condition_on
@@ -534,6 +534,7 @@ class _FiniteMixture(_DelegatingRoute):
         K, mixing = call.operands["K"], call.operands["mixing"]
         if not isinstance(mixing, EmpiricalDistribution):
             return Feasibility(False, "mixing is not an EmpiricalDistribution")
+        # Merging checks output overlap and input/output spec compatibility.
         _ = K & mixing
         reports = []
         for index in range(mixing.num_atoms):
@@ -555,9 +556,7 @@ class _FiniteMixture(_DelegatingRoute):
             values = _outputs_of(mixing.event_spec, mixing._atoms_at(index))
             given = {name: values[name] for name in K.given_spec if name in values}
             components.append(condition_on.using(exact_only=exact_only)(K, given))
-        law = MixtureDistribution(components, mixing.weights, label=K.label)
-        exact = all(component.provenance.metadata["exact"] for component in components)
-        return RouteOutcome(law, exact)
+        return MixtureDistribution(components, mixing.weights, label=K.label)
 
 
 _mixture.mixture.register_route(_FiniteMixture())

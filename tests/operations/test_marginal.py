@@ -250,11 +250,12 @@ class TestMonteCarloMarginal:
             with pytest.raises(ResolutionError, match="sampling guard"):
                 marginal(law, "a")
 
-    def test_an_exact_marginal_is_preferred_and_the_fallback_can_be_selected(self, monkeypatch):
-        monkeypatch.setattr(
-            _JointSampler, "_marginal", lambda self, paths: Gaussian("a"), raising=False
-        )
-        law = _JointSampler()
+    def test_an_exact_marginal_is_preferred_and_the_fallback_can_be_selected(self):
+        class ExactMarginalSampler(_JointSampler):
+            def _marginal(self, paths):
+                return Gaussian("a")
+
+        law = ExactMarginalSampler()
         assert marginal.check(law, "a").route == "exact"
         assert not isinstance(marginal(law, "a"), EmpiricalDistribution)
         assert law.sample_shapes == []

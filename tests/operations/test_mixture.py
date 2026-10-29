@@ -12,9 +12,11 @@ from probpipe import (
     EmpiricalDistribution,
     Normal,
     NumericArrayBatch,
+    ProvenanceMode,
     RecordBatch,
     RecordSpec,
     conditional_distribution,
+    config,
     log_prob,
     mean,
     sample,
@@ -283,6 +285,19 @@ def test_finite_mixing_records_approximate_conditioning():
     assert law.provenance.metadata["exact"] is False
     with pytest.raises(ResolutionError):
         mixture.using(exact_only=True)(kernel, mixing)
+
+
+@pytest.mark.parametrize("kernel_factory, exact", [(_kernel, True), (_ApproximateKernel, False)])
+def test_finite_mixing_without_provenance(kernel_factory, exact):
+    with config.provenance.using(mode=ProvenanceMode.OFF):
+        kernel, mixing = kernel_factory(), _mixing()
+        report = mixture.check(kernel, mixing)
+        assert (report.route, report.exact) == ("finite", exact)
+        law = mixture.using(exact_only=exact)(kernel, mixing)
+        assert isinstance(law, MixtureDistribution)
+        assert law.provenance is None
+        np.testing.assert_allclose(mean(law), 2.0, rtol=0, atol=1e-6)
+        np.testing.assert_allclose(variance(law), 4.0, rtol=0, atol=1e-6)
 
 
 def test_a_generic_kernel_without_sampling_is_infeasible():

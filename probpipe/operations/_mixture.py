@@ -26,9 +26,8 @@ def _mixture_result(K: ConditionalDistributionSpec, mixing: DistributionSpec) ->
     missing = [name for name in K.given_spec.required if name not in mixing.event_spec.outputs]
     if missing:
         raise ApplicabilityError(
-            f"mixture: mixing does not supply the required inputs {missing}; "
-            "bind them with `condition_on` before calling mixture. "
-            "Returning a kernel over remaining inputs is not implemented yet"
+            f"mixture: mixing does not supply required inputs {missing}. "
+            "Bind them with condition_on before calling mixture."
         )
     return OutputSpec(DistributionSpec(K.event_spec))
 
@@ -57,6 +56,9 @@ def mixture(K: ConditionalDistribution, mixing: Distribution):
     route projects joint draws through ``pushforward``. Its sampling route
     returns an empirical approximation, with the draw count controlled by
     ``max_evaluations``.
+
+    The finite route builds one component law per atom, so its cost grows
+    with the number of atoms.
 
     Interim implementation detail: mixing must supply every required input.
     Returning a kernel over the remaining inputs is not implemented yet.
