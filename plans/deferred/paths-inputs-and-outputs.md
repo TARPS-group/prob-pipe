@@ -18,6 +18,9 @@
 7. Inputs and outputs are named by single names, never by paths (§ 4.3, § 4.4).
 8. `x.output_names` is the one public read of an object's output names; the stored name is private, a constructor states it with `output_name=`, and `rename` changes it (§ 4.3).
 9. `None` means "not known yet" for every spec accessor, `x.output_spec` included, and `InputSpec(None)` raises (§ 4.3, § 4.4).
+10. No name is both an input name and an output name of one object, for every kind; one function checks it (§ 4.7).
+11. A rename never crosses between inputs and outputs, and an input is never renamed to a path; one method, `PathIndexed.rename`, reads and checks every key, and each kind supplies only the mechanics (§ 4.7).
+12. Functions and kernels both rename their inputs, by one flat name each; the kernel's grouping and splitting of inputs by path is removed (§ 4.7).
 
 **Decisions still open** (each explained where it arises, and gathered in § 10):
 
@@ -69,6 +72,8 @@ The goal is one definition of each idea, one implementation that every kind shar
 | The outputs of an object whose value is not a record | five cases, one of which gives no outputs (II.2) | one output, the object, under its output name |
 | Where an output name is stored | in an `OutputSpec`, inside the spec (II.2) | on the object |
 | Conformance and unification | defined by kind (II.1) | kept; the code's departures fixed |
+| A name that is both an input and an output | refused for a kernel (III.9); allowed for a function, whose `rename` renames both (III.3) | refused for every kind |
+| Renaming a kernel's inputs | by path, so inputs may be grouped into a record input or split out of one (III.9) | by name only |
 
 ### 2.2 What the code does
 
@@ -293,6 +298,29 @@ InputSpec(None)            # TypeError
 **Kept from IV.2, III.3, and II.2:** an output feeds the input of the same name, and its spec must conform to the input's (IV.2, condition 6); an input that both operands take is one input, whose spec is the unification of the two (II.2's `InputSpec.__and__`, IV.2, III.3).
 
 **New:** the check reads the output spec, so one rule serves every kind of giver: the output `c` of `x` feeds the input `c` of `y` when `x.output_spec[c].conforms_to(y.input_spec[c], scope)`, in the dimension scope of the merge.
+
+### 4.7 Renaming
+
+**Kept from II.6:** the rules for renaming and moving nodes by path, all at once.
+
+**Changed in III.3 and III.9:**
+1. **Input names and output names are disjoint, for every kind.** No name is both an input name and an output name of one object. A kernel already refuses one at construction (III.9); a function now refuses one too, where III.3 allows it. One function, `_check_disjoint_names` (§ 5.3), makes the check for every kind once construction ends, and again when a function's first call makes its output names known.
+2. **A rename never crosses between inputs and outputs.** Each key of `rename` is exactly one of three things: an input name, the output name, or a path. A key without `/` matches at most one input name, or else the output name or a top-level path, since the two sets are disjoint; a key with `/` is a path. An input's new name is a single name, so renaming an input to a path raises `ValueError`.
+3. **Inputs are renamed by name only.** III.9's grouping of a kernel's inputs into a record input by path, and its splitting of one, are removed. A kernel renames its inputs as a function does, one name for one name.
+4. **One implementation.** `PathIndexed.rename` (§ 5.2) reads, classifies, and checks every key. Each kind supplies only the mechanics: `_renamed_inputs` for its inputs and `_renamed` for its paths. The renamed object is built through its constructor, so its disjointness is checked again, and a rename that gives an input and an output one name raises.
+
+```python
+k = conditional_distribution(lambda loc: Normal("y", loc, 1.0), given_spec={"loc": NumericArraySpec(())})
+k.rename({"loc": "mu"})          # a kernel with the input mu and the output y
+k.rename({"loc": "y"})           # ValueError: 'y' would be both an input and an output
+k.rename({"loc": "theta/loc"})   # ValueError: an input's new name cannot be a path
+
+def step(state):
+    return state + 1.0
+
+Function(step, return_spec=(), output_name="state")   # ValueError: 'state' is both an input and an output
+Function(step, return_spec=(), output_name="next_state").rename({"state": "s"})   # input s, output next_state
+```
 
 ## 5. The API
 
@@ -543,12 +571,15 @@ class PathIndexed:
         return ()
 
     def _renamed_inputs(self, moves: Mapping[str, str]) -> Self:
-        """This object with its inputs renamed by *moves*, keys already checked.
+        """This object with its inputs renamed by *moves*; ``rename`` has checked every pair.
+
+        The object's paths and output name are unchanged.
 
         Parameters
         ----------
         moves : mapping of str to str
-            Old input name to new input name.
+            Old input name to new input name. Each old name is an input, and
+            each new name is a single name, not a path.
 
         Returns
         -------
@@ -667,12 +698,21 @@ class PathIndexed:
         """
 
     def rename(self, renames: Mapping[str, str] | None = None, /, **keyword_renames: str) -> Self:
-        """This object with paths, inputs, or its output name renamed, all at once.
+        """This object with inputs, its output name, or paths renamed, all at once.
 
-        Each key is read in this order: the object's output name, which
-        renames the output; an input name, which renames the input; otherwise a
-        path, which renames or moves the node as ``NamedTree.rename`` does. A
-        key that is both an input name and a top-level path renames both.
+        Each key is exactly one of three things:
+
+        - an input name, which renames that input to the new name;
+        - the object's output name, which renames its one output;
+        - a path, which renames or moves the node there as ``NamedTree.rename``
+          does; a top-level path of an object whose value spec is a
+          ``RecordSpec`` is also an output name, so renaming it renames that
+          output.
+
+        No name is both an input name and an output name, so a key without
+        ``/`` matches at most one of the three, and a key with ``/`` is a path.
+        The renamed object is built through its constructor, which checks
+        again that its input names and output names are disjoint.
 
         Parameters
         ----------
@@ -689,13 +729,27 @@ class PathIndexed:
         Raises
         ------
         TypeError
-            If a key is a path and this object has no paths.
+            If a key contains ``/`` and this object has no paths.
         KeyError
-            If a key is neither the output name, an input name, nor a path.
+            If a key is neither an input name, the output name, nor a path of
+            this object.
         ValueError
-            If a new output name or input name contains ``/``, or a path rename
-            puts a node onto another node, moves a node into its own subtree,
-            or gives two targets one of which is inside the other.
+            If a new input name or output name is empty or contains ``/``; if
+            the renamed object would have a name that is both an input and an
+            output; or if a path rename puts a node onto another node, moves a
+            node into its own subtree, or gives two targets one of which is
+            inside the other.
+
+        Examples
+        --------
+        >>> k = conditional_distribution(
+        ...     lambda loc: Normal("y", loc, 1.0), given_spec={"loc": NumericArraySpec(())}
+        ... )
+        >>> list(k.rename({"loc": "mu"}).given_spec)
+        ['mu']
+        >>> k.rename({"loc": "y"})
+        Traceback (most recent call last):
+        ValueError: ConditionalDistribution '<lambda>' names ['y'] both as an input and as an output. Rename one of them
         """
 ```
 
@@ -711,7 +765,15 @@ Each class provides the four methods as follows; every spec class derives them f
 | `RecordBatch` | `self.element_spec` | the column at a field, the batch of a group's records at a group | the cut columns | today's batch rename |
 | every other batch | `None` | never called | never called | never called |
 
-`ConditionalDistribution` and `Function` override `_input_names` and `_renamed_inputs` with their input spec.
+Two kinds have inputs, and they provide `_input_names` and `_renamed_inputs`:
+
+| Class | `_input_names()` | `_renamed_inputs(moves)` |
+|---|---|---|
+| `Function` | `tuple(self.input_spec)` | the function rebuilt around `_RenamedCallable(self.raw, moves)` (§ 5.10) |
+| `FactoredConditionalDistribution` | `tuple(self.given_spec)` | the joint of its factors, each factor that takes a moved input renamed |
+| every other `ConditionalDistribution` | `tuple(self.given_spec)` | `_RenamedConditionalDistribution(self, input_moves=moves, event_moves={})` (§ 5.11) |
+
+A kernel's `_renamed(moves)` is `_RenamedConditionalDistribution(self, input_moves={}, event_moves=moves)`, and a factored kernel's renames through its factors as today.
 `NumericArray` and `Opaque` do not mix it in; their `[]` keeps its array and opaque meaning.
 
 ### 5.3 `core/_outputs.py` (new): the output spec
@@ -751,6 +813,41 @@ def output_spec_of(value_spec: TermSpec | None, output_name: str | None) -> Reco
     RecordSpec(x=NumericArraySpec(shape=()))
     >>> output_spec_of(RecordSpec(mu=(), sigma=()), None)
     RecordSpec(mu=NumericArraySpec(shape=()), sigma=NumericArraySpec(shape=()))
+    """
+
+
+def _check_disjoint_names(
+    input_names: Iterable[str], output_names: Iterable[str] | None, *, owner: str
+) -> None:
+    """Raise ``ValueError`` if a name is both an input name and an output name of one object.
+
+    The one check of disjointness. ``_TrackedTermMeta`` calls it for every
+    object with inputs once its constructor returns, and a function calls it
+    again when its first call makes its output names known.
+
+    Parameters
+    ----------
+    input_names : iterable of str
+        The object's input names.
+    output_names : iterable of str or None
+        The object's output names, or None while they are not known, which
+        passes.
+    owner : str
+        How the message names the object: its public class name and label,
+        such as ``"Function 'step'"``.
+
+    Raises
+    ------
+    ValueError
+        If a name is in both: "{owner} names [...] both as an input and as an
+        output. Rename one of them".
+
+    Examples
+    --------
+    >>> _check_disjoint_names(("state",), ("next_state",), owner="Function 'step'")
+    >>> _check_disjoint_names(("state",), ("state",), owner="Function 'step'")
+    Traceback (most recent call last):
+    ValueError: Function 'step' names ['state'] both as an input and as an output. Rename one of them
     """
 ```
 
@@ -891,6 +988,12 @@ if name is not None:
             f"children name its outputs, so it takes no output_name. Rename a child instead, "
             f"as rename({{'a': 'b'}})"
         )
+if isinstance(instance, PathIndexed) and instance._input_names():
+    _check_disjoint_names(
+        instance._input_names(),
+        instance.output_names,
+        owner=f"{public_class_name(type(instance))} {instance.label!r}",
+    )
 ```
 
 `_shallow_copy`, `with_label`, `with_provenance`, and `_with_expression` keep `_output_name`.
@@ -1463,6 +1566,134 @@ An output spec cannot replace `Declared`, since `RecordSpec(y=NumericArraySpec((
 - **Recommendation.** `value_spec`, `return_spec` (today's `FunctionSpec.output_spec`, which no longer names an output spec), `output_names`, `outputs`, and `output_spec`. The constructor keyword stays `output_name=`, the canonical name of `design/glossary.md`.
 - **Alternative.** `result_spec` for the return spec, which avoids "return" as a noun.
 
+### 5.10 `values/_function_base.py` (changed): renaming a function's inputs
+
+A `Function` binds every call through `self.signature`, the Python signature of its callable, at every binding site (`functions/_call.py`, `functions/_boundary.py`, `functions/_rules.py`, `functions/_function.py`, and `values_to_bound_arguments`).
+So a function with renamed inputs is a new `Function` over a callable whose signature has the new names, and no binding site changes.
+
+```python
+class _RenamedCallable:
+    """A callable with renamed keyword parameters, which calls *wrapped* under its own names.
+
+    Its signature is *wrapped*'s with each parameter in *moves* renamed, and
+    each parameter keeps its kind, default, and annotation, so a ``Function``
+    built on it binds the new names. A call passes positional arguments through
+    unchanged, maps each keyword argument back to its old name, and calls
+    *wrapped*. It holds only *wrapped* and *moves*, so it traces under JAX
+    whenever *wrapped* does, and it pickles whenever *wrapped* does.
+
+    Parameters
+    ----------
+    wrapped : Callable
+        The callable whose parameters are renamed. A ``_RenamedCallable`` is
+        unwrapped first and its moves composed, so renames never nest.
+    moves : mapping of str to str
+        Old parameter name to new parameter name.
+
+    Raises
+    ------
+    ValueError
+        If a key is not a named parameter of *wrapped*, a new name is not a
+        Python identifier, or a new name is the name of another parameter.
+
+    Examples
+    --------
+    >>> def scale(x, s=2.0):
+    ...     return x * s
+    >>> renamed = _RenamedCallable(scale, {"s": "factor"})
+    >>> inspect.signature(renamed)
+    <Signature (x, factor=2.0)>
+    >>> renamed(3.0, factor=4.0)
+    12.0
+    >>> _RenamedCallable(renamed, {"factor": "k"}).__wrapped__ is scale
+    True
+    """
+
+    __slots__ = ("__name__", "__signature__", "__wrapped__", "_moves")
+
+    def __init__(self, wrapped: Callable[..., Any], moves: Mapping[str, str]) -> None: ...
+
+    def __call__(self, *args: Any, **kwargs: Any) -> Any: ...
+
+    @property
+    def moves(self) -> Mapping[str, str]:
+        """Each original parameter name to its current name, composed over every rename."""
+```
+
+```python
+class Function:
+    def _renamed_inputs(self, moves: Mapping[str, str]) -> Function:
+        """This function with its inputs renamed by *moves*, which ``rename`` has checked.
+
+        The result is a new ``Function`` over ``_RenamedCallable(self.raw,
+        moves)``, with the same label, return spec, output name, ``traceable``,
+        ``vectorized``, and ``differentiable``. Its input spec is
+        ``self.input_spec.rename(moves)``, keeping each input's spec and
+        optional flag; its ``bind=`` values are keyed by the new names; and its
+        controls are carried over unchanged. Its provenance records the rename
+        and *moves*.
+
+        Parameters
+        ----------
+        moves : mapping of str to str
+            Old input name to new input name.
+
+        Returns
+        -------
+        Function
+            The renamed function; this function is unchanged.
+        """
+```
+
+The fingerprint of a `_RenamedCallable` is that of `__wrapped__` together with `moves`, so two functions that differ only in their input names have different fingerprints.
+`core/_fingerprint.py` gains that one case.
+
+### 5.11 `distributions/_views.py` (changed): the renamed kernel
+
+A kernel that is not factored renames its inputs or its event paths through one view, which translates at its boundary.
+Today's view also groups and splits inputs by path; with flat input names, it reduces to a translation of keys.
+
+```python
+class _RenamedConditionalDistribution(ConditionalDistribution):
+    """A kernel with renamed inputs or event paths, which translates to *parent* at its boundary.
+
+    Binding or conditioning on given values maps each given key from its new
+    name back to the parent's input name, calls the parent, and renames the law
+    or kernel the parent returns by *event_moves*. Each conditional capability
+    of the parent is claimed, translated the same way, and carries the parent's
+    guard. Its input spec is the parent's with *input_moves* applied, and its
+    event spec is the parent's renamed by *event_moves*. Renaming it again
+    composes the new moves onto *parent*, so views never nest.
+
+    Parameters
+    ----------
+    parent : ConditionalDistribution
+        The kernel whose names are renamed.
+    input_moves : mapping of str to str
+        The parent's input name to this kernel's input name, for each renamed
+        input.
+    event_moves : mapping of str to str
+        The parent's event path to this kernel's event path, applied all at once
+        as ``NamedTree.rename`` applies them.
+
+    Raises
+    ------
+    ValueError
+        If the renamed kernel would have a name that is both an input and an
+        output.
+    """
+
+    def __init__(
+        self,
+        parent: ConditionalDistribution,
+        *,
+        input_moves: Mapping[str, str],
+        event_moves: Mapping[str, str],
+    ) -> None: ...
+```
+
+Its code for grouped and split inputs is deleted: `_leaf_values`, the `origins` mapping of each leaf to the parent's leaf, the bindings held until the rest of a split input is bound, and, in `distributions/_conditional.py`, `_moved_inputs`, `_is_input_path`, `_check_rename_source`, and `_check_disjoint_sides`.
+
 ## 6. Step P2 in detail: the output name out of specs
 
 This section lists every site that step P2 changes, beyond the API of § 5.
@@ -1538,6 +1769,9 @@ P2 rewrites them over the value spec, and P3 deletes them.
 7. Two laws that differ only in their names have equal specs and equal fingerprints, and a `jax.jit` round trip keeps the name of a `NumericArray` and of a `NumericArrayBatch`.
 8. Stating an output name on an object whose value spec is a `RecordSpec` raises `ValueError`, from a constructor or from `rename`, and `probpipe.OutputSpec` no longer exists.
 9. A function whose return spec is not known has `output_spec` `None`; `InputSpec()` has no inputs; `InputSpec(None)` and `InputSpec(f.output_spec)` for such a function raise `TypeError`; and a merge with such a function refuses it with a message that names the function.
+10. One table test of `rename` over every kind with inputs: each key classified as an input name, the output name, or a path; an input renamed to a path raises `ValueError`; a rename that makes a name both an input and an output raises `ValueError`; and a function or kernel constructed with a name on both sides raises `ValueError`, as does a function whose first call returns a record with a child named like an input.
+11. A function's input rename keeps each parameter's default, the function's `traceable` flag and its `jax.jit` result, its `bind=` values under the new names, and its controls; renaming twice gives one `_RenamedCallable` over the original callable; and two functions that differ only in input names have different fingerprints.
+12. A renamed kernel binds and conditions under its new input names, renames the law it returns by its event moves, and renamed again wraps the original kernel, not the first view.
 
 ## 8. Edits to the other plans and to `design/`
 
@@ -1569,6 +1803,9 @@ P2 rewrites them over the value spec, and P3 deletes them.
 II.2 also drops paths into a record input: an input spec's `[]` and `without` take input names only, and no input becomes required because a path cut it.
 In II.2, `InputSpec`'s signature drops `| None = None` for the sentinel `_NO_INPUTS`, and `None` is refused as a source.
 II.6 changes `in` as § 4.1 states, and adds the spec agreement rule.
+III.3 drops "a key that names both an input and an output of a function renames both", and states that a function's input names and output names are disjoint, as III.9 states for a kernel.
+III.9 drops the grouping and splitting of a kernel's inputs by path: its `rename` renames each input to one name.
+IV.2's condition 5, that no name of an operand is both an input and an output, now holds for every operand by construction, so a merge never raises it.
 
 ## 9. Steps
 
@@ -1577,12 +1814,12 @@ Each step is one PR.
 1. **P1, conformance:** § 5.6, with contravariant inputs, directional opaque types, and unknown sides by § 4.5; `is_valid` through conformance; `InputSpec.__and__` through `unify`. It fixes the departures of § 4.5, and its only rename is `bind_dims_from_spec` to `refine`. `batch-contract.md` step B1 builds on it.
 2. **P2, names out of specs:** § 5.3 to § 5.5 and § 5.7 to § 5.9, by § 6, in its four commits.
 3. **P3, one path interface:** § 5.1 and § 5.2 for `Record`, `RecordSpec`, `RecordBatch`, `Distribution`, and the spec classes; `without` on laws; the helpers of Appendix A deleted.
-4. **P4, paths on every kind:** § 5.2 for `ConditionalDistribution` and `Function`.
+4. **P4, paths and renames on every kind:** § 5.2 for `ConditionalDistribution` and `Function`; § 4.7's renaming, with `_check_disjoint_names` (§ 5.3), `_RenamedCallable` and `Function._renamed_inputs` (§ 5.10), and the reduced `_RenamedConditionalDistribution` (§ 5.11).
 5. **P5, outputs and feeding:** `outputs`, and merge's check through § 4.6.
 
 **What users see.**
-- **Breaking:** `OutputSpec` is removed; `event_spec`, `element_spec`, and `return_spec` (today's `FunctionSpec.output_spec`) are bare specs; an object's output names are read with `output_names`, and the stored name is private; `x["x"]` on a law over an array named `x` raises `TypeError`; a function whose inputs accept less than declared no longer conforms; `bind_dims_from_spec` becomes `refine`; `InputSpec(None)` raises `TypeError`, and `InputSpec()` is the input spec with no inputs.
-- **Added:** paths on kernels and functions whose value spec is a `RecordSpec`, `without` on laws, `output_names`, `outputs`, `conforms_to`, `unify`, `refine`, `DimensionScope`, and `output_name=` on `NumericArray` and `Opaque`.
+- **Breaking:** `OutputSpec` is removed; `event_spec`, `element_spec`, and `return_spec` (today's `FunctionSpec.output_spec`) are bare specs; an object's output names are read with `output_names`, and the stored name is private; `x["x"]` on a law over an array named `x` raises `TypeError`; a function whose inputs accept less than declared no longer conforms; `bind_dims_from_spec` becomes `refine`; `InputSpec(None)` raises `TypeError`, and `InputSpec()` is the input spec with no inputs; a function with a name that is both an input and an output raises at construction; a kernel's inputs can no longer be grouped or split by `rename`, and an input renamed to a path raises.
+- **Added:** renaming a function's inputs; paths on kernels and functions whose value spec is a `RecordSpec`, `without` on laws, `output_names`, `outputs`, `conforms_to`, `unify`, `refine`, `DimensionScope`, and `output_name=` on `NumericArray` and `Opaque`.
 - **Fixed:** the output name leaves spec equality and fingerprints.
 
 ## 10. Questions for the maintainer
@@ -1604,7 +1841,7 @@ Each step is one PR.
 | `core/_specs.py`: `_has_path`, `_path_record`, `_paths_error`, `_output_spec_at` | `NamedTree.__contains__` and its messages, with the output name as a special case |
 | `core/_batch.py`: `_has_path`, `_at_paths`; `core/_record_batch.py`: `_has_path`, `_check_path` | the check of a path and the error for an object without paths |
 | `distributions/_empirical.py`: `_projection`, `_atoms_at_paths` | the restriction of a batch of atoms, with its own removal of the output name |
-| `distributions/_conditional.py`: `_check_rename_source`, `_is_input_path` | the check of a rename key against the input names and the event's paths |
+| `distributions/_conditional.py`: `_check_rename_source`, `_is_input_path`, `_moved_inputs`, `_check_disjoint_sides` | the classification and check of a rename key, and the disjointness check, which `PathIndexed.rename` and `_check_disjoint_names` make once |
 
 ## Appendix B. Readings this plan adopts
 
