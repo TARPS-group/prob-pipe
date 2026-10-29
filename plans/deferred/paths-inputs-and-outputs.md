@@ -290,17 +290,17 @@ InputSpec(None)            # TypeError
 **New:**
 1. **A side that only `A` leaves unknown does not conform.** II.1 says that a side `B` leaves undeclared accepts any `A`, and is silent on the reverse; this follows from II.1's definition of conformance.
 2. **Refinement is one named relation.** `B.refine(A)`, for an `A` that conforms to `B`, is `B` with its dimension names bound from `A` (II.1's binding) and with each dtype, support, type, or metadata that `B` leaves unset taken from `A` (II.2's completion). It replaces `bind_dims_from_spec`, which bound dimension names only.
-3. **`DimensionScope` is a class.** It holds II.1's scope in place of the `dict` the code passes by hand, and every relation takes one. A relation that fails leaves its scope unchanged.
+3. **`DimensionSizes` is a class.** It holds the sizes bound in one of II.1's dimension scopes, in place of the `dict` the code passes by hand, and every relation takes one as its `dim_sizes` argument. A relation that fails leaves it unchanged.
 
 **Decision 1: one public relation.**
-- **Recommendation.** `A.conforms_to(B, scope=None)`, `unify(A, B, scope=None)`, and `B.refine(A, scope=None)` are the entry points, `bind_dims_from_spec` is replaced by `refine`, and `bind_dims_from_value(v)` is refinement by the spec of `v` (§ 5.6).
+- **Recommendation.** `A.conforms_to(B, dim_sizes=None)`, `unify(A, B, dim_sizes=None)`, and `B.refine(A, dim_sizes=None)` are the entry points, `bind_dims_from_spec` is replaced by `refine`, and `bind_dims_from_value(v)` is refinement by the spec of `v` (§ 5.6).
 - **Alternative.** Keep today's private names, and fix only the departures in the table.
 
 ### 4.6 How an output feeds an input
 
 **Kept from IV.2, III.3, and II.2:** an output feeds the input of the same name, and its spec must conform to the input's (IV.2, condition 6); an input that both operands take is one input, whose spec is the unification of the two (II.2's `InputSpec.__and__`, IV.2, III.3).
 
-**New:** the check reads the output spec, so one rule serves every kind of giver: the output `c` of `x` feeds the input `c` of `y` when `x.output_spec[c].conforms_to(y.input_spec[c], scope)`, in the dimension scope of the merge.
+**New:** the check reads the output spec, so one rule serves every kind of giver: the output `c` of `x` feeds the input `c` of `y` when `x.output_spec[c].conforms_to(y.input_spec[c], dim_sizes)`, where one `DimensionSizes` serves the whole merge.
 
 ### 4.7 Renaming
 
@@ -1218,7 +1218,8 @@ its unset fields filled from the produced spec.
 
 The rules by kind, for ``A`` conforming to ``B``:
 
-- arrays: equal ranks, each axis agreeing in the scope; when both set a dtype,
+- arrays: equal ranks, and at each axis a dimension the two share, by
+  ``DimensionSizes.bind_shared_dim``; when both set a dtype,
   ``A``'s casts to ``B``'s by NumPy's same-kind rule; a support is never
   checked;
 - opaque values: ``B``'s type is unset or a superclass of ``A``'s, and ``B``'s
@@ -1243,15 +1244,23 @@ No spec holds a name, so names take no part in any relation.
 """
 
 
-class DimensionScope:
-    """The sizes bound to dimension names where specs meet.
+class DimensionSizes(Mapping[str, int]):
+    """The sizes bound to dimension names within one dimension scope.
 
-    A name binds to a size the first time it meets one, and a later size that
-    disagrees raises. The same name on both sides of an axis is one dimension
-    and may stay unbound; two different unbound names at one axis raise. Every
-    relation takes a scope, and a caller that checks several specs together,
-    such as the inputs of one call or the operands of one merge, passes the same
-    scope to each. A relation that raises leaves its scope unchanged.
+    A spec's shape can name a dimension instead of giving its size, as
+    ``NumericArraySpec(("n",))`` does. Where specs meet, as the inputs of one
+    call or the operands of one merge, each name stands for one size
+    throughout, and that region is one *dimension scope*. A ``DimensionSizes``
+    records the sizes bound so far in one scope. A name binds to a size the
+    first time it meets one, and a later size that disagrees raises. A name
+    that meets itself is one dimension and may stay unbound, and two different
+    unbound names that meet raise, since nothing says whether their sizes are
+    equal.
+
+    Every relation takes one as its ``dim_sizes`` argument, and a caller that
+    checks several specs in one scope passes the same ``DimensionSizes`` to
+    each. A relation that raises leaves it unchanged. It reads as a read-only
+    mapping from dimension name to size, and only its relations bind.
 
     Parameters
     ----------
@@ -1267,56 +1276,82 @@ class DimensionScope:
 
     Examples
     --------
-    >>> scope = DimensionScope()
-    >>> NumericArraySpec((3,)).conforms_to(NumericArraySpec(("n",)), scope)
+    >>> dim_sizes = DimensionSizes()
+    >>> NumericArraySpec((3,)).conforms_to(NumericArraySpec(("n",)), dim_sizes)
     True
-    >>> scope.sizes
-    mappingproxy({'n': 3})
+    >>> dict(dim_sizes)
+    {'n': 3}
+    >>> NumericArraySpec((4,)).conforms_to(NumericArraySpec(("n",)), dim_sizes)
+    False
+    >>> dict(dim_sizes)
+    {'n': 3}
     """
 
     __slots__ = ("_sizes",)
 
     def __init__(self, sizes: Mapping[str, int] | None = None) -> None: ...
 
-    @property
-    def sizes(self) -> Mapping[str, int]:
-        """The bound sizes, by dimension name, as a read-only mapping."""
+    def __getitem__(self, name: str) -> int: ...
 
-    def agree(self, first: int | str, second: int | str, *, path: str) -> int | str:
-        """The one size or name that two dimensions meeting at one axis agree on.
+    def __iter__(self) -> Iterator[str]: ...
 
-        A name already bound stands for its size. A name meeting a size binds
-        to it. Two equal names stay one unbound name.
+    def __len__(self) -> int: ...
+
+    def bind_shared_dim(self, first: int | str, second: int | str, *, path: str) -> int | str:
+        """The dimension that two specs share at one axis, binding a name that meets a size.
+
+        Each side is a size or a dimension name. A name already bound stands
+        for its size. A name that meets a size binds to it here. Two equal
+        names stay one unbound name.
 
         Parameters
         ----------
         first : int or str
-            The dimension on one side: a size or a name.
+            The dimension of one spec at the axis.
         second : int or str
-            The dimension on the other side.
+            The dimension of the other spec at the same axis.
         path : str
             The location of the axis, which messages name.
 
         Returns
         -------
         int or str
-            The agreed size, or the shared unbound name.
+            The shared size, or the shared unbound name.
 
         Raises
         ------
         ValueError
             If two sizes differ, a bound name meets another size, or two
             different unbound names meet.
+
+        Examples
+        --------
+        >>> dim_sizes = DimensionSizes()
+        >>> dim_sizes.bind_shared_dim("n", 3, path="x")
+        3
+        >>> dict(dim_sizes)
+        {'n': 3}
+        >>> dim_sizes.bind_shared_dim("m", "m", path="y")
+        'm'
+        >>> dim_sizes.bind_shared_dim("n", 4, path="z")
+        Traceback (most recent call last):
+        ValueError: the dimension 'n' at 'z' has size 4, but it was bound to 3. Rename one of the two dimensions, or give both the same size
         """
 
-    def copy(self) -> DimensionScope:
-        """A scope with the same bound sizes, which binds independently of this one."""
+    def copy(self) -> DimensionSizes:
+        """A ``DimensionSizes`` with the same bound sizes, which binds independently of this one."""
 
-    def _adopt(self, other: DimensionScope) -> None:
-        """Take *other*'s bound sizes, after a relation checked on *other* succeeds."""
+    def _take_sizes_from(self, trial: DimensionSizes) -> None:
+        """Replace these bound sizes with *trial*'s, after a relation checked on *trial* succeeds.
+
+        *trial* is a ``copy`` of this ``DimensionSizes``, so it holds every size
+        bound here and those the relation bound.
+        """
 
 
-def unify(first: TermSpec, second: TermSpec, scope: DimensionScope | None = None) -> TermSpec:
+def unify(
+    first: TermSpec, second: TermSpec, dim_sizes: DimensionSizes | None = None
+) -> TermSpec:
     """The unification of two specs: the spec a value conforms to exactly when it conforms to both.
 
     Parameters
@@ -1325,9 +1360,9 @@ def unify(first: TermSpec, second: TermSpec, scope: DimensionScope | None = None
         One declaration.
     second : TermSpec
         The other declaration.
-    scope : DimensionScope, optional
-        The scope the two share, which receives the sizes the unification
-        binds; a new scope by default.
+    dim_sizes : DimensionSizes, optional
+        The sizes bound in the dimension scope the two share, which receives
+        the sizes the unification binds; new and empty by default.
 
     Returns
     -------
@@ -1349,12 +1384,14 @@ def unify(first: TermSpec, second: TermSpec, scope: DimensionScope | None = None
     """
 
 
-def _check_conforms(actual: TermSpec, declared: TermSpec, scope: DimensionScope, path: str) -> None:
+def _check_conforms(
+    actual: TermSpec, declared: TermSpec, dim_sizes: DimensionSizes, path: str
+) -> None:
     """Raise ``ValueError`` naming *path* and the difference, unless *actual* conforms to *declared*.
 
     The one check behind ``conforms_to``, ``refine``, ``is_valid``, a merge's
     condition 6, and a function's check of its result. It checks on a copy of
-    *scope* and adopts the copy's sizes only on success.
+    *dim_sizes*, and takes the copy's sizes only on success.
 
     Parameters
     ----------
@@ -1362,8 +1399,8 @@ def _check_conforms(actual: TermSpec, declared: TermSpec, scope: DimensionScope,
         The spec of what is received.
     declared : TermSpec
         The spec declared where it is received.
-    scope : DimensionScope
-        The shared scope.
+    dim_sizes : DimensionSizes
+        The sizes bound in the shared dimension scope.
     path : str
         The location of *actual*, which messages name.
 
@@ -1378,16 +1415,16 @@ def _check_conforms(actual: TermSpec, declared: TermSpec, scope: DimensionScope,
 
 ```python
 class TermSpec(ABC):
-    def conforms_to(self, declared: TermSpec, scope: DimensionScope | None = None) -> bool:
+    def conforms_to(self, declared: TermSpec, dim_sizes: DimensionSizes | None = None) -> bool:
         """Whether every value that conforms to this spec conforms to *declared*.
 
         Parameters
         ----------
         declared : TermSpec
             The spec declared where a value of this spec is received.
-        scope : DimensionScope, optional
-            The shared scope, which receives the sizes the check binds when it
-            succeeds; a new scope by default.
+        dim_sizes : DimensionSizes, optional
+            The sizes bound in the shared dimension scope, which receives the
+            sizes the check binds when it succeeds; new and empty by default.
 
         Returns
         -------
@@ -1400,7 +1437,7 @@ class TermSpec(ABC):
             If *declared* is not a ``TermSpec``.
         """
 
-    def refine(self, produced: TermSpec, scope: DimensionScope | None = None) -> Self:
+    def refine(self, produced: TermSpec, dim_sizes: DimensionSizes | None = None) -> Self:
         """This declared spec refined by a produced spec that conforms to it.
 
         The result is this spec with its dimension names bound from *produced*
@@ -1412,8 +1449,9 @@ class TermSpec(ABC):
         ----------
         produced : TermSpec
             The spec of what was produced.
-        scope : DimensionScope, optional
-            The shared scope; a new scope by default.
+        dim_sizes : DimensionSizes, optional
+            The sizes bound in the shared dimension scope, which receives the
+            sizes the refinement binds; new and empty by default.
 
         Returns
         -------
@@ -1449,32 +1487,35 @@ class TermSpec(ABC):
             If *value* does not conform to this spec.
         """
 
-    def _conform(self, declared: TermSpec, scope: DimensionScope, path: str) -> None:
+    def _conform(self, declared: TermSpec, dim_sizes: DimensionSizes, path: str) -> None:
         """Raise ``ValueError`` naming *path* unless this spec conforms to *declared*.
 
         Each class implements its kind's rule from the module docstring of
         ``core/_conformance.py``, comparing *declared*'s
-        class first; dimensions meet through ``scope.agree``.
+        class first. Two dimensions at one axis are checked by
+        ``dim_sizes.bind_shared_dim``.
 
         Parameters
         ----------
         declared : TermSpec
             The declared spec.
-        scope : DimensionScope
-            The scope, which this method binds into.
+        dim_sizes : DimensionSizes
+            The sizes bound in the shared dimension scope, which this method
+            binds into.
         path : str
             The location of this spec, which messages name.
         """
 
-    def _unify(self, other: TermSpec, scope: DimensionScope, path: str) -> TermSpec:
+    def _unify(self, other: TermSpec, dim_sizes: DimensionSizes, path: str) -> TermSpec:
         """The unification of this spec with *other*, by its kind's rule in ``core/_conformance.py``.
 
         Parameters
         ----------
         other : TermSpec
             The other declaration.
-        scope : DimensionScope
-            The scope, which this method binds into.
+        dim_sizes : DimensionSizes
+            The sizes bound in the shared dimension scope, which this method
+            binds into.
         path : str
             The location, which messages name.
 
@@ -1494,7 +1535,7 @@ class TermSpec(ABC):
 `FunctionSpec.is_valid(len)` is therefore false, since a raw callable carries no spec.
 `bind_dims_from_spec` is removed, and its callers call `refine`.
 `_bind_dims_from_spec`, `_unify_specs`, `_unify_array_shape`, `_unification`, `_unify_input_types`, `_unify_declarations`, and `ConditionalDistributionSpec._unify_with` are deleted.
-`probpipe` exports `DimensionScope` and `unify`.
+`probpipe` exports `DimensionSizes` and `unify`.
 
 ### 5.7 The spec classes (changed)
 
@@ -1941,7 +1982,7 @@ P2 rewrites them over the value spec, and P3 deletes them.
 ## 7. Tests
 
 1. One test, parametrized over every class of § 5.2, asserts II.6's selection, chaining, partition, and errors, the two changes of § 4.1, and the spec agreement rule on a table of objects, records holding laws in fields included, and asserts the `TypeError` for each object of § 4.2 that has no paths.
-2. One table test of `conforms_to`, `unify`, and `refine` per kind, including each case of § 2.2, and a test that a failed relation leaves its `DimensionScope` unchanged.
+2. One table test of `conforms_to`, `unify`, and `refine` per kind, including each case of § 2.2, and a test that a failed relation leaves its `DimensionSizes` unchanged.
 3. One test that `x.output_spec`, `x.output_names`, and `x.outputs` follow § 4.3 for each row of its table, with `x.output_names == tuple(x.output_spec.keys())`.
 4. One test that no module outside `core/_paths.py` splits or joins a path with `/` or `_PATH_SEP`.
 5. One table test of each constructor of § 5.8: its default output name, a given name, and its output spec.
@@ -2001,7 +2042,7 @@ Each step is one PR.
 
 **What users see.**
 - **Breaking:** `OutputSpec` is removed; `event_spec`, `element_spec`, and `return_spec` (today's `FunctionSpec.output_spec`) are bare specs; an object's output names are read with `output_names`, and the stored name is private; `x["x"]` on a law over an array named `x` raises `TypeError`; a function whose inputs accept less than declared no longer conforms; `bind_dims_from_spec` becomes `refine`; `InputSpec(None)` raises `TypeError`, and `InputSpec()` is the input spec with no inputs; a function with a name that is both an input and an output raises at construction; a kernel's inputs can no longer be grouped or split by `rename`, and an input renamed to a path raises.
-- **Added:** renaming a function's inputs; paths on record-valued kernels and functions, `without` on laws, `input_spec` on every term and spec, `output_names`, `outputs`, `conforms_to`, `unify`, `refine`, `DimensionScope`, and `output_name=` on `NumericArray` and `Opaque`.
+- **Added:** renaming a function's inputs; paths on record-valued kernels and functions, `without` on laws, `input_spec` on every term and spec, `output_names`, `outputs`, `conforms_to`, `unify`, `refine`, `DimensionSizes`, and `output_name=` on `NumericArray` and `Opaque`.
 - **Fixed:** the output name leaves spec equality and fingerprints.
 
 ## 10. Questions for the maintainer
