@@ -15,6 +15,7 @@
 4. `select` is not part of the path interface, and this plan leaves it unchanged (§ 4.1).
 5. Outputs follow the conceptual model's two cases instead of II.2's five, so that every named object has outputs (§ 4.3).
 6. The output name is stored on the object, not inside its spec; `OutputSpec` is removed, and an object's output spec is a `RecordSpec` (§ 4.3, § 5.5).
+7. Inputs and outputs are named by single names, never by paths (§ 4.3, § 4.4).
 
 **Decisions still open** (each explained where it arises, and gathered in § 9):
 
@@ -312,9 +313,17 @@ Inputs keep II.2's definition.
 > [!IMPORTANT]
 > **Definition (input).** The *inputs* of a kernel or a function are named, and each has a spec and a flag for whether it is optional. An optional input has a default, which the object holds. An `InputSpec` lists the inputs without their defaults, and two input specs compare by name, not by order.
 
-A path continues into an input whose spec is a record, so `i["g/b"]` and `i.without("g/b")` follow the path interface over the record of the inputs.
-One difference applies: an input that a path cuts becomes required, since its default is one whole value.
-`InputSpec(O)` for an output spec `O` declares the inputs that `O`'s outputs can feed, and it is the reading of an `InputSpec` from a `RecordSpec`, which II.2 already defines.
+Inputs, like outputs, are named by single names, never by paths.
+An input spec is therefore selected by input name: `i["g"]` is the spec of the input `g`, `i[["g", "h"]]` is the input spec of those two inputs, and `i.without("g")` is the input spec of the others.
+Each keeps its optional flags.
+A name with `/` is refused, as a name that is not an input is, so `i["g/b"]` raises `KeyError` even when the spec of `g` is a record.
+
+`InputSpec(O)`, for an output spec `O`, has one required input per output of `O`, with that output's spec:
+
+```python
+prior = Normal("mu", 0.0, 1.0) & HalfNormal("sigma", 1.0)
+InputSpec(prior.output_spec)   # InputSpec(mu=NumericArraySpec(()), sigma=NumericArraySpec(()))
+```
 
 ### 4.5 Conformance and unification
 
@@ -594,7 +603,7 @@ P2 rewrites them over the value spec, and P3 deletes them.
 | | Part I § 2.3, § 4.1, § 4.2, and the figure of a held field | A record's paths end at its leaves, and an object has paths only when its value type is a record |
 | | § 11, and the technical notes of § 3.5 | `OutputSpec` is removed, and an output spec is a `RecordSpec` |
 | | B.6 G1a, G1b, G2 | Not needed: the interim whole form exists because names are stored in specs |
-| | B.6 S4b, G3, G5, and G4's `law.without` | Replaced by steps P2 to P4 of § 8; G3's paths through held objects, and G5's `[]` on batches of laws and of functions, are dropped |
+| | B.6 S4b, G3, G5, and G4's `law.without` | Replaced by steps P2 to P4 of § 8; G3's paths through held objects, G4's paths into a record input, and G5's `[]` on batches of laws and of functions are dropped |
 | | B.4, rows T30 and I10 | `without` through a law held at a leaf, and on a batch of laws, is dropped |
 | `batch-contract.md` | § 4.3, step B1 | The one check is this plan's `conforms_to`, from step P1 |
 | | § 4.5, § 5.1 | `element=OutputSpec(x=())` becomes `element=(), output_name="x"` |
@@ -610,8 +619,10 @@ P2 rewrites them over the value spec, and P3 deletes them.
 
 `design/` drops paths through held objects from three sections:
 - II.2, where an object's value type has paths at any depth;
-- II.6, where `{x: 3.0, g: d}["g/mu"]` is `d["mu"]` and `without` reaches into a held term;
+- II.6, where `{x: 3.0, g: d}["g/mu"]` is `d["mu"]` and `without` removes a node inside a held term;
 - III.3, where `record[path]` reads through a held term.
+
+II.2 also drops paths into a record input: an input spec's `[]` and `without` take input names only, and no input becomes required because a path cut it.
 
 The conceptual model needs one edit: its definition of `R[[p]]` keeps the full path, as its examples already do.
 
@@ -649,7 +660,7 @@ Each step is one PR.
 | `core/_specs.py`: `_has_path`, `_path_record`, `_paths_error`, `_output_spec_at` | `NamedTree.__contains__` and its messages, with the output name as a special case |
 | `core/_batch.py`: `_has_path`, `_at_paths`; `core/_record_batch.py`: `_has_path`, `_check_path` | the check of a path and the error for an object without paths |
 | `distributions/_empirical.py`: `_projection`, `_atoms_at_paths` | the cut of a batch of atoms, with its own removal of the output name |
-| `distributions/_conditional.py`: `_check_rename_source`, `_is_input_path` | the nodes of the input record, and the check of a rename key |
+| `distributions/_conditional.py`: `_check_rename_source`, `_is_input_path` | the check of a rename key against the input names and the event's paths |
 
 ## Appendix B. Readings this plan adopts
 
@@ -657,4 +668,3 @@ Each step is one PR.
 3. **A bare value.** An array or an opaque value standing alone may state an output name, as the conceptual model's `outputs(alpha) = {a: alpha}` does. Without one it has no outputs, as II.2 says today.
 4. **Promotion to a numeric record.** The conceptual model asks whether a list that leaves only numeric fields gives a numeric record. It does today, since `RecordSpec.__new__` returns a `NumericRecordSpec` when every field is numeric. `numeric-contract.md` § 4.1 makes numeric-ness a property of the spec, so the question has the same answer without a class change.
 5. **Coupled and standalone marginals.** `x[p]` gives the coupled marginal, and the operation `marginal(d, p)` the standalone one (VI.8). Both follow the paths of § 4.2, and this plan changes neither.
-6. **An input cut by a path.** An input whose record spec a path cuts becomes required (§ 4.4), as II.2 states.
