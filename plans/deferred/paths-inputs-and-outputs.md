@@ -401,14 +401,17 @@ def _path_inside(path: str, *, base: str) -> str:
 
 
 def _complement(selected_paths: tuple[str, ...], tree_paths: Iterable[str]) -> tuple[str, ...]:
-    """The paths of the nodes that ``without(*selected_paths)`` keeps, each as high as it can be.
+    """The paths that select what ``without(*selected_paths)`` keeps.
+
+    For a tree ``x``, ``x.without(*selected_paths)`` is
+    ``x[list(_complement(selected_paths, tree_paths))]``.
 
     A node of the tree is in the result when it is not a selected node, does
     not contain a selected node, does not lie inside a selected node, and is
-    top-level or has a parent that contains a selected node. The selected paths
+    top-level or has a parent that contains a selected node. So each kept part
+    of the tree is named by the path of its largest node. The selected paths
     and the result then split the fields: every field lies at or inside exactly
-    one path of the two. So for a tree ``x``, ``x.without(*selected_paths)`` is
-    ``x[list(_complement(selected_paths, tree_paths))]``.
+    one path of the two.
 
     Parameters
     ----------
