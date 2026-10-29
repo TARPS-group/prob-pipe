@@ -10,7 +10,6 @@ from __future__ import annotations
 from typing import Any
 
 from ..core._specs import OutputSpec
-from ..core.record import Record
 from ..distributions._conditional import ConditionalDistribution, ConditionalDistributionSpec
 from ..distributions._distribution import Distribution, DistributionSpec
 from ..distributions._factored import _event_of
