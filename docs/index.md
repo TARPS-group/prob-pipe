@@ -5,7 +5,10 @@
 
 --8<-- "README.md:intro"
 
-![The tools you already use, such as Stan, PyMC, BlackJAX, NumPy, pandas, and ArviZ, joined together by ProbPipe, which provides provenance tracking, random key management, model format conversion, uncertainty propagation, and swappable execution backends and inference algorithms](assets/probpipe-workflow-language.png)
+<picture>
+  <source media="(max-width: 600px)" srcset="assets/probpipe-workflow-language-narrow.svg">
+  <img alt="The tools you already use, such as Stan, PyMC, BlackJAX, NumPy, pandas, and ArviZ, joined together by ProbPipe, which provides provenance tracking, random key management, model format conversion, uncertainty propagation, and swappable execution backends and inference algorithms" src="assets/probpipe-workflow-language.svg">
+</picture>
 
 ## What you can do
 

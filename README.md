@@ -20,7 +20,10 @@ provenance tracking, and execution backends that so often create friction that s
 By keeping the mathematics separate from the computational implementation, ProbPipe makes workflows maintainable and reliable.
 <!-- --8<-- [end:intro] -->
 
-![The tools you already use, such as Stan, PyMC, BlackJAX, NumPy, pandas, and ArviZ, joined together by ProbPipe, which provides provenance tracking, random key management, model format conversion, uncertainty propagation, and swappable execution backends and inference algorithms](docs/assets/probpipe-workflow-language.png)
+<picture>
+  <source media="(max-width: 600px)" srcset="docs/assets/probpipe-workflow-language-narrow.svg">
+  <img alt="The tools you already use, such as Stan, PyMC, BlackJAX, NumPy, pandas, and ArviZ, joined together by ProbPipe, which provides provenance tracking, random key management, model format conversion, uncertainty propagation, and swappable execution backends and inference algorithms" src="docs/assets/probpipe-workflow-language.svg">
+</picture>
 
 ## What you can do
 
