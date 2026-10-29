@@ -6,18 +6,20 @@ repo_name: TARPS-group/prob-pipe
 
 theme:
   name: material
+  logo: assets/logo/probpipe-mark-dark.svg
+  favicon: assets/logo/favicon.png
   palette:
     - media: "(prefers-color-scheme: light)"
       scheme: default
-      primary: indigo
-      accent: indigo
+      primary: custom
+      accent: custom
       toggle:
         icon: material/brightness-7
         name: Switch to dark mode
     - media: "(prefers-color-scheme: dark)"
       scheme: slate
-      primary: indigo
-      accent: indigo
+      primary: custom
+      accent: custom
       toggle:
         icon: material/brightness-4
         name: Switch to light mode
@@ -88,12 +90,21 @@ not_in_nav: |
   tutorials/06_simulating.ipynb
   tutorials/07_posterior.ipynb
 
+# The logo's README is for readers of the repository on GitHub.
+exclude_docs: |
+  assets/logo/README.md
+
 nav:
   - Home: index.md
   - Get started:
     - Installation: get_started/installation.md
     - Quickstart: get_started/quickstart.ipynb
     - Design assistant: get_started/design_assistant.md
+  - Tutorials:
+    - "1. A first look at ProbPipe": tutorials/01_first_analysis.ipynb
+    - "2. Do my modeling assumptions make sense?": tutorials/02_model_checking.ipynb
+    - "3. Revising a model": tutorials/03_modifying_model.ipynb
+    - "4. Forecasting with uncertainty": tutorials/04_forecasting.ipynb
   - User guide:
     - user_guide/index.md
     - Terms: user_guide/01_terms.ipynb
@@ -106,11 +117,6 @@ nav:
     - Converting and updating distributions: user_guide/08_conversion_and_updating.ipynb
     - How a result was computed: user_guide/09_how_results_are_computed.ipynb
     - Ray via Prefect: user_guide/ray.md
-  - Tutorials:
-    - "1. A first look at ProbPipe": tutorials/01_first_analysis.ipynb
-    - "2. Do my modeling assumptions make sense?": tutorials/02_model_checking.ipynb
-    - "3. Revising a model": tutorials/03_modifying_model.ipynb
-    - "4. Forecasting with uncertainty": tutorials/04_forecasting.ipynb
   - API reference:
     - api/index.md
     - Values and records: api/values.md

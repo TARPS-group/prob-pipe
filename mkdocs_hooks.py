@@ -25,6 +25,10 @@ MkDocs rewrites such links in a Markdown page, and mkdocs-jupyter leaves them
 in a notebook's HTML, so the hook rewrites each one to the page's URL on the
 site. A link to a file that the site does not build logs a warning, which fails
 ``mkdocs build --strict``.
+
+The header shows the site name as the logo's wordmark does, with "Pipe" in the
+logo's collar color, so the hook wraps "Pipe" of the header's site name in a
+``<span class="pp-pipe">``, which ``docs/stylesheets/extra.css`` colors.
 """
 
 from __future__ import annotations
@@ -66,6 +70,10 @@ _PAGE_LINK = re.compile(
 )
 
 #: The elements whose text keeps its citations as text.
+_HEADER_SITE_NAME = re.compile(
+    r'(<div class="md-header__topic">\s*<span class="md-ellipsis">\s*)ProbPipe(\s*</span>)'
+)
+
 _TEXT_ONLY_ELEMENTS = frozenset({"a", "code", "pre", "script", "style", "textarea"})
 
 
@@ -169,3 +177,13 @@ def on_page_content(html: str, page: Any, files: Any, **_: object) -> str:
         urls = {file.src_uri: file.url for file in files.documentation_pages()}
         html = link_notebook_pages(html, page.file.src_uri, page.url, urls)
     return html
+
+
+def color_site_name(output: str) -> str:
+    """The page with "Pipe" of the header's site name wrapped in ``<span class="pp-pipe">``."""
+    return _HEADER_SITE_NAME.sub(r'\1Prob<span class="pp-pipe">Pipe</span>\2', output, count=1)
+
+
+def on_post_page(output: str, **_: object) -> str:
+    """MkDocs hook: the header's site name in the colors of the logo's wordmark."""
+    return color_site_name(output)
