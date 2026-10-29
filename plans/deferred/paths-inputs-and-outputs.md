@@ -7,15 +7,19 @@
 > It revisits the concepts of `plans/declarations-and-addressing.md` (Part I §§ 2 to 4, Part II §§ 9 to 12) and replaces that plan's unmerged steps S4b and G1a to G5; § 7 lists the edits that plan and the other deferred plans need.
 > Once approved, its rules move into `design/` (II.1, II.2, II.5, II.6, III.3, III.5, III.7, III.9, III.10, and the glossary) and its steps into the plans of the work after the workshop.
 
-**Decisions this plan asks for, all open** (each explained where it arises, and gathered in § 9):
+**Settled with the maintainer on 2026-10-28:**
 
-1. Which objects have paths: every object whose value spec has paths (recommended), or only an object whose value spec is a record (§ 4.2).
-2. Two cases for outputs instead of II.2's five, so that every named object has outputs (§ 4.3).
-3. The output name is stored on the object, not inside its spec; `OutputSpec` is removed, and an object's output spec is a `RecordSpec` (§ 4.3).
-4. A list of paths keeps each node at its full path, and `select` renames to last names (§ 4.1).
-5. One public conformance relation, `conforms_to`, with inputs compared contravariantly (§ 4.5).
-6. `select` returns an object of the same kind instead of a `dict` (§ 4.1).
-7. The names `value_spec`, `return_spec`, `output_name`, `outputs`, and `output_spec` (§ 5).
+1. A record's paths are the paths of its own tree and end at its leaves; any other object has paths exactly when its value spec is a record (§ 4.1, § 4.2). This reverses the decision of 2026-10-16 that paths go through an object a record holds.
+2. `in` is part of the path interface (§ 4.1).
+3. A list of paths keeps each node at its full path (§ 4.1).
+4. `select` is not part of the path interface, and this plan leaves it unchanged (§ 4.1).
+
+**Decisions still open** (each explained where it arises, and gathered in § 9):
+
+1. Two cases for outputs instead of II.2's five, so that every named object has outputs (§ 4.3).
+2. The output name is stored on the object, not inside its spec; `OutputSpec` is removed, and an object's output spec is a `RecordSpec` (§ 4.3).
+3. One public conformance relation, `conforms_to`, with inputs compared contravariantly (§ 4.5).
+4. The names `value_spec`, `return_spec`, `output_name`, `outputs`, and `output_spec` (§ 5).
 
 ---
 
@@ -44,18 +48,19 @@ The goal is one definition of each idea, one implementation that every kind shar
 
 The maintainer's note "Core Conceptual Model" (Obsidian vault, `work/projects/probpipe/design/`) builds the ideas in three layers.
 
-1. **Path indexing is defined for records.** A record is a tree with a name at every node, and `R[p]` is the node at the path `p`. The *path indexing interface* is `[]`, `without`, and `with_path_names`, which the code now calls `rename`. Its rules:
+1. **Path indexing is defined for records.** A record is a tree with a name at every node, and `R[p]` is the node at the path `p`. The *path indexing interface* is `[]`, `in`, `without`, and `rename`. Its rules:
    - indexing an object without paths is a `TypeError`, and a missing path is a `KeyError`;
    - `x[p1/p2] == x[p1][p2]`;
    - `x[p, q] == x[[p, q]]`, and both, like `without`, return an object of the kind of `x`;
    - `paths(x[~Q]) == paths(x.without(Q))` up to order, so `without` and list indexing need one source of truth;
-   - `S(x)[P] == S(x[P])`, where `S(x)` is the static structure of `x`.
+   - `S(x)[P] == S(x[P])`, where `S(x)` is the static structure of `x`;
+   - `p in x` exactly when `x[p]` exists.
 2. **Other kinds inherit the interface.** A law, a kernel, a function, and a batch support paths when their event, output, or element is a record, and `x[p]` is the *marginal* of that kind.
 3. **Outputs are defined from paths.** An object with paths has the outputs `top(x)`, and the output `c` is `x[c]`. An object without paths is one output, the whole object, under a name assigned to it. That name gives no path: for an array `alpha` named `a`, `alpha["a"]` is a `TypeError`, while `outputs(alpha)["a"]` is `alpha`.
 
 Inputs are named slots, each with a structure and an optional default.
 *Binding* connects an output to the input of the same name when the output's structure conforms to the input's.
-The note lists two gaps: the definition of conformance, and the definition of the dimension scope.
+The note lists three gaps: the definition of conformance, the definition of the dimension scope, and its definition of `[[ ]]`, which is to keep full paths as its examples already do.
 
 ### 2.2 What `design/` states
 
@@ -67,13 +72,18 @@ The note lists two gaps: the definition of conformance, and the definition of th
 | Which other objects have paths | event, output, or element is a record | the value type has paths, at any depth (II.2) |
 | `x[p1/p2] == x[p1][p2]` | yes | yes |
 | `[]` at a list, and `without`, keep the kind | yes | yes |
-| `R[["b/c"]]` | `{c: …}`, by last name | `{b: {c: …}}`, by full path (II.6) |
+| `R[["b/c"]]` | `{b: {c: …}}`, by full path | `{b: {c: …}}`, by full path (II.6) |
 | Outputs of an object with a record value | its top-level names | its top-level names |
 | Outputs of an object without a record value | one, under a stated name | one for a base value; the outputs of the element or return value for a batch or function value; none for a law value (II.2, cases 2 to 5) |
 | Where a stated name is stored | not said | inside the spec, in `OutputSpec` (II.2) |
 | Conformance | open | defined by kind (II.1) |
 
 Three differences matter.
+
+**The design continues paths past a record's leaves.**
+For a law `d` over `{mu, sigma}`, II.6 gives the record `{x: 3.0, g: d}` the paths `g/mu` and `g/sigma`.
+II.2 gives paths to every object whose value type holds a record at any depth, such as a batch of laws over a record.
+The conceptual model ends a record's paths at its leaves, and gives other kinds paths only when their event, output, or element is a record.
 
 **The design states outputs in more cases.**
 II.2 reads outputs from the *value type*: the event type of a law or kernel, the return type of a function, the element type of a batch, and a value's own type.
@@ -83,10 +93,6 @@ The conceptual model needs two cases, and every named object has outputs.
 **The design stores the stated name in the spec.**
 `OutputSpec` pairs a term spec with an optional name, and `DistributionSpec.event_spec`, `FunctionSpec.output_spec`, and `BatchSpec.element_spec` each hold one.
 II.2 § Equality then needs three rules to keep the name out of a term's equality, hash, fingerprint, and JAX structure while the spec's own `==` compares it.
-
-**The design selects a list by full paths.**
-The conceptual model's examples 3 and 6 give `R[["b/c"]] == {c: y}`.
-Its own rule `paths(x[~Q]) == paths(x.without(Q))` needs full paths, since `without` keeps every node at its path.
 
 ### 2.3 What the code does
 
@@ -107,7 +113,7 @@ The overhaul merged steps S1, S2a, S2b-out, S2b-in, S3, and S4a of the declarati
 The shared parts are the reader of the argument, `_as_paths` in `core/_shapes.py`, and the separator `_PATH_SEP` in `core/named_tree.py`.
 Each kind repeats the rest: whether a path exists, the spec at a path, canonical order, the error for an object with no paths, and the cut to a list.
 `distributions/_views.py` alone holds more than a dozen helpers that restate `NamedTree` on an `OutputSpec` (Appendix A).
-Paths do not continue into held objects anywhere:
+Every kind ends a record's paths at its leaves, as the conceptual model does:
 
 ```python
 r = Record({"x": 3.0, "g": d})
@@ -162,7 +168,7 @@ The first pair is the variance of inputs: the code compares them covariantly, an
 ## 3. Principles
 
 1. **Structure and names are separate.** A spec states what an object is. A name says how the object connects to others, and it is stored on the object.
-2. **Records are the only source of names inside an object.** Every other kind's paths and outputs are read from a record in its value spec.
+2. **Records are the only source of names inside an object.** Every other kind's paths and outputs are read from its value spec when that spec is a record.
 3. **One rule per idea, applied to specs first.** Each operation is defined on specs, and an object's operation is checked against it: `x[p].spec == x.spec[p]`.
 4. **Two relations between specs.** Conformance checks what is received against what is declared, and unification combines two declarations of one value.
 
@@ -176,7 +182,7 @@ Every object has a spec, its static structure, which the conceptual model writes
 
 > [!IMPORTANT]
 > **Definition (spec, value spec).**
-> 1. The *spec* of an array is its shape, dtype, and support; of an opaque value, its Python type and metadata; of a record, its tree with a spec at each field.
+> 1. The *spec* of an array is its shape, dtype, and support; of an opaque value, its Python type and metadata; of a record, its tree with a spec at each leaf.
 > 2. The spec of a law is its *event spec*; of a kernel, its *input spec* and event spec; of a function, its input spec and its *return spec*; of a batch, its levels and its *element spec*. Each of these is itself a spec, so specs nest.
 > 3. The *value spec* of an object is the spec of one of its values: a law's or kernel's event spec, a function's return spec, a batch's element spec, and a record's or base value's own spec.
 >
@@ -188,32 +194,34 @@ A law over `{mu, sigma}`, its draws, its mean, and a batch of its draws share on
 Records are the only objects with a name at each node.
 
 > [!IMPORTANT]
-> **Definition (paths of a record).** A *path* is a sequence of names joined by `/`, as `g/c`.
-> The paths of a record are the paths of its tree, together with `q/p` for each field `q` that holds an object `y` and each path `p` of `y`.
-> `R[p]` is the node at `p`, and at a path `q/rest` through a field holding `y`, it is `y[rest]`.
+> **Definition (paths of a record).** A record's tree has a *group* at each nested record and a *leaf* at each object of any other kind.
+> A *path* is a sequence of names joined by `/`, as `g/c`, that leads from the top of the tree to a group or a leaf.
+> The paths of a record are the paths of its tree, and `R[p]` is the node at `p`: the object at a leaf, or the record at a group.
 
-The **path interface** is four operations:
+A path ends at a leaf.
+For a law `d` over `{mu, sigma}` held at the leaf `g`, `R["g"]` is `d`, and `R["g"]["mu"]` is `d["mu"]`.
+
+The **path interface** is five operations:
 
 | Operation | Result for a record `R` |
 |---|---|
-| `R[p]` | the node at `p`: a field's object, or a group as a record |
+| `R[p]` | the node at `p`: a leaf's object, or a group as a record |
 | `R[[p, q, …]]`, also written `R[p, q, …]` | the record of the chosen nodes, each at its full path, in `R`'s order |
+| `p in R` | whether `p` is a path of `R` |
 | `R.without(p, q, …)` | `R` with those nodes removed, every other node at its path |
 | `R.rename({old: new})` | `R` with nodes renamed or moved, all at once, by II.6's rules |
 
 > [!IMPORTANT]
 > **Rules (path interface).** For an object `x` with paths, a path `p`, and a list of its paths `Q`:
 > 1. one reader refuses a malformed argument (II.6's table); a missing path is a `KeyError`; any path given to an object without paths is a `TypeError`;
-> 2. `x[p1/p2] == x[p1][p2]`;
+> 2. `x[p1/p2] == x[p1][p2]` for each path `p1/p2` of `x`;
 > 3. `x[p]` is of the kind of the node at `p`, and `x[Q]` and `x.without(*Q)` are of the kind of `x`;
 > 4. `x.without(*Q) == x[complement(Q)]`, where `complement(Q)` lists the outermost nodes that are neither in `Q` nor above or below a path of `Q`, so selection and removal partition the leaf paths;
 > 5. `x.spec[p] == x[p].spec`, and likewise for a list, `without`, and `rename`;
-> 6. removing every node is a `ValueError`.
+> 6. removing every node is a `ValueError`;
+> 7. `p in x` exactly when `x[p]` raises no `KeyError`; a malformed path, and any path given to an object without paths, raise as they do for `[]`.
 
 By rule 4, removal is derived from selection: an implementation provides the cut to a list, and `without` is the cut to the complement.
-
-`select(*paths, **keyed)` changes names: it cuts to the paths, then renames each node to its last name or its keyword.
-It is defined as `x[paths].rename(...)`, so it adds no fifth primitive.
 
 ```python
 R = Record({"a": 1.0, "b": {"c": 2.0, "d": 3.0}})
@@ -221,26 +229,19 @@ R["b/c"]               # 2.0
 R[["b/c"]]             # {b: {c: 2.0}}
 R["a", "b/c"]          # {a: 1.0, b: {c: 2.0}}
 R.without("b/d")       # {a: 1.0, b: {c: 2.0}}, the same record as R["a", "b/c"]
-R.select("a", "b/c")   # {a: 1.0, c: 2.0}
+"b/c" in R             # True
 ```
 
-**Decision 4: a list keeps full paths.**
-- **Recommendation.** As above. Rules 4 and 5 need it, `design/` and the code already do it, and the conceptual model's examples 3, 6, and 7 change to full paths. Its example 7 reads `{a: x, b: {c: y, d: z}}`.
-- **Alternative.** A list renames to last names. Then a list and `without` disagree (rule 4), and `R[["g1/theta", "g2/theta"]]` collides.
-
-**Decision 6: `select` keeps the kind.**
-- **Recommendation.** `select` returns an object of the kind of `x`, as rule 3 requires, so `d.select("g/b")` on a law is a law over `{b}`.
-- **Alternative.** `select` keeps today's return type, a `dict` of nodes on `Record` and a `dict` of batches on `RecordBatch`, and is not part of the path interface.
+`Record.select` and `RecordBatch.select` are not part of the path interface, and this plan leaves them unchanged.
+Each returns a `dict` keyed by last names, for `**`-splatting.
 
 ### 4.2 Which objects have paths
 
-The conceptual model's rule, "a law has paths when its event is a record", decides the common cases.
-A path through a held object, such as `g/mu` in a law over `{g: Q}` where `Q` is a law over `{mu}`, needs a further rule.
-The chaining rule `x[g/mu] == x[g][mu]` decides it: `x` has the path `g/mu` exactly when `x[g]` has the path `mu`.
-
 > [!IMPORTANT]
-> **Definition (paths of an object).** The paths of an object are the paths of its value spec, where a record spec's paths continue into the specs its fields hold (§ 4.1).
-> An object has paths exactly when its value spec does.
+> **Definition (paths of an object).** An object has paths exactly when its value spec is a record spec, and its paths are the paths of that record spec (§ 4.1).
+
+A record's value spec is its own spec, so for a record the definition gives the paths of § 4.1.
+For the other kinds it is the conceptual model's rule: a law or kernel has paths when its event is a record, a function when its return value is, and a batch when its element is.
 
 > [!IMPORTANT]
 > **Definition (marginal).** For an object `x` that is not a record, `x[p]` is the object of `x`'s kind whose spec is `x.spec[p]`, and which gives `v[p]` wherever `x` gives a value `v`:
@@ -254,12 +255,8 @@ The chaining rule `x[g/mu] == x[g][mu]` decides it: `x` has the path `g/mu` exac
 Consequences of the two definitions:
 1. A law, its draws, its mean, and a batch of its draws have one set of paths, and `sample(d[p])` is distributed as `sample(d)[p]` at every path.
 2. `x.spec[p] == x[p].spec` holds for every kind, by construction (rule 5).
-3. Paths chain through any nesting. For a batch `b` of laws over `{mu, sigma}`, `b["mu"]` is the batch of the coupled marginals `b[i]["mu"]`.
-4. An object whose value spec holds no record at any depth, such as a law over an array, has no paths.
-
-**Decision 1: which objects have paths.**
-- **Recommendation.** The definition above. It gives the conceptual model's answer in every case the model lists, and it covers the cases the model leaves out, such as a batch of laws. One function of the spec enumerates the paths of every object.
-- **Alternative.** The conceptual model as written: an object other than a record has paths only when its value spec is a record. A law over `{g: Q}` then lacks the path `g/mu` that each of its draws has. Records keep paths through held objects and other kinds do not, so two enumerations of paths are needed. Moving from this alternative to the recommendation later only adds paths, so it breaks no code.
+3. An object whose value spec is not a record has no paths, whatever its value holds. A law over an array, a batch of laws over `{mu, sigma}`, and a function that returns such a law have none; for the batch `b`, `b[i]["mu"]` reads a part of one element.
+4. An object has paths exactly when its outputs are the top-level names of its value spec (§ 4.3).
 
 ### 4.3 Outputs
 
@@ -279,7 +276,7 @@ Any other value spec has no names of its own, so the object is one output, under
 
 Consequences of the definition:
 1. **A stated name gives no path.** `Normal("x", 0, 1)["x"]` is a `TypeError`, and `Normal("x", 0, 1).outputs["x"]` is the law, as the conceptual model requires.
-2. **Outputs split only at a record.** II.2 splits the outputs of an object whose value is a function or a batch (its cases 3 and 4), and gives none to one whose value is a law (its case 5). Here each of these is one output under its stated name, and its parts are selected by path.
+2. **Outputs split only at a record.** II.2 splits the outputs of an object whose value is a function or a batch (its cases 3 and 4), and gives none to one whose value is a law (its case 5). Here each of these is one output under its stated name.
 3. **A function that returns a law has one output**, the function. II.2 asks for it to be wrapped in a record under a name; the output name gives the same result without changing the object's value spec.
 4. **The parts that are outputs determine the object.** A record is rebuilt from its children, a function and a batch from their marginals, and a law from its coupled marginals, which share its random variable. An object whose value is a law keeps its coupled marginals together only as a whole, so it is not split.
 5. **Spec equality ignores names with no rule to say so.** `Normal("x", 0, 1).spec == Normal("y", 0, 1).spec`, since neither spec holds a name, and the fingerprint and JAX structure read the spec.
@@ -290,9 +287,10 @@ Consequences of the definition:
 | a record `{a, b: {c}}` | `{a, b: {c}}` | `a`, `b`, `b/c` | `a`, `b` |
 | a function from `{u, v}` to an array, output name `f` | `()` | none | `f`, whose value is the function |
 | a function from an array to `{a, b}` | `{a, b}` | `a`, `b` | `a` and `b`, whose values are marginal functions |
-| a function returning a law over `{a, b}`, output name `h` | a law spec | `a`, `b` | `h`, whose value is the function |
+| a function returning a law over `{a, b}`, output name `h` | a law spec | none | `h`, whose value is the function |
 | a law over `{a, b}` | `{a, b}` | `a`, `b` | `a` and `b`, whose values are coupled marginals |
-| a batch of laws over `{a, b}`, output name `fits` | a law spec | `a`, `b` | `fits`, whose value is the batch |
+| a batch of laws over `{a, b}`, output name `fits` | a law spec | none | `fits`, whose value is the batch |
+| a record `{x, g}` whose leaf `g` holds a law over `{mu}` | `{x, g}` | `x`, `g` | `x`, `g` |
 
 A check made before anything runs, such as whether two objects can merge, needs each output's name and spec.
 
@@ -304,11 +302,11 @@ For a law over `{mu, sigma}` the output spec is `{mu: (), sigma: ()}`, and for a
 The object's kind says how a value passes: as one draw, the result of one call, or one element (§ 4.6).
 An output spec is a `RecordSpec`, so the operations II.2 lists for output specs are record operations that `NamedTree` already implements: `O["g/b"]`, `O[["a"]]`, `O.without("g")`, `O.rename(...)`, and `O & P`.
 
-**Decision 2: two cases for outputs.**
+**Decision 1: two cases for outputs.**
 - **Recommendation.** The definition above, which is the conceptual model's.
 - **Alternative.** II.2's five cases, which leave an object whose value is a law without outputs until it is wrapped.
 
-**Decision 3: the output name is stored on the object.**
+**Decision 2: the output name is stored on the object.**
 - **Recommendation.** Specs hold structure only, an object stores its output name, and the output spec is computed from both. `OutputSpec` is removed.
 - **Alternative.** `OutputSpec` stays as a computed view, built by `x.output_spec` and never stored inside another spec. It keeps the class and its repr, at the cost of a class that repeats `RecordSpec`.
 
@@ -355,7 +353,7 @@ A `DimensionScope` holds the size each dimension name is bound to.
 It binds a name the first time the name is compared with a size, and refuses a second size for it and two unbound names at one axis.
 Every relation takes one, and a caller that checks several specs together, such as the inputs of one call or the operands of one merge, passes the same scope to each.
 
-**Decision 5: one public relation.**
+**Decision 3: one public relation.**
 - **Recommendation.** `A.conforms_to(B, scope=None)`, `unify(A, B, scope=None)`, and `B.refine(A)` are the entry points. `bind_dims_from_spec(A)` is kept as `refine`, and `bind_dims_from_value(v)` as refinement by the value's spec.
 - **Alternative.** Keep today's private names, and fix only the departures in the table.
 
@@ -412,7 +410,7 @@ Its first call refines the return spec.
 Until then, reading its `output_spec` raises `TypeError`, as II.2 says for an unspecified output.
 Constructors default the output name as today: a family's first argument, a function's callable name, and `"element"` for a batch built from bare values.
 
-**Decision 7: names.**
+**Decision 4: names.**
 - **Recommendation.** `value_spec`, `with_value_spec`, `return_spec` (today's `FunctionSpec.output_spec`, which no longer names an output spec), `output_name`, `outputs`, and `output_spec`. `output_name` is already the canonical name of `design/glossary.md`.
 - **Alternative.** `result_spec` for the return spec, which avoids "return" as a noun.
 
@@ -420,7 +418,7 @@ Constructors default the output name as today: a family's first argument, a func
 
 One module, `core/_paths.py`, holds the path syntax that three modules split today: `_PATH_SEP`, the reader `_as_paths`, `_last_name`, and the prefix helpers that `_views.py` restates.
 
-One mixin, `PathIndexed`, implements `[]`, `in`, `without`, `rename`, and `select` for every kind:
+One mixin, `PathIndexed`, implements `[]`, `in`, `without`, and `rename` for every kind:
 
 ```python
 class PathIndexed:
@@ -435,7 +433,6 @@ class PathIndexed:
     def __contains__(self, path): ...
     def without(self, *paths): ...             # self._cut(complement(paths)), rule 4
     def rename(self, renames=None, /, **keyword_renames): ...
-    def select(self, *paths, **keyed): ...     # self[paths].rename(...)
 ```
 
 The mixin writes once the reading, the check, the ordering, the complement, the `TypeError` for an object without paths, and every message.
@@ -443,14 +440,15 @@ Each kind provides four methods, and every spec class derives them from `value_s
 
 | Class | `_part(p)` | `_cut(ps)` |
 |---|---|---|
-| `Record` | the node, or the held object's part | the cut tree |
-| `RecordSpec` | the node's spec, or the held spec's part | the cut tree |
+| `Record` | the node at `p` | the cut tree |
+| `RecordSpec` | the spec at `p` | the cut tree |
 | `DistributionSpec`, `ConditionalDistributionSpec`, `FunctionSpec`, `BatchSpec` | `with_value_spec(value_spec[p])` | `with_value_spec(value_spec[ps])` |
 | `Distribution` | `CoupledMarginal(d, p)` | `CoupledMarginal(d, ps)` |
 | `ConditionalDistribution` | the conditional coupled marginal at `p` | the same at a list |
 | `Function` | `f` followed by the selection at `p` | the same at a list |
 | `RecordBatch` | the column, or the batch of a group's records | the cut columns |
-| other batches | the lifted part, by `batch-contract.md` § 4.8 | the same at a list |
+
+A batch of any other kind has no paths, so the mixin refuses its paths with the `TypeError` of rule 1.
 
 ### 5.3 Outputs, implemented once
 
@@ -473,7 +471,7 @@ Each spec class provides two private methods, `_conform(other, scope, path)` and
 
 ## 6. Tests
 
-1. One test, parametrized over every class of § 5.2, asserts rules 2 to 6 of § 4.1 and consequence 2 of § 4.2 on a table of objects, objects holding laws in record fields included.
+1. One test, parametrized over every class of § 5.2, asserts rules 2 to 7 of § 4.1 and consequence 2 of § 4.2 on a table of objects, records holding laws at leaves included, and asserts the `TypeError` for each kind of § 4.2's consequence 3.
 2. One table test of `conforms_to` and `unify` per kind, including each case of § 2.3.
 3. One test that `x.output_spec` and `x.outputs` follow § 4.3 for each row of its table.
 4. One test that no module outside `core/_paths.py` splits or joins a path with `/` or `_PATH_SEP`.
@@ -483,19 +481,29 @@ Each spec class provides two private methods, `_conform(other, scope, path)` and
 | Plan | Its section | Edit |
 |---|---|---|
 | `declarations-and-addressing.md` | Part I § 3.2, § 3.5, § 3.7 | Outputs by the two cases of § 4.3; the output name stored on the object; no object without outputs because of its value's kind |
+| | Part I § 2.3, § 4.1, § 4.2, and the figure of a held field | A record's paths end at its leaves, and an object has paths only when its value type is a record |
 | | § 11, and the technical notes of § 3.5 | `OutputSpec` is removed, and an output spec is a `RecordSpec` |
 | | B.6 G1a, G1b, G2 | Not needed: the interim whole form exists because names are stored in specs |
-| | B.6 S4b, G3, G5, and G4's `law.without` | Replaced by steps P2 to P4 of § 8 |
+| | B.6 S4b, G3, G5, and G4's `law.without` | Replaced by steps P2 to P4 of § 8; G3's paths through held objects, and G5's `[]` on batches of laws and of functions, are dropped |
+| | B.4, rows T30 and I10 | `without` through a law held at a leaf, and on a batch of laws, is dropped |
 | `batch-contract.md` | § 4.3, step B1 | The one check is this plan's `conforms_to`, from step P1 |
 | | § 4.5, § 5.1 | `element=OutputSpec(x=())` becomes `element=(), output_name="x"` |
-| | § 4.8 | The lifted-operation rule gives `_part` and `_cut` for batches of non-records |
+| | § 4.8 | The lifted-operation rule does not cover `[]` at a path, `without`, or `rename`: a batch whose element is not a record has no paths |
+| | § 5.4 rule 5, § 5.5 item 3, step B6 | A batch of functions or of laws has no paths, so `fb["a"]`, `laws["mu"]`, and `laws.without("mu")` are refused |
 | | § 4.9 | The name is out of spec equality with no canonical spec |
+| `deferred.md` | the entries for steps G3 and G5, and for `without` on every kind | Narrowed as for B.6 and row T30 above |
 | `numeric-contract.md` | § 1 and its examples | `event_spec=OutputSpec(trajectory=event)` becomes `event_spec=event, output_name="trajectory"` |
 | | § 4.2 | `VectorLayout` reads leaf paths from the one enumeration of § 4.2 |
 | `vector-interface.md`, `inference-interface.md` | throughout | `event_spec.term_spec` becomes `event_spec` |
-| `decisions.md` | the entries of 2026-10-20 (the name out of a term's equality) and 2026-10-18 (O3, the element name stored in `BatchSpec`) | Superseded by Decision 3 once it is approved |
+| `decisions.md` | the entry of 2026-10-16 (paths go through a law, a function, or a batch held in a field) | Superseded by the settled rule for paths |
+| | the entries of 2026-10-20 (the name out of a term's equality) and 2026-10-18 (O3, the element name stored in `BatchSpec`) | Superseded by Decision 2 once it is approved |
 
-The conceptual model needs three edits: lists keep full paths (its examples 3, 6, and 7), the rule of § 4.2 for which objects have paths if Decision 1 takes the recommendation, and outputs split where "the value spec is a record" rather than where "the object supports paths".
+`design/` drops paths through held objects from three sections:
+- II.2, where an object's value type has paths at any depth;
+- II.6, where `{x: 3.0, g: d}["g/mu"]` is `d["mu"]` and `without` reaches into a held term;
+- III.3, where `record[path]` reads through a held term.
+
+The conceptual model needs one edit: its definition of `R[[p]]` keeps the full path, as its examples already do.
 
 ## 8. Steps
 
@@ -503,24 +511,21 @@ Each step is one PR.
 
 1. **P1, conformance:** `core/_conformance.py` with `DimensionScope`, `conforms_to`, `unify`, and `refine`; contravariant inputs, directional opaque types, and unknown sides by § 4.5; `is_valid` through conformance; `InputSpec.__and__` through `unify`. It adds names and fixes the departures, and renames nothing. `batch-contract.md` step B1 builds on it.
 2. **P2, names out of specs:** the four specs of § 5.1 hold term specs; `output_name` is stored on objects; `output_spec` is computed; `OutputSpec` is removed; fingerprints, equality, and JAX static data read the spec as it is. It is one PR with two commits: a scripted rewrite of the `.term_spec` reads, then the behaviour.
-3. **P3, one path interface:** `core/_paths.py` and `PathIndexed`; `value_spec` and `with_value_spec`; `Record`, `RecordSpec`, `RecordBatch`, `Distribution`, and every spec class on the mixin; `without` on laws; `select` returning the kind of `x`; the helpers of Appendix A deleted.
-4. **P4, paths through every kind:** record paths into held objects; `[]` on kernels, functions, and batches of non-records.
+3. **P3, one path interface:** `core/_paths.py` and `PathIndexed`; `value_spec` and `with_value_spec`; `Record`, `RecordSpec`, `RecordBatch`, `Distribution`, and every spec class on the mixin; `without` on laws; the helpers of Appendix A deleted.
+4. **P4, paths on every kind:** the path interface on kernels and functions whose value spec is a record.
 5. **P5, outputs and feeding:** `outputs` and `output(c)`; merge's check through § 4.6.
 
 **What users see.**
-- **Breaking:** `OutputSpec` is removed; `event_spec`, `element_spec`, and `return_spec` (today's `FunctionSpec.output_spec`) are bare specs; a law's stated name is `output_name`; `x["x"]` on a law over an array named `x` raises `TypeError`; `select` returns a record; a function whose inputs accept less than declared no longer conforms.
-- **Added:** paths on every kind, `without` on laws, `outputs`, `conforms_to`, and `unify`.
-- **Fixed:** the stated name leaves spec equality and fingerprints, and `r["g/mu"]` reads through a held law.
+- **Breaking:** `OutputSpec` is removed; `event_spec`, `element_spec`, and `return_spec` (today's `FunctionSpec.output_spec`) are bare specs; a law's stated name is `output_name`; `x["x"]` on a law over an array named `x` raises `TypeError`; a function whose inputs accept less than declared no longer conforms.
+- **Added:** paths on kernels and functions whose value spec is a record, `without` on laws, `outputs`, `conforms_to`, and `unify`.
+- **Fixed:** the stated name leaves spec equality and fingerprints.
 
 ## 9. Questions for the maintainer
 
-1. **Which objects have paths.** Recommended: every object whose value spec has paths, continuing through held objects (§ 4.2).
-2. **Outputs.** Recommended: the conceptual model's two cases (§ 4.3).
-3. **Where the output name is stored.** Recommended: on the object, with `OutputSpec` removed (§ 4.3, § 5.1).
-4. **Lists of paths.** Recommended: full paths, with `select` for last names (§ 4.1).
-5. **Conformance.** Recommended: the public `conforms_to`, `unify`, and `refine`, with II.1's rules (§ 4.5).
-6. **`select`.** Recommended: it returns an object of the kind of `x` (§ 4.1).
-7. **Names.** Recommended: `value_spec`, `with_value_spec`, `return_spec`, `output_name`, `outputs`, and `output_spec` (§ 5.1).
+1. **Outputs.** Recommended: the conceptual model's two cases (§ 4.3).
+2. **Where the output name is stored.** Recommended: on the object, with `OutputSpec` removed (§ 4.3, § 5.1).
+3. **Conformance.** Recommended: the public `conforms_to`, `unify`, and `refine`, with II.1's rules (§ 4.5).
+4. **Names.** Recommended: `value_spec`, `with_value_spec`, `return_spec`, `output_name`, `outputs`, and `output_spec` (§ 5.1).
 
 ## Appendix A. Path helpers that the path interface replaces
 
@@ -540,8 +545,7 @@ Each step is one PR.
 
 ## Appendix B. Readings this plan adopts
 
-1. **`with_path_names`.** The conceptual model's name is today's `rename`, which II.6 states.
-2. **"Binding".** The conceptual model calls connecting an output to an input "binding". In `design/`, binding supplies values to inputs at a call, so this plan says "feeds", as the declarations plan does (its A.1).
+1. **"Binding".** The conceptual model calls connecting an output to an input "binding". In `design/`, binding supplies values to inputs at a call, so this plan says "feeds", as the declarations plan does (its A.1).
 3. **A bare value.** An array or an opaque value standing alone may state an output name, as the conceptual model's `outputs(alpha) = {a: alpha}` does. Without one it has no outputs, as II.2 says today.
 4. **Promotion to a numeric record.** The conceptual model asks whether a list that leaves only numeric fields gives a numeric record. It does today, since `RecordSpec.__new__` returns a `NumericRecordSpec` when every field is numeric. `numeric-contract.md` § 4.1 makes numeric-ness a property of the spec, so the question has the same answer without a class change.
 5. **Coupled and standalone marginals.** `x[p]` gives the coupled marginal, and the operation `marginal(d, p)` the standalone one (VI.8). Both follow the paths of § 4.2, and this plan changes neither.
