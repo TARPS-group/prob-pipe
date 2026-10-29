@@ -307,7 +307,9 @@ FunctionSpec(input_spec: InputSpec | None, return_spec: TermSpec | None)
 BatchSpec(element_spec: TermSpec, **levels)
 ```
 
-`TermSpec.value_spec` is the value spec of § 4, and `TermSpec.with_value_spec(spec)` replaces it.
+`value_spec` is the value spec of § 4, a read-only property of every object and every spec: a law's or kernel's `event_spec`, a function's `return_spec`, a batch's `element_spec`, and otherwise `spec`.
+No constructor takes it, and nothing sets it.
+The private `TermSpec._with_value_spec(spec)` replaces it, to build the spec of a part.
 These two methods are all that a spec of a law, kernel, function, or batch needs for paths.
 The extra step `.term_spec` goes from the 271 places that take it.
 
@@ -332,7 +334,7 @@ Until then, reading its `output_spec` raises `TypeError`, as II.2 says for an un
 Constructors default the output name as today: a family's first argument, a function's callable name, and `"element"` for a batch built from bare values.
 
 **Decision 2: names.**
-- **Recommendation.** `value_spec`, `with_value_spec`, `return_spec` (today's `FunctionSpec.output_spec`, which no longer names an output spec), `output_name`, `outputs`, and `output_spec`. `output_name` is already the canonical name of `design/glossary.md`.
+- **Recommendation.** `value_spec`, `return_spec` (today's `FunctionSpec.output_spec`, which no longer names an output spec), `output_name`, `outputs`, and `output_spec`. `output_name` is already the canonical name of `design/glossary.md`.
 - **Alternative.** `result_spec` for the return spec, which avoids "return" as a noun.
 
 ### 5.2 The path interface, implemented once
@@ -357,13 +359,13 @@ class PathIndexed:
 ```
 
 The mixin writes once the reading, the check, the ordering, the complement, the `TypeError` for an object without paths, and every message.
-Each kind provides four methods, and every spec class derives them from `value_spec` and `with_value_spec`:
+Each kind provides four methods, and every spec class derives them from `value_spec` and `_with_value_spec`:
 
 | Class | `_part(p)` | `_cut(ps)` |
 |---|---|---|
 | `Record` | the node at `p` | the cut tree |
 | `RecordSpec` | the spec at `p` | the cut tree |
-| `DistributionSpec`, `ConditionalDistributionSpec`, `FunctionSpec`, `BatchSpec` | `with_value_spec(value_spec[p])` | `with_value_spec(value_spec[ps])` |
+| `DistributionSpec`, `ConditionalDistributionSpec`, `FunctionSpec`, `BatchSpec` | `_with_value_spec(value_spec[p])` | `_with_value_spec(value_spec[ps])` |
 | `Distribution` | `CoupledMarginal(d, p)` | `CoupledMarginal(d, ps)` |
 | `ConditionalDistribution` | the conditional coupled marginal at `p` | the same at a list |
 | `Function` | `f` followed by the selection at `p` | the same at a list |
@@ -414,7 +416,7 @@ class TrackedTerm:
 
 **Specs.** The four classes of § 5.1 hold term specs, and so does every spec nested in another, such as a law's spec in a record field or a function's spec in an input.
 `FunctionSpec`'s second argument is renamed `return_spec`, and `BatchSpec(element=...)` takes a term spec.
-`TermSpec.value_spec` and `with_value_spec` arrive in this step, since the reads of `.term_spec` move to them.
+`value_spec` and `_with_value_spec` arrive in this step, since the reads of `.term_spec` move to them.
 
 **One function computes an output spec.** `core/_outputs.py` holds it:
 
@@ -496,7 +498,7 @@ Five path helpers read an `OutputSpec`: `_read_paths`, `_path_record`, `_has_pat
 P2 rewrites them over the value spec, and P3 deletes them.
 
 **Commits.** P2 is one PR of four commits, and the suite passes after each:
-1. **Accessors, with no change in behaviour:** `output_name`, `output_spec`, `value_spec`, `with_value_spec`, and `output_spec_of`, still read from the `OutputSpec` in the spec. Every reader of the tables above moves to them.
+1. **Accessors, with no change in behaviour:** `output_name`, `output_spec`, `value_spec`, `_with_value_spec`, and `output_spec_of`, still read from the `OutputSpec` in the spec. Every reader of the tables above moves to them.
 2. **Bare specs:** the four spec classes, the constructors, the `result=` rules, the five naming rules, equality, fingerprints, and JAX static data. A script rewrites the `.term_spec` reads, 279 in `probpipe/` and 443 in `tests/`.
 3. **Deletion:** `OutputSpec`, its export, and the helpers above.
 4. **Documents:** `docs/api/input_and_output_specs.md`, `docs/api/extending.md`, the notebooks that build an `OutputSpec` (user guide 01, 03, and 09, and tutorial 06), the `design/` sections of § 7, and the CHANGELOG.
@@ -561,7 +563,7 @@ Each step is one PR.
 ## 9. Questions for the maintainer
 
 1. **Conformance.** Recommended: the public `conforms_to`, `unify`, and `refine`, with II.1's rules (§ 4.5).
-2. **Names.** Recommended: `value_spec`, `with_value_spec`, `return_spec`, `output_name`, `outputs`, and `output_spec` (§ 5.1).
+2. **Names.** Recommended: `value_spec`, `return_spec`, `output_name`, `outputs`, and `output_spec` (§ 5.1).
 
 ## Appendix A. Path helpers that the path interface replaces
 
