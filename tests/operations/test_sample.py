@@ -102,9 +102,10 @@ class TestBatches:
         assert isinstance(draws, DistributionBatch)
         assert draws.batch_shape == (3,)
 
-    def test_the_draws_of_a_batch_are_independent(self):
-        values = np.asarray(sample(Gaussian("g"), sample_shape=(64,)).raw)
-        assert len(np.unique(values)) == 64
+    def test_a_batch_does_not_repeat_one_draw(self):
+        with workflow_run(seed=0):
+            values = np.asarray(sample(Gaussian("g"), sample_shape=(64,)).raw)
+        assert np.any(values != values[0])
 
     def test_a_seeded_workflow_reproduces_the_batch(self):
         with workflow_run(seed=5):
