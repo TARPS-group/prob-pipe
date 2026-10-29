@@ -20,7 +20,7 @@
 **Decisions still open** (each explained where it arises, and gathered in § 9):
 
 1. One public conformance relation, `conforms_to`, with inputs compared contravariantly (§ 4.5).
-2. The names `value_spec`, `return_spec`, `output_name`, `outputs`, and `output_spec` (§ 5).
+2. The names `value_spec`, `return_spec`, `output_names`, `outputs`, and `output_spec` (§ 5).
 
 ---
 
@@ -248,8 +248,12 @@ A law, its draws, its mean, and a batch of its draws share one set of paths (II.
 | a batch of laws over `{a, b}`, output name `fits` | a law spec | none | `fits`, whose value is the batch |
 | a record `{x, g}` whose field `g` holds a law over `{mu}` | `{x, g}` | `x`, `g` | `x`, `g` |
 
-**New:** `x.outputs`, the record that maps each output name to its output, which is the conceptual model's `outputs(x)`.
-`design/` has only `x.output(c)`, for one output, and it becomes `x.outputs[c]`.
+**New:** two public reads of the outputs.
+- `x.output_names` is the tuple of the output names, `tuple(x.output_spec.keys())`: `("x",)` for a law named `x`, `()` for an object without outputs, and `None` while the output spec is `None`.
+- `x.outputs` is the record that maps each output name to its output, which is the conceptual model's `outputs(x)`. `design/` has only `x.output(c)`, for one output, and it becomes `x.outputs[c]`.
+
+The stored name is private, so `output_names` is the one way to read the names.
+A constructor states the name with its `output_name=` keyword, and `rename` changes it, as `x.rename({"x": "z"})`.
 
 § 5.5 gives the implementation.
 
@@ -322,7 +326,7 @@ The output name moves to the object:
 ```python
 x = Normal("x", 0.0, 1.0)
 x.spec          # DistributionSpec(event_spec=NumericArraySpec(shape=(), ...))
-x.output_name   # "x"
+x.output_names  # ("x",)
 x.output_spec   # RecordSpec(x=NumericArraySpec(shape=(), ...))
 
 f = Function(predict, input_spec=InputSpec(w=()), return_spec=(), output_name="y")
@@ -338,7 +342,7 @@ Until then, its `output_spec` is `None`, as its `return_spec` is.
 Constructors default the output name as today: a family's first argument, a function's callable name, and `"element"` for a batch built from bare values.
 
 **Decision 2: names.**
-- **Recommendation.** `value_spec`, `return_spec` (today's `FunctionSpec.output_spec`, which no longer names an output spec), `output_name`, `outputs`, and `output_spec`. `output_name` is already the canonical name of `design/glossary.md`.
+- **Recommendation.** `value_spec`, `return_spec` (today's `FunctionSpec.output_spec`, which no longer names an output spec), `output_names`, `outputs`, and `output_spec`. The constructor keyword stays `output_name=`, the canonical name of `design/glossary.md`.
 - **Alternative.** `result_spec` for the return spec, which avoids "return" as a noun.
 
 ### 5.2 The path interface, implemented once
@@ -351,21 +355,21 @@ One mixin, `PathIndexed`, implements `[]`, `in`, `without`, and `rename` for eve
 class PathIndexed:
     # provided by each kind
     def _path_spec(self) -> RecordSpec | None: ...            # the record spec whose paths are this object's
-    def _part(self, path: str) -> Any: ...                    # the kind's part at one path
-    def _cut(self, paths: tuple[str, ...]) -> Self: ...       # the kind's part at a list of paths
+    def _part_at(self, path: str) -> Any: ...                     # the part at one path, of the node's kind
+    def _restrict_to(self, paths: tuple[str, ...]) -> Self: ...   # this object, of its kind, restricted to paths
     def _renamed(self, moves: Mapping[str, str]) -> Self: ...  # the kind's rename, keys already resolved
 
     # written once
-    def __getitem__(self, paths): ...          # read, check against _path_spec, order, then _part or _cut
+    def __getitem__(self, paths): ...          # read, check against _path_spec, order, then _part_at or _restrict_to
     def __contains__(self, path): ...
-    def without(self, *paths): ...             # self._cut(complement(paths)), by II.6's partition
+    def without(self, *paths): ...             # self._restrict_to(complement(paths)), by II.6's partition
     def rename(self, renames=None, /, **keyword_renames): ...
 ```
 
 The mixin writes once the reading, the check, the ordering, the complement, the `TypeError` for an object without paths, and every message.
 Each kind provides four methods, and every spec class derives them from `value_spec` and `_with_value_spec`:
 
-| Class | `_part(p)` | `_cut(ps)` |
+| Class | `_part_at(p)` | `_restrict_to(ps)` |
 |---|---|---|
 | `Record` | the node at `p` | the cut tree |
 | `RecordSpec` | the spec at `p` | the cut tree |
@@ -379,12 +383,12 @@ A batch of any other kind has no paths, so the mixin refuses its paths with the 
 
 ### 5.3 Outputs, implemented once
 
-Every tracked term gains three properties, each written once on the mixin; a spec holds no name, so specs have none of them:
+Every tracked term gains three public properties, each written once on the mixin; a spec holds no name, so specs have none of them:
 
 ```python
-x.output_name   # str | None, stored on the object; refused when the value spec is a record
-x.output_spec   # RecordSpec: the value spec if a record, else {output_name: value spec}
-x.outputs       # Record: {c: x[c]} or {output_name: x}; x.output(c) is x.outputs[c]
+x.output_names  # tuple[str, ...] | None: tuple(x.output_spec.keys()), or None while that is None
+x.output_spec   # RecordSpec | None: the value spec if a record, else {name: value spec}
+x.outputs       # Record: {c: x[c]}, or {name: x}; x.output(c) is x.outputs[c]
 ```
 
 The keys of `rename` are paths and the output name.
@@ -404,13 +408,13 @@ This section lists every change step P2 makes to move the output name out of spe
 
 ```python
 class TrackedTerm:
-    _output_name: str | None                                  # a new slot, beside _label
+    _output_name: str | None                                   # a new slot, beside _label; private
 
+    def _with_output_name(self, name: str | None) -> Self: ...  # a copy, as with_label makes; rename calls it
     @property
-    def output_name(self) -> str | None: ...
-    def with_output_name(self, name: str | None) -> Self: ...  # a copy, as with_label makes
+    def output_spec(self) -> RecordSpec | None: ...             # output_spec_of(self.value_spec, self._output_name)
     @property
-    def output_spec(self) -> RecordSpec | None: ...            # output_spec_of(self.value_spec, self.output_name)
+    def output_names(self) -> tuple[str, ...] | None: ...       # the keys of output_spec
 ```
 
 1. `_init_tracked(label, *, output_name=None, provenance=None)` stores the name, and every host class declares `_output_name` in its `__slots__`.
@@ -454,7 +458,7 @@ No code, test, or document in the repository writes `InputSpec(None)` today.
 | every family whose first argument is the output name, as `Normal("x", 0, 1)` | `event_spec=OutputSpec(x=spec)` | `event_spec=spec`; the name stays the first argument |
 | `Distribution`, `ConditionalDistribution` | `event_spec=OutputSpec(x=spec)`, or a `RecordSpec` | `event_spec=spec, output_name="x"` |
 | `distribution`, `EmpiricalDistribution`, `KDEDistribution` | `event_spec=` an `OutputSpec`, or a spec with `output_name=` | `event_spec=spec, output_name="x"` |
-| `conditional_distribution(fn, ...)` | the name of the law `fn` returns, read from its `OutputSpec` | `output_name=`, by default the `output_name` of the law `fn` returns |
+| `conditional_distribution(fn, ...)` | the name of the law `fn` returns, read from its `OutputSpec` | `output_name=`, by default the output name of the law `fn` returns |
 | `GaussianRandomFunction`, `GaussianProcess`, `LinearBasisFunction` | `output_spec=OutputSpec(y=None)` for the drawn functions | `return_spec=`; a drawn function takes the law's output name |
 | `Function`, `function`, `EvaluationPoints` | `output_spec=OutputSpec(y=spec)` | `return_spec=spec, output_name="y"`; by default the callable's name, as `_callable_output_name` gives it |
 | `BatchSpec` and every batch class | `element=OutputSpec(x=spec)` on `BatchSpec`; the batch classes name the element `"element"` | `element=spec, output_name="x"`; by default `"element"` for an element that is not a record |
@@ -474,7 +478,7 @@ The function stores whether its name was given.
 | call | the function's | the value a `Function` call returns; `pushforward` (the map's); the batch of a sweep or a broadcast, and the law of a lifted call |
 | none | none, since the result's value spec is a record | `&` on every kind; `condition_on` when several outputs remain |
 
-`x.rename({x.output_name: "z"})` is `x.with_output_name("z")`, and every other key of `rename` is a path.
+`x.rename({"x": "z"})`, for an object named `x`, is `x._with_output_name("z")`, and every other key of `rename` is a path.
 Three results change: the batch of draws, the column batches of a `RecordBatch`, and the batch of a sweep name their element `"element"` today, and after P2 they carry the name their rule gives.
 
 **The `result=` rule of an operation.** The rule of `@operation(result=rule)` returns `Declared(value_spec, output_name)` or `None`.
@@ -485,7 +489,7 @@ An output spec cannot replace it, since `{y: ()}` is the output spec both of a r
 
 | Today | After P2 |
 |---|---|
-| `_root_output_name(x.event_spec)`, `f._output_name` | `x.output_name` |
+| `_root_output_name(x.event_spec)`, `f._output_name` | `x._output_name` |
 | `x.event_spec.outputs` | `x.output_spec.children` |
 | `_has_record_outputs(x.event_spec)` | `isinstance(x.value_spec, RecordSpec)` |
 | `d.event_spec.term_spec`, `f.output_spec.term_spec`, `b.element_spec.term_spec` | `d.event_spec`, `f.return_spec`, `b.element_spec`, or `x.value_spec` |
@@ -497,9 +501,9 @@ Four groups of readers change behaviour:
 1. **The name is no longer a path.** `Distribution.__getitem__`, the factored marginal, `CoupledMarginal._parent_request`, `_draw_segments`, `_requested_nodes`, and `_requested_paths` drop the case of the root name, so `Normal("x", 0, 1)["x"]` is a `TypeError`.
 2. **A spec's name is no longer compared with an object's.** The checks in `_unify_declarations`, `FunctionSpec._bind_dims_from_spec`, `_whole_term_event`, `glm_likelihood`, the Gaussian random function's `_declarations`, and `_agreed_event_spec` go. The checks that compare two objects' names stay: the components of a mixture, `_packaged_alike` in `condition_on`, and `_target_atoms` in reweighting.
 3. **Factored laws lose the packaged form.** `FactoredDistribution(..., _output_name=)` and `FactoredConditionalDistribution(..., _output_name=)` go: a gathered factor is renamed into its group, so its value spec is `{g: {...}}`. `_SoleField` gives the law at one field that field's name as its output name.
-4. **Labels and levels read the object.** The array atoms of `EmpiricalDistribution`, the array backend of a TFP family, the default level of a bootstrap, the atom level of a broadcast, and the label of a posterior's atoms read `x.output_name`.
+4. **Labels and levels read the object.** The array atoms of `EmpiricalDistribution`, the array backend of a TFP family, the default level of a bootstrap, the atom level of a broadcast, and the label of a posterior's atoms read `x._output_name`.
 
-`_law_repr` reads `x.output_name`, so `Normal('x', ...)` prints as today, and a spec's repr shows no name.
+`_law_repr` reads `x._output_name`, so `Normal('x', ...)` prints as today, and a spec's repr shows no name.
 
 **Equality, fingerprints, and JAX.**
 1. A spec's equality and hash compare structure only. II.2's three rules for the name in equality become one: no spec holds a name.
@@ -517,7 +521,7 @@ Five path helpers read an `OutputSpec`: `_read_paths`, `_path_record`, `_has_pat
 P2 rewrites them over the value spec, and P3 deletes them.
 
 **Commits.** P2 is one PR of four commits, and the suite passes after each:
-1. **Accessors, with no change in behaviour:** `output_name`, `output_spec`, `value_spec`, `_with_value_spec`, and `output_spec_of`, still read from the `OutputSpec` in the spec. Every reader of the tables above moves to them.
+1. **Accessors, with no change in behaviour:** `_output_name`, `output_names`, `output_spec`, `value_spec`, `_with_value_spec`, and `output_spec_of`, still read from the `OutputSpec` in the spec. Every reader of the tables above moves to them.
 2. **Bare specs:** the four spec classes, the constructors, the `result=` rules, the five naming rules, equality, fingerprints, and JAX static data. A script rewrites the `.term_spec` reads, 279 in `probpipe/` and 443 in `tests/`.
 3. **Deletion:** `OutputSpec`, its export, and the helpers above.
 4. **Documents:** `docs/api/input_and_output_specs.md`, `docs/api/extending.md`, the notebooks that build an `OutputSpec` (user guide 01, 03, and 09, and tutorial 06), the `design/` sections of § 7, and the CHANGELOG.
@@ -526,12 +530,12 @@ P2 rewrites them over the value spec, and P3 deletes them.
 
 1. One test, parametrized over every class of § 5.2, asserts II.6's selection, chaining, partition, and errors, the two changes of § 4.1, and the spec agreement rule on a table of objects, records holding laws in fields included, and asserts the `TypeError` for each object of § 4.2 that has no paths.
 2. One table test of `conforms_to` and `unify` per kind, including each case of § 2.3.
-3. One test that `x.output_spec` and `x.outputs` follow § 4.3 for each row of its table.
+3. One test that `x.output_spec`, `x.output_names`, and `x.outputs` follow § 4.3 for each row of its table, with `x.output_names == tuple(x.output_spec.keys())`.
 4. One test that no module outside `core/_paths.py` splits or joins a path with `/` or `_PATH_SEP`.
 5. One table test of each constructor of § 5.5: its default output name, a given name, and its output spec.
 6. One table test of the five naming rules of § 5.5, with a row for each operation it lists.
 7. Two laws that differ only in their names have equal specs and equal fingerprints, and a `jax.jit` round trip keeps the name of a `NumericArray` and of a `NumericArrayBatch`.
-8. `with_output_name` on an object whose value spec is a record raises `ValueError`, and `probpipe.OutputSpec` no longer exists.
+8. Stating an output name on an object whose value spec is a record raises `ValueError`, from a constructor or from `rename`, and `probpipe.OutputSpec` no longer exists.
 9. A function whose return spec is not known has `output_spec` `None`; `InputSpec()` has no inputs; `InputSpec(None)` and `InputSpec(f.output_spec)` for such a function raise `TypeError`; and a merge with such a function refuses it with a message that names the function.
 
 ## 7. Edits to the other plans
@@ -577,14 +581,14 @@ Each step is one PR.
 5. **P5, outputs and feeding:** `outputs` and `output(c)`; merge's check through § 4.6.
 
 **What users see.**
-- **Breaking:** `OutputSpec` is removed; `event_spec`, `element_spec`, and `return_spec` (today's `FunctionSpec.output_spec`) are bare specs; a law's stated name is `output_name`; `x["x"]` on a law over an array named `x` raises `TypeError`; a function whose inputs accept less than declared no longer conforms; `InputSpec(None)` raises `TypeError`, and `InputSpec()` is the input spec with no inputs.
+- **Breaking:** `OutputSpec` is removed; `event_spec`, `element_spec`, and `return_spec` (today's `FunctionSpec.output_spec`) are bare specs; an object's output names are read with `output_names`, and the stored name is private; `x["x"]` on a law over an array named `x` raises `TypeError`; a function whose inputs accept less than declared no longer conforms; `InputSpec(None)` raises `TypeError`, and `InputSpec()` is the input spec with no inputs.
 - **Added:** paths on kernels and functions whose value spec is a record, `without` on laws, `outputs`, `conforms_to`, and `unify`.
 - **Fixed:** the stated name leaves spec equality and fingerprints.
 
 ## 9. Questions for the maintainer
 
 1. **Conformance.** Recommended: the public `conforms_to`, `unify`, and `refine`, with II.1's rules (§ 4.5).
-2. **Names.** Recommended: `value_spec`, `return_spec`, `output_name`, `outputs`, and `output_spec` (§ 5.1).
+2. **Names.** Recommended: `value_spec`, `return_spec`, `output_names`, `outputs`, and `output_spec`, with the constructor keyword `output_name=` (§ 5.1).
 
 ## Appendix A. Path helpers that the path interface replaces
 
