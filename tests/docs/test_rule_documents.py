@@ -1,7 +1,7 @@
 """The rule documents and the agent files cite only paths and names that exist.
 
-The rule documents are ``CONTRIBUTING.md``, ``STYLE_GUIDE.md``,
-``CONTRACTS.md``, and the pull-request template. The agent files are
+The rule documents are ``CONTRIBUTING.md``, ``STYLE_GUIDE.md``, and the
+pull-request template. The agent files are
 ``AGENTS.md``, ``CLAUDE.md``, and the project skills under ``.claude/skills/``.
 Each code span, link, and section pointer outside a fenced code block is a
 citation, and each kind of citation is checked:
@@ -46,7 +46,6 @@ PACKAGE = ROOT / "probpipe"
 RULE_DOCUMENTS = (
     "CONTRIBUTING.md",
     "STYLE_GUIDE.md",
-    "CONTRACTS.md",
     ".github/PULL_REQUEST_TEMPLATE.md",
 )
 AGENT_FILES = ("AGENTS.md", "CLAUDE.md")

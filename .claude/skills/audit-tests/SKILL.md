@@ -25,9 +25,9 @@ are made.
 
 ### 1a. Read project conventions
 
-Read `STYLE_GUIDE.md` §8, `CONTRIBUTING.md` § Test quality, and `CONTRACTS.md`
-directive 3, which requires tests that assert each contract. These define the
-expected test structure, naming, fixture patterns, and baselines. For the
+Read `STYLE_GUIDE.md` §8 and `CONTRIBUTING.md` § Test quality. These define the
+expected test structure, naming, fixture patterns, and baselines, and
+`STYLE_GUIDE.md` §8.7 requires tests that assert each contract. For the
 behavior a test should assert, read the design section of the code under test,
 which `design/package-structure.md` § The tree lists beside each module.
 
