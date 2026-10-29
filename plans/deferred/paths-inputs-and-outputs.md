@@ -299,6 +299,7 @@ InputSpec(None)            # TypeError
 This section gives every new or changed class, function, and method, with the docstring as it is to be written in the code.
 A section headed "new" is a new module or class; one headed "changed" lists only what changes in an existing one.
 Docstrings follow `STYLE_GUIDE.md` § 3, and messages follow § 9.3.
+A docstring states its contract in full and cites no section of `design/`.
 
 ### 5.1 `core/_paths.py` (new): path syntax
 
@@ -310,14 +311,15 @@ It adds four functions:
 ```python
 """Path syntax: reading the paths a caller gives, and the relations between paths.
 
-A path is a sequence of names joined by ``/``, as ``"g/b"`` (II.6). Every
-module that reads, splits, joins, or compares paths uses this module, so the
-separator and the reader have one definition.
+A path is a sequence of names joined by ``/``, as ``"g/b"``. It leads from the
+root of a tree to a node: ``"g"`` to the top-level node ``g``, and ``"g/b"`` to
+the node ``b`` inside it. Every module that reads, splits, joins, or compares
+paths uses this module, so the separator and the reader have one definition.
 """
 
 
 def _parent_path(path: str) -> str:
-    """The path of the parent of the node at *path*: ``"g"`` for ``"g/b"``, ``""`` for ``"g"``.
+    """The path of the parent of the node at *path*, or ``""`` for a top-level node.
 
     Parameters
     ----------
@@ -327,69 +329,113 @@ def _parent_path(path: str) -> str:
     Returns
     -------
     str
-        The parent's path, or ``""`` for a top-level path.
+        *path* without its last name.
+
+    Examples
+    --------
+    >>> _parent_path("g/b/c")
+    'g/b'
+    >>> _parent_path("g")
+    ''
     """
 
 
-def _is_within(path: str, ancestor: str) -> bool:
-    """Whether *path* is *ancestor* or a path below it.
+def _is_subpath(path: str, *, base: str) -> bool:
+    """Whether the node at *path* is the node at *base* or lies inside it.
 
-    ``_is_within("g/b", "g")`` and ``_is_within("g", "g")`` are true;
-    ``_is_within("gb", "g")`` is false.
+    The comparison is by whole names, so ``"gb"`` is not a subpath of ``"g"``.
 
     Parameters
     ----------
     path : str
         A well-formed path.
-    ancestor : str
+    base : str
         A well-formed path.
 
     Returns
     -------
     bool
-        True when *path* equals *ancestor* or starts with *ancestor* followed by ``/``.
+        True when *path* equals *base*, or starts with *base* followed by ``/``.
+
+    Examples
+    --------
+    >>> _is_subpath("g/b", base="g")
+    True
+    >>> _is_subpath("g", base="g")
+    True
+    >>> _is_subpath("gb", base="g")
+    False
     """
 
 
-def _relative_path(path: str, ancestor: str) -> str:
-    """*path* relative to *ancestor*: ``"b/c"`` for ``"g/b/c"`` below ``"g"``.
+def _path_inside(path: str, *, base: str) -> str:
+    """The path of a node as seen from inside the subtree at *base*.
+
+    For a record ``r``, ``r[path]`` is ``r[base][_path_inside(path, base=base)]``.
+    The result is *path* with the names of *base* removed from its front.
 
     Parameters
     ----------
     path : str
-        A path strictly below *ancestor*.
-    ancestor : str
-        A well-formed path.
+        The path of a node strictly inside the node at *base*.
+    base : str
+        The path of the subtree's root.
 
     Returns
     -------
     str
-        The names of *path* after those of *ancestor*, joined by ``/``.
+        The path from the node at *base* down to the node at *path*.
 
     Raises
     ------
     ValueError
-        If *path* is not strictly below *ancestor*.
+        If the node at *path* is not strictly inside the node at *base*.
+
+    Examples
+    --------
+    >>> _path_inside("g/b/c", base="g")
+    'b/c'
+    >>> _path_inside("g/b/c", base="g/b")
+    'c'
     """
 
 
-def _complement(paths: tuple[str, ...], node_paths: Iterable[str]) -> tuple[str, ...]:
-    """The outermost nodes that are neither at, above, nor below a path of *paths*.
+def _complement(selected_paths: tuple[str, ...], tree_paths: Iterable[str]) -> tuple[str, ...]:
+    """The paths of the nodes that ``without(*selected_paths)`` keeps, each as high as it can be.
 
-    Selecting these nodes and selecting *paths* partition the fields, so
-    ``x.without(*paths)`` is ``x[_complement(paths, ...)]`` (II.6).
+    A node of the tree is in the result when it is not a selected node, does
+    not contain a selected node, does not lie inside a selected node, and is
+    top-level or has a parent that contains a selected node. The selected paths
+    and the result then split the fields: every field lies at or inside exactly
+    one path of the two. So for a tree ``x``, ``x.without(*selected_paths)`` is
+    ``x[list(_complement(selected_paths, tree_paths))]``.
 
     Parameters
     ----------
-    paths : tuple of str
-        Paths of a tree, none inside another.
-    node_paths : iterable of str
-        Every node path of the tree, in canonical order.
+    selected_paths : tuple of str
+        Paths of nodes of the tree, none inside another.
+    tree_paths : iterable of str
+        The path of every node of the tree, groups and fields, in canonical
+        order.
 
     Returns
     -------
     tuple of str
-        The complement, in canonical order; empty when *paths* covers every field.
+        The kept paths, in canonical order; empty when the selected paths
+        cover every field.
+
+    Examples
+    --------
+    For ``Record({"a": 1.0, "b": {"c": 2.0, "d": 3.0}})``, whose node paths are
+    ``"a"``, ``"b"``, ``"b/c"``, and ``"b/d"``:
+
+    >>> tree_paths = ("a", "b", "b/c", "b/d")
+    >>> _complement(("b/c",), tree_paths)
+    ('a', 'b/d')
+    >>> _complement(("b",), tree_paths)
+    ('a',)
+    >>> _complement(("a", "b/c", "b/d"), tree_paths)
+    ()
     """
 ```
 
@@ -400,7 +446,7 @@ class PathIndexed:
     """The path interface: ``[]``, ``in``, ``without``, and ``rename`` by path.
 
     An object or a spec has paths exactly when its value spec is a
-    ``RecordSpec``, and they are the paths of that ``RecordSpec`` (II.6). One
+    ``RecordSpec``, and they are the paths of that ``RecordSpec``. One
     path selects the part there, of the node's kind; a list of paths selects an
     object of this object's kind restricted to those paths, each node at its
     full path, in canonical order. ``without`` restricts to the complement, so
@@ -449,7 +495,8 @@ class PathIndexed:
         -------
         Any
             The part. On an object, the part's spec is ``self.spec[path]``; on
-            a spec, the part is the spec of that part (§ 4.2).
+            a spec, the part is this spec with its value spec replaced by
+            ``value_spec[path]``.
         """
 
     def _restrict_to(self, paths: tuple[str, ...]) -> Self:
@@ -468,7 +515,7 @@ class PathIndexed:
         """
 
     def _renamed(self, moves: Mapping[str, str]) -> Self:
-        """This object with the nodes at the keys of *moves* renamed or moved, by II.6's rules.
+        """This object with the nodes at the keys of *moves* renamed or moved, as ``NamedTree.rename`` does.
 
         Parameters
         ----------
@@ -544,7 +591,7 @@ class PathIndexed:
     def _select(self, read: str | tuple[str, ...], given: Any) -> Any:
         """``[]`` after the reader: check *read* against ``_path_spec()``, then select.
 
-        ``Batch.__getitem__`` reads positions first (II.5) and passes a path or
+        ``Batch.__getitem__`` reads positions first and passes a path or
         a list of paths here.
 
         Parameters
@@ -621,9 +668,8 @@ class PathIndexed:
 
         Each key is read in this order: the object's output name, which
         renames the output; an input name, which renames the input; otherwise a
-        path, which renames or moves the node by II.6's rules. A key that is
-        both an input name and a top-level path renames both, as III.3 states
-        for a function.
+        path, which renames or moves the node as ``NamedTree.rename`` does. A
+        key that is both an input name and a top-level path renames both.
 
         Parameters
         ----------
@@ -645,7 +691,8 @@ class PathIndexed:
             If a key is neither the output name, an input name, nor a path.
         ValueError
             If a new output name or input name contains ``/``, or a path rename
-            breaks a rule of II.6.
+            puts a node onto another node, moves a node into its own subtree,
+            or gives two targets one of which is inside the other.
         """
 ```
 
@@ -863,7 +910,8 @@ class TermSpec(ABC):
     def _with_value_spec(self, value_spec: TermSpec) -> Self:
         """This spec with its value spec replaced by *value_spec*, of this spec's class.
 
-        Builds the spec of a part (§ 4.2). Each of the four specs whose value
+        Builds the spec of a part: ``S[p]`` is
+        ``S._with_value_spec(S.value_spec[p])``. Each of the four specs whose value
         spec is another spec overrides it; for every other spec, the value spec
         is the spec itself, so the result is *value_spec*.
 
@@ -883,8 +931,45 @@ class TermSpec(ABC):
 ### 5.6 `core/_conformance.py` (new) and `TermSpec` (changed): conformance
 
 ```python
+"""Conformance, unification, and refinement of specs, within one dimension scope.
+
+A spec ``A`` conforms to a spec ``B`` when every value that conforms to ``A``
+conforms to ``B``. The check is one-way, from what is received to what is
+declared where it is received. Two specs unify when some spec ``U`` conforms to
+both and a value conforms to ``U`` exactly when it conforms to both; ``U`` is
+their unification. Refinement takes a declared spec and a produced spec that
+conforms to it, and returns the declared spec with its dimension names bound and
+its unset fields filled from the produced spec.
+
+The rules by kind, for ``A`` conforming to ``B``:
+
+- arrays: equal ranks, each axis agreeing in the scope; when both set a dtype,
+  ``A``'s casts to ``B``'s by NumPy's same-kind rule; a support is never
+  checked;
+- opaque values: ``B``'s type is unset or a superclass of ``A``'s, and ``B``'s
+  metadata is unset or equal to ``A``'s;
+- records: the same child names in the same order, each child of ``A``
+  conforming to the child of ``B``;
+- laws: ``A``'s event spec conforms to ``B``'s;
+- kernels and functions: the same input names and the same optional inputs;
+  each input spec of ``B`` conforms to ``A``'s spec for that input, since a map
+  that accepts more conforms; ``A``'s event or return spec conforms to
+  ``B``'s; a side that ``B`` leaves unknown accepts any ``A``, and a side that
+  only ``A`` leaves unknown does not conform;
+- batches: the same levels, and ``A``'s element spec conforms to ``B``'s.
+
+Unification follows the same rules in both directions, with three differences:
+two arrays take the narrower dtype, so ``int32`` and ``float32`` unify to
+``int32``, and keep a support only when both set the same one; two opaque specs
+unify when their types are equal or one is unset, and likewise their metadata;
+two kernels or functions unify only when their input specs are equal.
+
+No spec holds a name, so names take no part in any relation.
+"""
+
+
 class DimensionScope:
-    """The sizes bound to dimension names where specs meet (II.1).
+    """The sizes bound to dimension names where specs meet.
 
     A name binds to a size the first time it meets one, and a later size that
     disagrees raises. The same name on both sides of an axis is one dimension
@@ -957,7 +1042,7 @@ class DimensionScope:
 
 
 def unify(first: TermSpec, second: TermSpec, scope: DimensionScope | None = None) -> TermSpec:
-    """The unification of two specs: the spec a value conforms to exactly when it conforms to both (II.1).
+    """The unification of two specs: the spec a value conforms to exactly when it conforms to both.
 
     Parameters
     ----------
@@ -979,7 +1064,7 @@ def unify(first: TermSpec, second: TermSpec, scope: DimensionScope | None = None
     TypeError
         If either argument is not a ``TermSpec``.
     ValueError
-        If the two do not unify by II.1's rules, naming the first path where
+        If the two do not unify by the rules of this module, naming the first path where
         they differ.
 
     Examples
@@ -1010,7 +1095,7 @@ def _check_conforms(actual: TermSpec, declared: TermSpec, scope: DimensionScope,
     Raises
     ------
     ValueError
-        If *actual* does not conform to *declared* by II.1's rules.
+        If *actual* does not conform to *declared* by the rules of this module.
     """
 ```
 
@@ -1019,7 +1104,7 @@ def _check_conforms(actual: TermSpec, declared: TermSpec, scope: DimensionScope,
 ```python
 class TermSpec(ABC):
     def conforms_to(self, declared: TermSpec, scope: DimensionScope | None = None) -> bool:
-        """Whether every value that conforms to this spec conforms to *declared* (II.1).
+        """Whether every value that conforms to this spec conforms to *declared*.
 
         Parameters
         ----------
@@ -1092,7 +1177,8 @@ class TermSpec(ABC):
     def _conform(self, declared: TermSpec, scope: DimensionScope, path: str) -> None:
         """Raise ``ValueError`` naming *path* unless this spec conforms to *declared*.
 
-        Each class implements II.1's rule for its kind, comparing *declared*'s
+        Each class implements its kind's rule from the module docstring of
+        ``core/_conformance.py``, comparing *declared*'s
         class first; dimensions meet through ``scope.agree``.
 
         Parameters
@@ -1106,7 +1192,7 @@ class TermSpec(ABC):
         """
 
     def _unify(self, other: TermSpec, scope: DimensionScope, path: str) -> TermSpec:
-        """The unification of this spec with *other* by II.1's rule for this kind.
+        """The unification of this spec with *other*, by its kind's rule in ``core/_conformance.py``.
 
         Parameters
         ----------
@@ -1219,7 +1305,7 @@ class BatchSpec(TermSpec):
     ------
     TypeError
         If *element* is not a ``TermSpec`` or a tuple, or the levels are
-        malformed as II.5 states.
+        malformed.
     """
 
     element_spec: TermSpec
@@ -1508,7 +1594,7 @@ Each step is one PR.
 | `distributions/_views.py`: `_node_at`, `_view_declaration` | the spec at a path, `RecordSpec[p]` |
 | `distributions/_views.py`: `_draw_segments`, `_draw_path` | removing the output name from a path, needed only because the name is in the spec |
 | `distributions/_views.py`: `_leaf_paths`, `_leaves_at`, `_node_leaves` | `RecordSpec.keys()` and the nodes above each leaf |
-| `distributions/_views.py`: `_is_within`, `_below` | `_is_within` and `_relative_path` of § 5.1 |
+| `distributions/_views.py`: `_is_within`, `_below` | `_is_subpath` and `_path_inside` of § 5.1 |
 | `distributions/_views.py`: `_projector`; `distributions/_factored.py`: `_extract` | `Record[p]` and `Record[ps]` on raw values |
 | `distributions/_views.py`: `_fields_of` | the flat leaf mapping, the inverse of `_unflatten_paths` |
 | `distributions/_views.py`: `_ordered_paths_of`; `distributions/_distribution.py`: `_read_event_paths`; `core/_specs.py`: `_read_paths` | reading and ordering a list, `NamedTree._ordered_paths` |
