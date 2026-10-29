@@ -1663,7 +1663,7 @@ class DistributionSpec(TermSpec):
     Parameters
     ----------
     event_spec : TermSpec or tuple
-        The spec of one draw. A tuple is a ``NumericArraySpec`` of that shape.
+        The spec of one draw. A tuple is converted to a ``NumericArraySpec`` of that shape.
 
     Raises
     ------
@@ -1687,7 +1687,7 @@ class ConditionalDistributionSpec(TermSpec):
     given_spec : InputSpec, Mapping, or RecordSpec
         The inputs, read as ``InputSpec`` reads them.
     event_spec : TermSpec or tuple
-        The spec of one draw. A tuple is a ``NumericArraySpec`` of that shape.
+        The spec of one draw. A tuple is converted to a ``NumericArraySpec`` of that shape.
 
     Raises
     ------
@@ -1708,8 +1708,8 @@ class FunctionSpec(TermSpec):
     input_spec : InputSpec or None, optional
         The inputs. None leaves them unknown.
     return_spec : TermSpec, tuple, or None, optional
-        The spec of the returned value. A tuple is a ``NumericArraySpec`` of
-        that shape. None leaves it unknown until the function's first call.
+        The spec of the returned value. A tuple is converted to a
+        ``NumericArraySpec`` of that shape. None leaves it unknown until the function's first call.
 
     Raises
     ------
@@ -1728,7 +1728,7 @@ class BatchSpec(TermSpec):
     Parameters
     ----------
     element : TermSpec or tuple
-        The spec of one element. A tuple is a ``NumericArraySpec`` of that shape.
+        The spec of one element. A tuple is converted to a ``NumericArraySpec`` of that shape.
     levels : mapping of str to shape, optional
         The levels, by name, positionally.
     **level_shapes : shape
@@ -1836,8 +1836,8 @@ output_name : str, optional
 # Function.__init__, function, EvaluationPoints
 """
 return_spec : TermSpec, tuple, or None, optional
-    The spec of what the function returns. A tuple is a ``NumericArraySpec`` of
-    that shape. None leaves it unknown until the first call, which refines it.
+    The spec of what the function returns. A tuple is converted to a
+    ``NumericArraySpec`` of that shape. None leaves it unknown until the first call, which refines it.
 output_name : str, optional
     The name of the function's one output when its return value is not a
     record. By default, the callable's name, or ``"result"`` when that is not an
