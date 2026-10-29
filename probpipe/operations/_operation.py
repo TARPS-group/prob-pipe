@@ -80,6 +80,7 @@ from typing import Any, ClassVar, Protocol, runtime_checkable
 
 from .._messages import unknown_names
 from ..core._array_backend import _event_shape_of, _is_numeric_leaf, _numpy_dtype_of
+from ..core._call_context import _note_num_samples_used
 from ..core._catalog import EntrySummary, SupportsRegistryCataloging, registry_catalog
 from ..core._dispatch import BaseDispatchRegistry, Feasibility, MethodInfo, ResolutionError
 from ..core._expression import Expression, Named
@@ -91,7 +92,12 @@ from ..core._specs import OutputSpec
 from ..core.provenance import Provenance
 from ..core.record import Record
 from ..core.tracked import TrackedTerm
-from ..distributions._capabilities import _capability_guard, _guard_condition, _requirement
+from ..distributions._capabilities import (
+    SupportsSampling,
+    _capability_guard,
+    _guard_condition,
+    _requirement,
+)
 from ..distributions._distribution import Distribution, DistributionSpec
 from ..distributions._views import _drawn_form
 from ..functions import _descendants, _evaluation_keys, _result
@@ -2257,6 +2263,27 @@ class Operation(Function):
 # ---------------------------------------------------------------------------
 # Randomness
 # ---------------------------------------------------------------------------
+
+
+def _can_sample(call: BoundCall, result: OutputSpec | None) -> Feasibility:
+    """The law samples, and its sampling guard admits the call."""
+    law = call.operands["d"]
+    if not isinstance(law, SupportsSampling):
+        return Feasibility(False, f"{_subject_name(law)} does not sample")
+    return _capability_guard(law, "_sample")
+
+
+def _monte_carlo_draws(call: BoundCall, operation_kind: str) -> Any:
+    """Workflow-owned draws of the law, recording the call's ``num_samples`` count."""
+    count = call.controls["num_samples"]
+    draws = _workflow_draws(
+        call.operands["d"],
+        (count,),
+        operation_kind=operation_kind,
+        execution_mode="monte_carlo",
+    )
+    _note_num_samples_used(count)
+    return draws
 
 
 def _workflow_draws(

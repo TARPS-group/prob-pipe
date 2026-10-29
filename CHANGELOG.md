@@ -2143,7 +2143,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   marginal from joint samples when no exact marginal is available. Set the
   count with `marginal.using(num_samples=4096)(d, paths)`. The empirical result
   keeps the selected fields' structure and dependence, and provenance records
-  the approximation and sample count.
+  the approximation and sample count. With `given=`, the kernel's conditional
+  sampler can serve this fallback before conditioning exposes an exact
+  marginal. Use `exact_only=True` or condition explicitly to request the
+  conditioned law's exact marginal.
 
 - **`print(x.provenance)` prints the lineage of `x`.** Each line is one step,
   from the loaded data or another root down to `x`, with the call that made it,
