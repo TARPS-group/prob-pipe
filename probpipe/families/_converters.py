@@ -416,8 +416,8 @@ def _scipy_law(source: Any, declared: OutputSpec | None) -> Distribution | None:
 def _entering_law(source: Any, declared: OutputSpec | None) -> Distribution | None:
     """*source* as a ProbPipe law: itself, the law a backend distribution enters as, or ``None``.
 
-    ``None`` is a SciPy frozen distribution the catalog has no family for, whose
-    draws a sampling converter takes through SciPy itself.
+    The result is ``None`` for a SciPy frozen distribution the catalog has no
+    family for, whose draws a sampling converter takes through SciPy itself.
     """
     if isinstance(source, Distribution):
         return source

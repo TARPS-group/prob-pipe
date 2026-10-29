@@ -46,6 +46,14 @@ class TestFlags:
             (1, "comma list")
         ]
 
+    def test_an_input_form_said_to_be_what_it_stands_for_is_a_candidate(self, tmp_path):
+        text = "A tuple is a list of paths, and a `str` is one path.\n"
+        assert _kinds(tmp_path, text) == [(1, "false identity"), (1, "false identity")]
+
+    def test_an_input_form_read_as_what_it_stands_for_is_no_candidate(self, tmp_path):
+        text = 'A tuple is read as a list of paths, unlike "a tuple is a list".\n'
+        assert _kinds(tmp_path, text) == []
+
     def test_a_list_wrapped_across_lines_is_read_as_one_paragraph(self, tmp_path):
         text = "It reads specs,\nrecords, batches,\nand laws.\n"
         assert _kinds(tmp_path, text) == [(1, "comma list")]

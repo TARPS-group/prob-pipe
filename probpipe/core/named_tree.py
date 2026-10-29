@@ -629,7 +629,7 @@ class NamedTree[L]:
     def __getitem__(self, paths: PathsLike, /) -> L | Self:
         """The node at a path, or this tree cut down to the nodes at a list of paths.
 
-        A tuple is a list of paths; a nested path is written with ``/``, so
+        A tuple is read as a list of paths; a nested path is written with ``/``, so
         ``x["g/c"]`` is the node ``c`` inside the group ``g``, while
         ``x["g", "c"]`` is the tree cut down to the top-level nodes ``g`` and
         ``c``.
