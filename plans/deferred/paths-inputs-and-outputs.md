@@ -293,7 +293,7 @@ InputSpec(None)            # TypeError
 3. **Each relation is one dimension scope, and changes nothing.** `conforms_to`, `unify`, and `refine` take only the two specs, so a dimension name stands for one size throughout both. Code that checks several specs in one scope, such as the arguments of one call or the operands of one merge, shares a private `_DimensionSizes` across its checks, in place of the `dict` the code passes by hand.
 
 **Decision 1: one public relation.**
-- **Recommendation.** `A.conforms_to(B)`, `unify(A, B)`, and `B.refine(A)` are the entry points, `bind_dims_from_spec` is replaced by `refine`, and `bind_dims_from_value(v)` is refinement by the spec of `v` (§ 5.6).
+- **Recommendation.** `A.conforms_to(B)`, `unify(A, B)`, and `B.refine(A)` are the entry points, `bind_dims_from_spec` is replaced by `refine`, and `bind_dims_from_value(v)` by `refine_from_value(v)`, refinement by the spec of `v` (§ 5.6).
 - **Alternative.** Keep today's private names, and fix only the departures in the table.
 
 ### 4.6 How an output feeds an input
@@ -1574,14 +1574,18 @@ class TermSpec(ABC):
         NumericArraySpec(shape=(3,), dtype=float32)
         """
 
-    def bind_dims_from_value(self, value: Any) -> Self:
-        """This spec refined by the spec of *value*: ``self.refine(spec_of(value))``.
+    def refine_from_value(self, value: Any) -> Self:
+        """This declared spec, completed by the spec of a produced value.
+
+        ``refine`` takes the spec of what was produced, and this method takes
+        the value itself. A tracked term's spec is read, and a raw value's
+        spec is inferred as the constructor of this spec's kind infers it, so
+        the result is ``self.refine`` of that spec.
 
         Parameters
         ----------
         value : Any
-            A tracked term, whose spec is read, or a raw value, whose spec is
-            inferred as the kind's constructor infers it.
+            The produced value: a tracked term or a raw value.
 
         Returns
         -------
@@ -1592,6 +1596,11 @@ class TermSpec(ABC):
         ------
         ValueError
             If *value* does not conform to this spec.
+
+        Examples
+        --------
+        >>> NumericArraySpec(("n",)).refine_from_value(np.zeros(3, dtype=np.float32))
+        NumericArraySpec(shape=(3,), dtype=float32)
         """
 
     def _conform(self, declared: TermSpec, dim_sizes: _DimensionSizes, path: str) -> None:
@@ -1641,6 +1650,7 @@ class TermSpec(ABC):
 `is_valid(value)` becomes conformance: a tracked term conforms when its spec does, and a raw value is checked as today.
 `FunctionSpec.is_valid(len)` is therefore false, since a raw callable carries no spec.
 `bind_dims_from_spec` is removed, and its callers call `refine`, or `_refine_within` where they share a scope.
+`bind_dims_from_value` is renamed `refine_from_value`, and now also fills the fields this spec leaves unset.
 `_bind_dims_from_spec`, `_unify_specs`, `_unify_array_shape`, `_unification`, `_unify_input_types`, `_unify_declarations`, and `ConditionalDistributionSpec._unify_with` are deleted.
 `probpipe` exports `unify`.
 
@@ -2131,6 +2141,7 @@ P2 rewrites them over the value spec, and P3 deletes them.
 
 II.2 also drops paths into a record input: an input spec's `[]` and `without` take input names only, and no input becomes required because a path cut it.
 In II.2, `InputSpec`'s signature drops `| None = None` for the sentinel `_NO_INPUTS`, and `None` is refused as a source.
+II.1's `TermSpec` block replaces `bind_dims_from_value` and `bind_dims_from_spec` with `refine_from_value` and `refine`, adds `conforms_to`, and adds the module function `unify`. The three relations move out of the symbolic-dimension protocol into their own group, since refinement also fills unset fields, and II.1's prose states that each relation is one dimension scope (§ 4.5).
 II.6 changes `in` as § 4.1 states, and adds the spec agreement rule.
 `design/glossary.md` replaces *value type* with *value spec*, the structure of a term's value, which each kind defines as § 4 states, and adds *record-valued*: a term or spec whose value spec is a `RecordSpec`. Its *input spec* entry becomes the `input_spec` of every term and spec, `InputSpec()` for a kind that takes no inputs, and still a conditional distribution's `given_spec`. II.2 and II.6 use both terms.
 III.3 drops "a key that names both an input and an output of a function renames both", and states that a function's input names and output names are disjoint, as III.9 states for a kernel.
@@ -2141,14 +2152,14 @@ IV.2's condition 5, that no name of an operand is both an input and an output, n
 
 Each step is one PR.
 
-1. **P1, conformance:** § 5.6, with contravariant inputs, directional opaque types, and unknown sides by § 4.5; `is_valid` through conformance; `InputSpec.__and__` through `unify`. It fixes the departures of § 4.5, and its only rename is `bind_dims_from_spec` to `refine`. `batch-contract.md` step B1 builds on it.
+1. **P1, conformance:** § 5.6, with contravariant inputs, directional opaque types, and unknown sides by § 4.5; `is_valid` through conformance; `InputSpec.__and__` through `unify`. It fixes the departures of § 4.5, and its only renames are `bind_dims_from_spec` to `refine` and `bind_dims_from_value` to `refine_from_value`. `batch-contract.md` step B1 builds on it.
 2. **P2, names out of specs:** § 5.3 to § 5.5 and § 5.7 to § 5.9, by § 6, in its four commits.
 3. **P3, one path interface:** § 5.1 and § 5.2 for `Record`, `RecordSpec`, `RecordBatch`, `Distribution`, and the spec classes; `without` on laws; the helpers of Appendix A deleted.
 4. **P4, paths and renames on every kind:** § 5.2 for `ConditionalDistribution` and `Function`; § 4.7's renaming, with `TermSpec.rename` and its helpers (§ 5.5), `TrackedTerm.rename` and each kind's `_with_renamed_spec` (§ 5.4), `_check_disjoint_names` (§ 5.3), `_RenamedCallable` (§ 5.10), and the reduced `_RenamedConditionalDistribution` (§ 5.11). Every other `rename` method (on `Distribution`, `ConditionalDistribution`, `RecordBatch`, and the spec classes) is deleted, except `NamedTree.rename` and `InputSpec.rename`, which the two call.
 5. **P5, outputs and feeding:** `outputs`, and merge's check through § 4.6.
 
 **What users see.**
-- **Breaking:** `OutputSpec` is removed; `event_spec`, `element_spec`, and `return_spec` (today's `FunctionSpec.output_spec`) are bare specs; an object's output names are read with `output_names`, and the stored name is private; `x["x"]` on a law over an array named `x` raises `TypeError`; a function whose inputs accept less than declared no longer conforms; `bind_dims_from_spec` becomes `refine`; `InputSpec(None)` raises `TypeError`, and `InputSpec()` is the input spec with no inputs; a function with a name that is both an input and an output raises at construction; a kernel's inputs can no longer be grouped or split by `rename`, and an input renamed to a path raises.
+- **Breaking:** `OutputSpec` is removed; `event_spec`, `element_spec`, and `return_spec` (today's `FunctionSpec.output_spec`) are bare specs; an object's output names are read with `output_names`, and the stored name is private; `x["x"]` on a law over an array named `x` raises `TypeError`; a function whose inputs accept less than declared no longer conforms; `bind_dims_from_spec` becomes `refine`, and `bind_dims_from_value` becomes `refine_from_value`, which also fills a dtype, support, type, or metadata the spec leaves unset; `InputSpec(None)` raises `TypeError`, and `InputSpec()` is the input spec with no inputs; a function with a name that is both an input and an output raises at construction; a kernel's inputs can no longer be grouped or split by `rename`, and an input renamed to a path raises.
 - **Added:** renaming a function's inputs; paths on record-valued kernels and functions, `without` on laws, `input_spec` on every term and spec, `output_names`, `outputs`, `conforms_to`, `unify`, `refine`, and `output_name=` on `NumericArray` and `Opaque`.
 - **Fixed:** the output name leaves spec equality and fingerprints.
 
