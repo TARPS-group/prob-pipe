@@ -791,6 +791,19 @@ class TrackedTerm(Immutable, metaclass=_TrackedTermMeta):
         """
 
     @property
+    def input_spec(self) -> InputSpec | None:
+        """The inputs of this term, as its spec declares them: ``self.spec.input_spec``.
+
+        ProbPipe terms can declare *inputs*: named values a term receives
+        before it yields its value. Each kind defines what its inputs are: a
+        function's are its parameters, a conditional distribution's are the
+        values it is conditioned on, and a batch's are those of its elements.
+        Every other kind takes no inputs, so its input spec is ``InputSpec()``.
+        A ``None`` input spec means that the inputs are not known yet. The
+        property is read-only.
+        """
+
+    @property
     def value_spec(self) -> TermSpec | None:
         """The structure of this term's value, as its spec declares it: ``self.spec.value_spec``.
 
@@ -970,7 +983,7 @@ if name is not None:
             f"children name its outputs, so it takes no output_name. Rename a child instead, "
             f"as rename({{'a': 'b'}})"
         )
-inputs = instance.spec._inputs
+inputs = instance.spec.input_spec
 if inputs is not None and name is not None:
     _check_disjoint_names(
         inputs, (name,), owner=f"{public_class_name(type(instance))} {instance.label!r}"
@@ -1040,21 +1053,26 @@ class TermSpec(ABC):
         return value_spec
 
     @property
-    def _inputs(self) -> InputSpec | None:
-        """The input spec this spec holds, or None.
+    def input_spec(self) -> InputSpec | None:
+        """The inputs of the terms this spec describes.
 
-        A ``FunctionSpec``'s ``input_spec``, a ``ConditionalDistributionSpec``'s
-        ``given_spec``, and a ``BatchSpec``'s element's; None for every other
-        spec, and for a ``FunctionSpec`` whose inputs are not known.
+        ProbPipe terms can declare *inputs*: named values a term receives
+        before it yields its value. Each kind defines what its inputs are. A
+        function's inputs are its parameters, and a conditional distribution's
+        are the values it is conditioned on, which its ``given_spec`` also
+        names. A batch's inputs are those of its elements. Every other kind
+        takes no inputs, so its input spec is ``InputSpec()``. A ``None`` input
+        spec means that the inputs are not known yet, as for a ``FunctionSpec``
+        declared without one. The property is read-only.
         """
-        return None
+        return InputSpec()
 
-    def _with_inputs(self, inputs: InputSpec) -> Self:
-        """This spec with its input spec replaced by *inputs*, of this spec's class.
+    def _with_input_spec(self, input_spec: InputSpec) -> Self:
+        """This spec with its input spec replaced, of this spec's class.
 
         Parameters
         ----------
-        inputs : InputSpec
+        input_spec : InputSpec
             The new input spec.
 
         Returns
@@ -1066,15 +1084,17 @@ class TermSpec(ABC):
         Raises
         ------
         TypeError
-            If this spec holds no input spec.
+            If this spec's kind takes no inputs.
         """
-        raise TypeError(f"a {type(self).__name__} has no inputs to replace")
+        raise TypeError(
+            f"cannot replace the input spec of a {type(self).__name__}, whose kind takes no inputs"
+        )
 
     def rename(self, renames: Mapping[str, str] | None = None, /, **keyword_renames: str) -> Self:
         """This spec with inputs or paths renamed, all at once.
 
         A spec holds two kinds of names: the names of its inputs, in
-        ``_inputs``, and the paths of its value spec, when that is a
+        ``input_spec``, and the paths of its value spec, when that is a
         ``RecordSpec``. Each key is exactly one of the two. A key without ``/``
         is an input name when it names an input, and a top-level path
         otherwise; the two are disjoint, so no key is both. A key with ``/`` is
@@ -1123,7 +1143,7 @@ class TermSpec(ABC):
 
         *pairs* is what ``_checked_path_renames`` returns for the caller's
         ``renames`` and ``keyword_renames``. A key that names an input of
-        ``_inputs`` is an input rename, and every other key is a path of
+        ``input_spec`` is an input rename, and every other key is a path of
         ``_path_spec()``. ``TrackedTerm.rename`` calls this after removing the
         term's output name from *pairs*.
 
@@ -1153,7 +1173,7 @@ class TermSpec(ABC):
         """This spec with checked input renames and path renames applied.
 
         The inputs are renamed by ``InputSpec.rename``, and the value spec by
-        ``NamedTree.rename``, then the spec is rebuilt with ``_with_inputs`` and
+        ``NamedTree.rename``, then the spec is rebuilt with ``_with_input_spec`` and
         ``_with_value_spec``. The rebuilt spec's constructor checks that its
         input names and its top-level names are disjoint.
 
@@ -1178,7 +1198,9 @@ class TermSpec(ABC):
         """
 ```
 
-`FunctionSpec`, `ConditionalDistributionSpec`, and `BatchSpec` override `_inputs` and `_with_inputs`.
+`ConditionalDistributionSpec` and `BatchSpec` override `input_spec`, which `FunctionSpec` holds as a field, and the three override `_with_input_spec`.
+`ConditionalDistributionSpec.given_spec` stays as the kernel's own name for its input spec, as `event_spec` stays beside `value_spec`.
+The base `input_spec` imports `InputSpec` inside the method, since `core/_specs.py` imports this module through `core/_record_spec.py`.
 The constructors of `FunctionSpec` and `ConditionalDistributionSpec` call `_check_disjoint_names(inputs, top_level_names, owner=...)`, where the top-level names are those of the value spec of a record-valued spec; `BatchSpec` inherits the check from its element spec.
 
 ### 5.6 `core/_conformance.py` (new) and `TermSpec` (changed): conformance
@@ -1911,7 +1933,7 @@ Five path helpers read an `OutputSpec`: `_read_paths`, `_path_record`, `_has_pat
 P2 rewrites them over the value spec, and P3 deletes them.
 
 **Commits.** P2 is one PR of four commits, and the suite passes after each:
-1. **Accessors, with no change in behaviour:** `_output_name`, `output_names`, `output_spec`, `value_spec`, `_with_value_spec`, and `_output_spec_of`, still read from the `OutputSpec` in the spec. Every reader of the tables above moves to them.
+1. **Accessors, with no change in behaviour:** `_output_name`, `output_names`, `output_spec`, `input_spec`, `_with_input_spec`, `value_spec`, `_with_value_spec`, and `_output_spec_of`, still read from the `OutputSpec` in the spec. Every reader of the tables above moves to them.
 2. **Bare specs:** the spec classes of § 5.7, the constructors of § 5.8, `Declared`, the five naming rules, equality, fingerprints, and JAX static data. A script rewrites the `.term_spec` reads.
 3. **Deletion:** `OutputSpec`, its export, and the helpers above.
 4. **Documents:** `docs/api/input_and_output_specs.md`, `docs/api/extending.md`, the notebooks that build an `OutputSpec` (user guide 01, 03, and 09, and tutorial 06), the `design/` sections of § 8, and the CHANGELOG.
@@ -1962,7 +1984,7 @@ P2 rewrites them over the value spec, and P3 deletes them.
 II.2 also drops paths into a record input: an input spec's `[]` and `without` take input names only, and no input becomes required because a path cut it.
 In II.2, `InputSpec`'s signature drops `| None = None` for the sentinel `_NO_INPUTS`, and `None` is refused as a source.
 II.6 changes `in` as § 4.1 states, and adds the spec agreement rule.
-`design/glossary.md` replaces *value type* with *value spec*, the structure of a term's value, which each kind defines as § 4 states, and adds *record-valued*: a term or spec whose value spec is a `RecordSpec`. II.2 and II.6 use both terms.
+`design/glossary.md` replaces *value type* with *value spec*, the structure of a term's value, which each kind defines as § 4 states, and adds *record-valued*: a term or spec whose value spec is a `RecordSpec`. Its *input spec* entry becomes the `input_spec` of every term and spec, `InputSpec()` for a kind that takes no inputs, and still a conditional distribution's `given_spec`. II.2 and II.6 use both terms.
 III.3 drops "a key that names both an input and an output of a function renames both", and states that a function's input names and output names are disjoint, as III.9 states for a kernel.
 III.9 drops the grouping and splitting of a kernel's inputs by path: its `rename` renames each input to one name.
 IV.2's condition 5, that no name of an operand is both an input and an output, now holds for every operand by construction, so a merge never raises it.
@@ -1979,7 +2001,7 @@ Each step is one PR.
 
 **What users see.**
 - **Breaking:** `OutputSpec` is removed; `event_spec`, `element_spec`, and `return_spec` (today's `FunctionSpec.output_spec`) are bare specs; an object's output names are read with `output_names`, and the stored name is private; `x["x"]` on a law over an array named `x` raises `TypeError`; a function whose inputs accept less than declared no longer conforms; `bind_dims_from_spec` becomes `refine`; `InputSpec(None)` raises `TypeError`, and `InputSpec()` is the input spec with no inputs; a function with a name that is both an input and an output raises at construction; a kernel's inputs can no longer be grouped or split by `rename`, and an input renamed to a path raises.
-- **Added:** renaming a function's inputs; paths on record-valued kernels and functions, `without` on laws, `output_names`, `outputs`, `conforms_to`, `unify`, `refine`, `DimensionScope`, and `output_name=` on `NumericArray` and `Opaque`.
+- **Added:** renaming a function's inputs; paths on record-valued kernels and functions, `without` on laws, `input_spec` on every term and spec, `output_names`, `outputs`, `conforms_to`, `unify`, `refine`, `DimensionScope`, and `output_name=` on `NumericArray` and `Opaque`.
 - **Fixed:** the output name leaves spec equality and fingerprints.
 
 ## 10. Questions for the maintainer
