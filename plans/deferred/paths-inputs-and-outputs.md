@@ -1266,6 +1266,8 @@ class DimensionSizes(Mapping[str, int]):
     ----------
     sizes : mapping of str to int, optional
         Sizes already bound, by dimension name.
+    **keyword_sizes : int
+        More sizes, each keyword a dimension name.
 
     Raises
     ------
@@ -1279,17 +1281,26 @@ class DimensionSizes(Mapping[str, int]):
     >>> dim_sizes = DimensionSizes()
     >>> NumericArraySpec((3,)).conforms_to(NumericArraySpec(("n",)), dim_sizes)
     True
-    >>> dict(dim_sizes)
-    {'n': 3}
+    >>> dim_sizes
+    DimensionSizes(n=3)
     >>> NumericArraySpec((4,)).conforms_to(NumericArraySpec(("n",)), dim_sizes)
     False
-    >>> dict(dim_sizes)
-    {'n': 3}
+    >>> dim_sizes
+    DimensionSizes(n=3)
     """
 
     __slots__ = ("_sizes",)
 
-    def __init__(self, sizes: Mapping[str, int] | None = None) -> None: ...
+    def __init__(
+        self, sizes: Mapping[str, int] | None = None, /, **keyword_sizes: int
+    ) -> None: ...
+
+    def __repr__(self) -> str:
+        """The bound sizes as the constructor takes them, as ``DimensionSizes(n=3)``.
+
+        ``call_repr`` writes each size as a keyword, or all of them as one
+        ``**{...}`` argument when a name is a reserved word, such as ``class``.
+        """
 
     def __getitem__(self, name: str) -> int: ...
 
@@ -1329,8 +1340,8 @@ class DimensionSizes(Mapping[str, int]):
         >>> dim_sizes = DimensionSizes()
         >>> dim_sizes.bind_shared_dim("n", 3, path="x")
         3
-        >>> dict(dim_sizes)
-        {'n': 3}
+        >>> dim_sizes
+        DimensionSizes(n=3)
         >>> dim_sizes.bind_shared_dim("m", "m", path="y")
         'm'
         >>> dim_sizes.bind_shared_dim("n", 4, path="z")
