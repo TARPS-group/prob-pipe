@@ -235,7 +235,7 @@ A law, its draws, its mean, and a batch of its draws share one set of paths (II.
 **Changed in II.2:**
 1. **Two cases instead of five.** An object whose value spec is not a record has one output, the object itself, under its output name. This replaces II.2's cases 2 to 5: an object whose value is a function, a batch, or a law is one output, and no object lacks outputs because of its value's kind. An object without an output name has no outputs.
 2. **The output name is stored on the object.** No spec holds it, and an object whose value spec is a record refuses one. II.2 stores it in `OutputSpec`.
-3. **The output spec is II.2's record of the outputs,** as a plain `RecordSpec`: the value spec itself when it is a record, and `{name: value spec}` otherwise. It is empty for an object without outputs, and `OutputSpec` is removed. Its operations, `O["g/b"]`, `O[["a"]]`, `O.without("g")`, `O.rename(...)`, and `O & P`, are those of a record (II.6).
+3. **The output spec is II.2's record of the outputs,** as a plain `RecordSpec`: the value spec itself when it is a record, and `{name: value spec}` otherwise. It is empty for an object without outputs, and `None` while the value spec is not known, as for a function before its first call, so `None` means "not known yet" for every spec accessor. `OutputSpec` is removed. Its operations, `O["g/b"]`, `O[["a"]]`, `O.without("g")`, `O.rename(...)`, and `O & P`, are those of a record (II.6).
 
 | Object | Value spec | Paths | Outputs |
 |---|---|---|---|
@@ -259,6 +259,10 @@ A law, its draws, its mean, and a batch of its draws share one set of paths (II.
 
 **Changed in II.2:** inputs, like outputs, are named by single names, never by paths.
 An input spec's `[]` and `without` take input names only, so `i["g/b"]` raises `KeyError` even when the spec of `g` is a record, and no input becomes required because a path cut it.
+
+**Changed in II.2:** `None` is not a source of inputs.
+`InputSpec()` has no inputs, and `InputSpec(None)` raises `TypeError`, since `None` stands for a spec not known yet, as in `FunctionSpec(input_spec=None)` and an unknown `output_spec`.
+So `InputSpec(f.output_spec)` fails for a function whose return spec is not known, rather than giving an input spec with no inputs.
 
 ```python
 prior = Normal("mu", 0.0, 1.0) & HalfNormal("sigma", 1.0)
@@ -330,7 +334,7 @@ g.output_spec   # RecordSpec(mu=..., sigma=...); passing output_name= raises Val
 
 A function whose return spec is not known yet has `return_spec=None` and keeps its output name, as `OutputSpec(mean=None)` does today.
 Its first call refines the return spec.
-Until then, reading its `output_spec` raises `TypeError`, as II.2 says for an unspecified output.
+Until then, its `output_spec` is `None`, as its `return_spec` is.
 Constructors default the output name as today: a family's first argument, a function's callable name, and `"element"` for a batch built from bare values.
 
 **Decision 2: names.**
@@ -406,7 +410,7 @@ class TrackedTerm:
     def output_name(self) -> str | None: ...
     def with_output_name(self, name: str | None) -> Self: ...  # a copy, as with_label makes
     @property
-    def output_spec(self) -> RecordSpec: ...                   # output_spec_of(self.value_spec, self.output_name)
+    def output_spec(self) -> RecordSpec | None: ...            # output_spec_of(self.value_spec, self.output_name)
 ```
 
 1. `_init_tracked(label, *, output_name=None, provenance=None)` stores the name, and every host class declares `_output_name` in its `__slots__`.
@@ -421,10 +425,25 @@ class TrackedTerm:
 **One function computes an output spec.** `core/_outputs.py` holds it:
 
 ```python
-def output_spec_of(value_spec: TermSpec | None, output_name: str | None) -> RecordSpec:
+def output_spec_of(value_spec: TermSpec | None, output_name: str | None) -> RecordSpec | None:
     # value_spec itself when it is a record; {output_name: value_spec} when a name is given;
-    # RecordSpec() when there is no name; TypeError when value_spec is None (not known yet)
+    # RecordSpec() when there is no name; None when value_spec is None (not known yet)
 ```
+
+A consumer that needs the spec refuses `None` for its own reason, with a message that names the object and says its return spec is known after its first call.
+A merge refuses it because its conformance check needs a spec, and `InputSpec` refuses it because `None` is not a source of inputs.
+
+**`InputSpec`'s default.** Its positional argument defaults to a private sentinel, `_NO_INPUTS`, so the constructor tells an explicit `None` from no argument:
+
+```python
+_NO_INPUTS = object()   # InputSpec() was given no source: no inputs, as _UNSET in core/tracked.py
+
+def __init__(self, inputs: InputSpec | Mapping[str, TermSpec | tuple] | RecordSpec = _NO_INPUTS, /,
+             **inputs_by_name: TermSpec | tuple) -> None: ...
+```
+
+`InputSpec(None)` raises `TypeError`: "cannot read inputs from None, which stands for a spec not known yet. Write InputSpec() for no inputs".
+No code, test, or document in the repository writes `InputSpec(None)` today.
 
 `x.output_spec` calls it, and so does code that holds only specs, such as an operation's `result=` rule.
 
@@ -513,6 +532,7 @@ P2 rewrites them over the value spec, and P3 deletes them.
 6. One table test of the five naming rules of § 5.5, with a row for each operation it lists.
 7. Two laws that differ only in their names have equal specs and equal fingerprints, and a `jax.jit` round trip keeps the name of a `NumericArray` and of a `NumericArrayBatch`.
 8. `with_output_name` on an object whose value spec is a record raises `ValueError`, and `probpipe.OutputSpec` no longer exists.
+9. A function whose return spec is not known has `output_spec` `None`; `InputSpec()` has no inputs; `InputSpec(None)` and `InputSpec(f.output_spec)` for such a function raise `TypeError`; and a merge with such a function refuses it with a message that names the function.
 
 ## 7. Edits to the other plans
 
@@ -542,6 +562,7 @@ P2 rewrites them over the value spec, and P3 deletes them.
 - III.3, where `record[path]` reads through a held term.
 
 II.2 also drops paths into a record input: an input spec's `[]` and `without` take input names only, and no input becomes required because a path cut it.
+In II.2, `InputSpec`'s signature drops `| None = None` for the sentinel `_NO_INPUTS`, and `None` is refused as a source.
 
 The conceptual model needs one edit: its definition of `R[[p]]` keeps the full path, as its examples already do.
 
@@ -556,7 +577,7 @@ Each step is one PR.
 5. **P5, outputs and feeding:** `outputs` and `output(c)`; merge's check through § 4.6.
 
 **What users see.**
-- **Breaking:** `OutputSpec` is removed; `event_spec`, `element_spec`, and `return_spec` (today's `FunctionSpec.output_spec`) are bare specs; a law's stated name is `output_name`; `x["x"]` on a law over an array named `x` raises `TypeError`; a function whose inputs accept less than declared no longer conforms.
+- **Breaking:** `OutputSpec` is removed; `event_spec`, `element_spec`, and `return_spec` (today's `FunctionSpec.output_spec`) are bare specs; a law's stated name is `output_name`; `x["x"]` on a law over an array named `x` raises `TypeError`; a function whose inputs accept less than declared no longer conforms; `InputSpec(None)` raises `TypeError`, and `InputSpec()` is the input spec with no inputs.
 - **Added:** paths on kernels and functions whose value spec is a record, `without` on laws, `outputs`, `conforms_to`, and `unify`.
 - **Fixed:** the stated name leaves spec equality and fingerprints.
 
