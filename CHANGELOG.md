@@ -3425,6 +3425,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   )(model, observed)
   ```
 
+- **Kernel mixtures.** `mixture(K, mixing)` integrates a mixing law over
+  the kernel's inputs and preserves its output event structure. Empirical
+  mixing laws produce a `MixtureDistribution` with the original weights.
+  Other sampling laws produce an empirical approximation through the joint's
+  output projection. The mixing law must supply all required kernel inputs.
+
 ### Changed
 
 - **Tutorials 1 to 4 are revised and shown on the site again.** They follow one
