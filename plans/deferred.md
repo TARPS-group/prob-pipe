@@ -99,7 +99,7 @@ A plan written on 2026-10-28, in `plans/deferred/` and not yet approved; it list
 
 | Work | Source |
 |---|---|
-| One contract for paths, outputs, and conformance: specs hold structure only, and an object stores its output name, so `OutputSpec` is removed and an output spec is a `RecordSpec`; outputs by two cases, a record value's top-level names or one stated name; a record's paths ending at its leaves, and any other object's paths read from its value spec when that is a record; one path interface, `PathIndexed`, for every kind, with `without` derived from selection; public `conforms_to`, `unify`, and `refine` with contravariant inputs, and a `DimensionScope`; the dozen path helpers of `distributions/_views.py` deleted (steps P1 to P5) | `plans/deferred/paths-inputs-and-outputs.md` |
+| One contract for paths, outputs, and conformance: specs hold structure only, and an object stores its output name, so `OutputSpec` is removed and an output spec is a `RecordSpec`; outputs by two cases, a record value's top-level names or one stated name; a record's paths ending at its fields, and any other object's paths read from its value spec when that is a record; one path interface, `PathIndexed`, for every kind, with `without` derived from selection; public `conforms_to`, `unify`, and `refine` with contravariant inputs, and a `DimensionScope`; the dozen path helpers of `distributions/_views.py` deleted (steps P1 to P5) | `plans/deferred/paths-inputs-and-outputs.md` |
 
 ## Open issues the push changes
 

@@ -9,9 +9,9 @@
 
 **Settled with the maintainer on 2026-10-28:**
 
-1. A record's paths are the paths of its own tree and end at its leaves; any other object has paths exactly when its value spec is a record (§ 4.1, § 4.2). This reverses the decision of 2026-10-16 that paths go through an object a record holds.
-2. `in` is part of the path interface (§ 4.1).
-3. A list of paths keeps each node at its full path (§ 4.1).
+1. A record's paths are the paths of its own tree and end at its fields; any other object has paths exactly when its value spec is a record (§ 4.1, § 4.2). This reverses the decision of 2026-10-16 that paths go through an object a record holds.
+2. `in` is part of the path interface, and it raises as `[]` does for a malformed path or an object without paths (§ 4.1).
+3. A list of paths keeps each node at its full path, as II.6 states; the conceptual model's definition of `[[ ]]` changes to match (§ 4.1).
 4. `select` is not part of the path interface, and this plan leaves it unchanged (§ 4.1).
 5. Outputs follow the conceptual model's two cases instead of II.2's five, so that every named object has outputs (§ 4.3).
 6. The output name is stored on the object, not inside its spec; `OutputSpec` is removed, and an object's output spec is a `RecordSpec` (§ 4.3, § 5.5).
@@ -81,10 +81,10 @@ The note lists three gaps: the definition of conformance, the definition of the 
 
 Three differences matter.
 
-**The design continues paths past a record's leaves.**
+**The design continues paths past a record's fields.**
 For a law `d` over `{mu, sigma}`, II.6 gives the record `{x: 3.0, g: d}` the paths `g/mu` and `g/sigma`.
 II.2 gives paths to every object whose value type holds a record at any depth, such as a batch of laws over a record.
-The conceptual model ends a record's paths at its leaves, and gives other kinds paths only when their event, output, or element is a record.
+The conceptual model ends a record's paths at its fields, and gives other kinds paths only when their event, output, or element is a record.
 
 **The design states outputs in more cases.**
 II.2 reads outputs from the *value type*: the event type of a law or kernel, the return type of a function, the element type of a batch, and a value's own type.
@@ -114,7 +114,7 @@ The overhaul merged steps S1, S2a, S2b-out, S2b-in, S3, and S4a of the declarati
 The shared parts are the reader of the argument, `_as_paths` in `core/_shapes.py`, and the separator `_PATH_SEP` in `core/named_tree.py`.
 Each kind repeats the rest: whether a path exists, the spec at a path, canonical order, the error for an object with no paths, and the cut to a list.
 `distributions/_views.py` alone holds more than a dozen helpers that restate `NamedTree` on an `OutputSpec` (Appendix A).
-Every kind ends a record's paths at its leaves, as the conceptual model does:
+Every kind ends a record's paths at its fields, as the conceptual model does:
 
 ```python
 r = Record({"x": 3.0, "g": d})
@@ -164,7 +164,7 @@ The first pair is the variance of inputs: the code compares them covariantly, an
 
 1. **Outputs as a wrapper spec.** The approach does not hold up. An output name says how an object connects to others, and it is not part of the object's structure. `OutputSpec` stores it inside the structure of every law, kernel, function, and batch, so each operation that reads structure strips the name again or treats it as a special case. § 4.3 computes outputs from the spec and a name stored on the object, and an output spec becomes a `RecordSpec`.
 2. **One source of truth for paths.** The reader of the argument is shared. What a path means is implemented once per kind, and three kinds lack it. § 4.1 and § 4.2 define paths once, on specs, and § 5.2 gives every kind one implementation.
-3. **Spec conformance.** II.1 defines conformance and unification by kind. The code has no public relation, its private one disagrees with II.1 in five places, and the conceptual model leaves the notion open. § 4.5 defines three relations on specs, and § 4.6 defines when an output feeds an input in terms of them.
+3. **Spec conformance.** II.1 defines conformance and unification by kind. The code has no public relation, its private one disagrees with II.1 in five places, and the conceptual model leaves the notion open. § 4.5 keeps II.1's two relations, adds a third, refinement, and lists where the code departs; § 4.6 keeps IV.2's rule for when an output feeds an input.
 
 ## 3. Principles
 
@@ -175,54 +175,28 @@ The first pair is the variance of inputs: the code compares them covariantly, an
 
 ## 4. The proposed design
 
-Each layer uses only the layers before it.
+Each subsection names the sections of `design/` it keeps, and states only what it changes or adds.
+This plan calls II.2's *value type* the **value spec**: the spec of one value of an object, which is a law's or kernel's event spec, a function's return spec, a batch's element spec, or a record's or base value's own spec.
+§ 5.1 gives it an attribute, and Decision 2 settles the name.
 
-### 4.1 Structure, and the paths of a record
+### 4.1 The paths of a record
 
-Every object has a spec, its static structure, which the conceptual model writes `S(x)`.
+**Kept from II.6:**
+- the parts of a tree: names, nodes, children, fields, groups, paths, and canonical order;
+- the reader of `[]`'s argument, and its table of errors;
+- selection by one path and by a list of paths, each node at its full path in canonical order;
+- chaining, `x["g"]["b"] == x["g/b"]`;
+- `without`, its partition of the fields with a list, and the `ValueError` for removing every node;
+- `rename` and its rules.
 
-> [!IMPORTANT]
-> **Definition (spec, value spec).**
-> 1. The *spec* of an array is its shape, dtype, and support; of an opaque value, its Python type and metadata; of a record, its tree with a spec at each leaf.
-> 2. The spec of a law is its *event spec*; of a kernel, its *input spec* and event spec; of a function, its input spec and its *return spec*; of a batch, its levels and its *element spec*. Each of these is itself a spec, so specs nest.
-> 3. The *value spec* of an object is the spec of one of its values: a law's or kernel's event spec, a function's return spec, a batch's element spec, and a record's or base value's own spec.
->
-> A spec holds no name for the object or for its value.
+**Changed in II.6:**
+1. **A path ends at a field.** A path leads from the root to a group or a field, and never continues into the object a field holds. II.6's selection through a held term, as `{x: 3.0, g: d}["g/mu"]`, and its cut of a held term by a list or by `without`, are removed. For a law `d` over `{mu, sigma}` at the field `g`, `R["g"]["mu"]` is `d["mu"]`, and `R["g/mu"]` raises `KeyError`.
+2. **`in` refuses as `[]` does.** `p in x` is true exactly when `x[p]` raises no `KeyError`, and a malformed path, or any path given to an object without paths, raises as it does for `[]`. II.6 has `p in x` false for an object without paths, never raising.
 
-The value spec is the design's "value type" (II.2), given an attribute in § 5.1.
-A law over `{mu, sigma}`, its draws, its mean, and a batch of its draws share one value spec.
-
-Records are the only objects with a name at each node.
-
-> [!IMPORTANT]
-> **Definition (paths of a record).** A record's tree has a *group* at each nested record and a *leaf* at each object of any other kind.
-> A *path* is a sequence of names joined by `/`, as `g/c`, that leads from the top of the tree to a group or a leaf.
-> The paths of a record are the paths of its tree, and `R[p]` is the node at `p`: the object at a leaf, or the record at a group.
-
-A path ends at a leaf.
-For a law `d` over `{mu, sigma}` held at the leaf `g`, `R["g"]` is `d`, and `R["g"]["mu"]` is `d["mu"]`.
-
-The **path interface** is five operations:
-
-| Operation | Result for a record `R` |
-|---|---|
-| `R[p]` | the node at `p`: a leaf's object, or a group as a record |
-| `R[[p, q, …]]`, also written `R[p, q, …]` | the record of the chosen nodes, each at its full path, in `R`'s order |
-| `p in R` | whether `p` is a path of `R` |
-| `R.without(p, q, …)` | `R` with those nodes removed, every other node at its path |
-| `R.rename({old: new})` | `R` with nodes renamed or moved, all at once, by II.6's rules |
+**New:** a rule that ties every kind's path operations to its spec.
 
 > [!IMPORTANT]
-> **Rules (path interface).** For an object `x` with paths, a path `p`, and a list of its paths `Q`:
-> 1. one reader refuses a malformed argument (II.6's table); a missing path is a `KeyError`; any path given to an object without paths is a `TypeError`;
-> 2. `x[p1/p2] == x[p1][p2]` for each path `p1/p2` of `x`;
-> 3. `x[p]` is of the kind of the node at `p`, and `x[Q]` and `x.without(*Q)` are of the kind of `x`;
-> 4. `x.without(*Q) == x[complement(Q)]`, where `complement(Q)` lists the outermost nodes that are neither in `Q` nor above or below a path of `Q`, so selection and removal partition the leaf paths;
-> 5. `x.spec[p] == x[p].spec`, and likewise for a list, `without`, and `rename`;
-> 6. removing every node is a `ValueError`;
-> 7. `p in x` exactly when `x[p]` raises no `KeyError`; a malformed path, and any path given to an object without paths, raise as they do for `[]`.
-
-By rule 4, removal is derived from selection: an implementation provides the cut to a list, and `without` is the cut to the complement.
+> **Rule (spec agreement).** For every object `x` with paths, `x.spec[p] == x[p].spec`, and likewise for a list of paths, `without`, and `rename`.
 
 ```python
 R = Record({"a": 1.0, "b": {"c": 2.0, "d": 3.0}})
@@ -234,91 +208,57 @@ R.without("b/d")       # {a: 1.0, b: {c: 2.0}}, the same record as R["a", "b/c"]
 ```
 
 `Record.select` and `RecordBatch.select` are not part of the path interface, and this plan leaves them unchanged.
-Each returns a `dict` keyed by last names, for `**`-splatting.
 
 ### 4.2 Which objects have paths
+
+**Changed in II.2 and II.6:** which objects have paths.
 
 > [!IMPORTANT]
 > **Definition (paths of an object).** An object has paths exactly when its value spec is a record spec, and its paths are the paths of that record spec (§ 4.1).
 
-A record's value spec is its own spec, so for a record the definition gives the paths of § 4.1.
-For the other kinds it is the conceptual model's rule: a law or kernel has paths when its event is a record, a function when its return value is, and a batch when its element is.
+II.2 and II.6 give paths to every object whose value type holds a record at any depth.
+Under this definition, a law over an array, a batch of laws over `{mu, sigma}`, and a function that returns such a law have no paths; for the batch `b`, `b[i]["mu"]` reads a part of one element.
+An object has paths exactly when its outputs are the top-level names of its value spec (§ 4.3).
+
+**Kept:** the part of each kind at a path, which the conceptual model calls its *marginal*: the coupled marginal of a law (III.7), the coupled marginal of a kernel (III.9), the selected function `f[s]` (III.3), and the marginal batch (II.5).
+A law, its draws, its mean, and a batch of its draws share one set of paths (II.2).
+
+**New:** one rule gives the spec of every kind's part, so the rule of § 4.1 holds by construction.
 
 > [!IMPORTANT]
-> **Definition (marginal).** For an object `x` that is not a record, `x[p]` is the object of `x`'s kind whose spec is `x.spec[p]`, and which gives `v[p]` wherever `x` gives a value `v`:
-> 1. for a law, the coupled marginal, whose draw is the node at `p` of a draw of the law;
-> 2. for a kernel, the kernel whose law at each input value is the coupled marginal at `p` of the law the kernel gives there;
-> 3. for a function, the function with the same inputs given by `f[p](w) == f(w)[p]`;
-> 4. for a batch, the batch over the same levels of `b[i][p]`, its marginal batch.
->
-> On specs the rule is one rule for all four kinds: `S[p]` is `S` with its value spec replaced by the value spec's selection at `p`.
-
-Consequences of the two definitions:
-1. A law, its draws, its mean, and a batch of its draws have one set of paths, and `sample(d[p])` is distributed as `sample(d)[p]` at every path.
-2. `x.spec[p] == x[p].spec` holds for every kind, by construction (rule 5).
-3. An object whose value spec is not a record has no paths, whatever its value holds. A law over an array, a batch of laws over `{mu, sigma}`, and a function that returns such a law have none; for the batch `b`, `b[i]["mu"]` reads a part of one element.
-4. An object has paths exactly when its outputs are the top-level names of its value spec (§ 4.3).
+> **Rule (the spec of a part).** For a spec `S` of a law, a kernel, a function, or a batch, `S[p]` is `S` with its value spec replaced by the value spec's selection at `p`.
 
 ### 4.3 Outputs
 
-When two objects combine, an input of one receives what the other gives under the same name.
-That name must name a whole part, so that the receiver gets one object.
-The parts named must together determine the giver, so that the combination loses nothing.
+**Kept from II.2:** an output is one name for one whole value, never a path; a record value type has one output per child; and a stated name gives no path, so `Normal("x", 0, 1)["x"]` is a `TypeError`.
 
-A record value spec already names its children, so its children's names serve as the outputs.
-Any other value spec has no names of its own, so the object is one output, under a name it states.
-
-> [!IMPORTANT]
-> **Definition (output name, outputs).**
-> 1. An object whose value spec is not a record may state an *output name*, a name without `/`. The object stores it; its spec does not.
-> 2. The *outputs* of an object whose value spec is a record are the top-level names of that record, and the output `c` is the part `x[c]`.
-> 3. The outputs of an object whose value spec is not a record are its output name alone, and that output is `x` itself. An object without an output name has no outputs.
-> 4. `x.outputs` is the record of the outputs: `{c: x[c] for each output c}` in case 2, and `{name: x}` in case 3.
-
-Consequences of the definition:
-1. **A stated name gives no path.** `Normal("x", 0, 1)["x"]` is a `TypeError`, and `Normal("x", 0, 1).outputs["x"]` is the law, as the conceptual model requires.
-2. **Outputs split only at a record.** II.2 splits the outputs of an object whose value is a function or a batch (its cases 3 and 4), and gives none to one whose value is a law (its case 5). Here each of these is one output under its stated name.
-3. **A function that returns a law has one output**, the function. II.2 asks for it to be wrapped in a record under a name; the output name gives the same result without changing the object's value spec.
-4. **The parts that are outputs determine the object.** A record is rebuilt from its children, a function and a batch from their marginals, and a law from its coupled marginals, which share its random variable. An object whose value is a law keeps its coupled marginals together only as a whole, so it is not split.
-5. **Spec equality ignores names with no rule to say so.** `Normal("x", 0, 1).spec == Normal("y", 0, 1).spec`, since neither spec holds a name, and the fingerprint and JAX structure read the spec.
+**Changed in II.2:**
+1. **Two cases instead of five.** An object whose value spec is not a record has one output, the object itself, under its output name. This replaces II.2's cases 2 to 5: an object whose value is a function, a batch, or a law is one output, and no object lacks outputs because of its value's kind. An object without an output name has no outputs.
+2. **The output name is stored on the object.** No spec holds it, and an object whose value spec is a record refuses one. II.2 stores it in `OutputSpec`.
+3. **The output spec is II.2's record of the outputs,** as a plain `RecordSpec`: the value spec itself when it is a record, and `{name: value spec}` otherwise. It is empty for an object without outputs, and `OutputSpec` is removed. Its operations, `O["g/b"]`, `O[["a"]]`, `O.without("g")`, `O.rename(...)`, and `O & P`, are those of a record (II.6).
 
 | Object | Value spec | Paths | Outputs |
 |---|---|---|---|
 | an array with output name `a` | `()` | none | `a`, whose value is the array |
 | a record `{a, b: {c}}` | `{a, b: {c}}` | `a`, `b`, `b/c` | `a`, `b` |
 | a function from `{u, v}` to an array, output name `f` | `()` | none | `f`, whose value is the function |
-| a function from an array to `{a, b}` | `{a, b}` | `a`, `b` | `a` and `b`, whose values are marginal functions |
+| a function from an array to `{a, b}` | `{a, b}` | `a`, `b` | `a` and `b`, whose values are selected functions |
 | a function returning a law over `{a, b}`, output name `h` | a law spec | none | `h`, whose value is the function |
 | a law over `{a, b}` | `{a, b}` | `a`, `b` | `a` and `b`, whose values are coupled marginals |
 | a batch of laws over `{a, b}`, output name `fits` | a law spec | none | `fits`, whose value is the batch |
-| a record `{x, g}` whose leaf `g` holds a law over `{mu}` | `{x, g}` | `x`, `g` | `x`, `g` |
+| a record `{x, g}` whose field `g` holds a law over `{mu}` | `{x, g}` | `x`, `g` | `x`, `g` |
 
-A check made before anything runs, such as whether two objects can merge, needs each output's name and spec.
+**New:** `x.outputs`, the record that maps each output name to its output, which is the conceptual model's `outputs(x)`.
+`design/` has only `x.output(c)`, for one output, and it becomes `x.outputs[c]`.
 
-> [!IMPORTANT]
-> **Definition (output spec).** The *output spec* of an object is a record spec with one field per output: the value spec itself when it is a record, and `{name: value spec}` otherwise.
-
-Each field holds the spec of one value of its output.
-For a law over `{mu, sigma}` the output spec is `{mu: (), sigma: ()}`, and for a function `h` that returns a law it is `{h: DistributionSpec(...)}`.
-The object's kind says how a value passes: as one draw, the result of one call, or one element (§ 4.6).
-An output spec is a `RecordSpec`, so the operations II.2 lists for output specs are record operations that `NamedTree` already implements: `O["g/b"]`, `O[["a"]]`, `O.without("g")`, `O.rename(...)`, and `O & P`.
-
-Specs hold structure only, an object stores its output name, and the output spec is computed from both, so `OutputSpec` is removed.
 § 5.5 gives the implementation.
 
 ### 4.4 Inputs
 
-Inputs keep II.2's definition.
+**Kept from II.2:** an input and `InputSpec`, the four sources an input spec is read from, `&`, and `rename`. The source that is an output spec is now a `RecordSpec`, which II.2 already reads.
 
-> [!IMPORTANT]
-> **Definition (input).** The *inputs* of a kernel or a function are named, and each has a spec and a flag for whether it is optional. An optional input has a default, which the object holds. An `InputSpec` lists the inputs without their defaults, and two input specs compare by name, not by order.
-
-Inputs, like outputs, are named by single names, never by paths.
-An input spec is therefore selected by input name: `i["g"]` is the spec of the input `g`, `i[["g", "h"]]` is the input spec of those two inputs, and `i.without("g")` is the input spec of the others.
-Each keeps its optional flags.
-A name with `/` is refused, as a name that is not an input is, so `i["g/b"]` raises `KeyError` even when the spec of `g` is a record.
-
-`InputSpec(O)`, for an output spec `O`, has one required input per output of `O`, with that output's spec:
+**Changed in II.2:** inputs, like outputs, are named by single names, never by paths.
+An input spec's `[]` and `without` take input names only, so `i["g/b"]` raises `KeyError` even when the spec of `g` is a record, and no input becomes required because a path cut it.
 
 ```python
 prior = Normal("mu", 0.0, 1.0) & HalfNormal("sigma", 1.0)
@@ -327,57 +267,34 @@ InputSpec(prior.output_spec)   # InputSpec(mu=NumericArraySpec(()), sigma=Numeri
 
 ### 4.5 Conformance and unification
 
-Conformance decides whether something can be given where a spec is declared.
-Four places need it: a value against a declared spec, a term's spec against a declared spec (a law passed to an input that takes laws), an output against an input (§ 4.6), and a function's result against its declared return spec.
+**Kept from II.1:** the definitions of conformance and unification, the dimension scope, and the rules by kind, including contravariant inputs and the superclass rule for opaque types.
+The conceptual model lists conformance and the dimension scope as gaps, and II.1's definitions fill them.
 
-> [!IMPORTANT]
-> **Definition (conforms, unify, refine).** Within one dimension scope:
-> 1. a value *conforms to* a spec `B` when it has the structure `B` describes, and a spec `A` *conforms to* `B` when every value that conforms to `A` conforms to `B`;
-> 2. `A` and `B` *unify* when some spec conforms to both and a most general such spec `U` exists, so that a spec conforms to `U` exactly when it conforms to both; `U` is their *unification*;
-> 3. a declared spec `B` is *refined* by a spec `A` that conforms to it: the result is `B` with its dimension names bound from `A`, and with each dtype or support that `B` leaves unset taken from `A`.
+**The code departs from II.1 in five places,** which step P1 fixes:
 
-The rules by kind are II.1's.
-The table states each, and notes where the code departs:
+| Kind | Code today |
+|---|---|
+| opaque | requires equal types, in both directions |
+| law | also compares output names |
+| kernel, function | inputs compared covariantly; optional inputs not compared; output names compared |
+| function | a function spec with unknown inputs conforms to one with declared inputs |
+| function | `FunctionSpec.is_valid` accepts any callable, though II.1 checks a value by its spec |
 
-| Kind | `A` conforms to `B` when | Code today |
-|---|---|---|
-| array | equal rank, each axis agreeing in the scope, and `A`'s dtype casts to `B`'s by same-kind casting when both set one | agrees |
-| opaque | `B`'s type is unset or a superclass of `A`'s, and `B`'s metadata is unset or equal to `A`'s | requires equal types, in both directions |
-| record | the same child names in the same order, child by child | agrees |
-| law | `A`'s event spec conforms to `B`'s | also compares output names |
-| kernel, function | the same input names and optional inputs; each of `B`'s input specs conforms to `A`'s; `A`'s event or return spec conforms to `B`'s; a side `B` leaves unknown accepts any `A`, and a side only `A` leaves unknown does not conform | inputs compared covariantly; optional inputs not compared; a side only `A` leaves unknown passes; output names compared |
-| batch | the same levels, and `A`'s element spec conforms to `B`'s | agrees, apart from the element name |
-
-A value that carries a spec, such as a law, a function, or a batch, conforms when its spec does.
-So `FunctionSpec.is_valid(len)` is false, since `len` carries no spec, and `is_valid` reports conformance for every kind.
-No spec holds a name, so names take no part in any of these relations.
-
-**The dimension scope.** II.1 defines it, the conceptual model lists it as a gap, and the code passes a `dict` of bindings by hand.
-A `DimensionScope` holds the size each dimension name is bound to.
-It binds a name the first time the name is compared with a size, and refuses a second size for it and two unbound names at one axis.
-Every relation takes one, and a caller that checks several specs together, such as the inputs of one call or the operands of one merge, passes the same scope to each.
+**New:**
+1. **A side that only `A` leaves unknown does not conform.** II.1 says that a side `B` leaves undeclared accepts any `A`, and is silent on the reverse; this follows from II.1's definition of conformance.
+2. **Refinement is one named relation.** `B.refine(A)`, for an `A` that conforms to `B`, is `B` with its dimension names bound from `A` (II.1's binding) and with each dtype or support that `B` leaves unset taken from `A` (II.2's completion). `bind_dims_from_spec` becomes `refine`, so it also fills an unset dtype or support.
+3. **`DimensionScope` is a class.** It holds II.1's scope in place of the `dict` the code passes by hand, and every relation takes one.
 
 **Decision 1: one public relation.**
-- **Recommendation.** `A.conforms_to(B, scope=None)`, `unify(A, B, scope=None)`, and `B.refine(A)` are the entry points. `bind_dims_from_spec(A)` is kept as `refine`, and `bind_dims_from_value(v)` as refinement by the value's spec.
+- **Recommendation.** `A.conforms_to(B, scope=None)`, `unify(A, B, scope=None)`, and `B.refine(A)` are the entry points, and `bind_dims_from_value(v)` is refinement by the value's spec.
 - **Alternative.** Keep today's private names, and fix only the departures in the table.
 
 ### 4.6 How an output feeds an input
 
-The conceptual model asks what it means for an output to conform to an input, and whether an input can feed another input.
+**Kept from IV.2, III.3, and II.5:** an output feeds the input of the same name, and its spec must conform to the input's (IV.2, condition 6); an input that both operands take is one input, whose spec is the unification of the two (II.2's `InputSpec &`, IV.2, III.3).
+These rules answer the conceptual model's two open questions about binding: an output binds to an input by conformance, and an input meets another input by unification.
 
-> [!IMPORTANT]
-> **Definition (feeds).** In a combination of `x` and `y`, the output `c` of `x` *feeds* the input `c` of `y` when `x.output_spec[c]` conforms to `y.input_spec[c]` in the combination's dimension scope.
-
-The output spec holds the spec of one value of each output, so the check is one rule for every kind of giver.
-The giver's kind decides only how the values pass:
-1. a law passes its random variable, so the combination is a joint law;
-2. a function passes its result at each call;
-3. a batch passes its elements, position by position;
-4. a record passes its value.
-
-An input that both operands of a merge take is the case of an input feeding an input.
-The merged object takes that input once, and its spec is the unification of the two operands' specs.
-A merge therefore needs two relations: conformance, from an output to an input, and unification, from an input to an input.
+**New:** the check reads the output spec, `x.output_spec[c]` conforms to `y.input_spec[c]`, so one rule serves every kind of giver.
 
 ## 5. In code: one source of truth
 
@@ -390,7 +307,7 @@ FunctionSpec(input_spec: InputSpec | None, return_spec: TermSpec | None)
 BatchSpec(element_spec: TermSpec, **levels)
 ```
 
-`TermSpec.value_spec` is the value spec of § 4.1, and `TermSpec.with_value_spec(spec)` replaces it.
+`TermSpec.value_spec` is the value spec of § 4, and `TermSpec.with_value_spec(spec)` replaces it.
 These two methods are all that a spec of a law, kernel, function, or batch needs for paths.
 The extra step `.term_spec` goes from the 271 places that take it.
 
@@ -435,7 +352,7 @@ class PathIndexed:
     # written once
     def __getitem__(self, paths): ...          # read, check against _path_spec, order, then _part or _cut
     def __contains__(self, path): ...
-    def without(self, *paths): ...             # self._cut(complement(paths)), rule 4
+    def without(self, *paths): ...             # self._cut(complement(paths)), by II.6's partition
     def rename(self, renames=None, /, **keyword_renames): ...
 ```
 
@@ -452,7 +369,7 @@ Each kind provides four methods, and every spec class derives them from `value_s
 | `Function` | `f` followed by the selection at `p` | the same at a list |
 | `RecordBatch` | the column, or the batch of a group's records | the cut columns |
 
-A batch of any other kind has no paths, so the mixin refuses its paths with the `TypeError` of rule 1.
+A batch of any other kind has no paths, so the mixin refuses its paths with the `TypeError` of II.6's reader.
 
 ### 5.3 Outputs, implemented once
 
@@ -586,7 +503,7 @@ P2 rewrites them over the value spec, and P3 deletes them.
 
 ## 6. Tests
 
-1. One test, parametrized over every class of § 5.2, asserts rules 2 to 7 of § 4.1 and consequence 2 of § 4.2 on a table of objects, records holding laws at leaves included, and asserts the `TypeError` for each kind of § 4.2's consequence 3.
+1. One test, parametrized over every class of § 5.2, asserts II.6's selection, chaining, partition, and errors, the two changes of § 4.1, and the spec agreement rule on a table of objects, records holding laws in fields included, and asserts the `TypeError` for each object of § 4.2 that has no paths.
 2. One table test of `conforms_to` and `unify` per kind, including each case of § 2.3.
 3. One test that `x.output_spec` and `x.outputs` follow § 4.3 for each row of its table.
 4. One test that no module outside `core/_paths.py` splits or joins a path with `/` or `_PATH_SEP`.
@@ -600,11 +517,11 @@ P2 rewrites them over the value spec, and P3 deletes them.
 | Plan | Its section | Edit |
 |---|---|---|
 | `declarations-and-addressing.md` | Part I § 3.2, § 3.5, § 3.7 | Outputs by the two cases of § 4.3; the output name stored on the object; no object without outputs because of its value's kind |
-| | Part I § 2.3, § 4.1, § 4.2, and the figure of a held field | A record's paths end at its leaves, and an object has paths only when its value type is a record |
+| | Part I § 2.3, § 4.1, § 4.2, and the figure of a held field | A record's paths end at its fields, and an object has paths only when its value type is a record |
 | | § 11, and the technical notes of § 3.5 | `OutputSpec` is removed, and an output spec is a `RecordSpec` |
 | | B.6 G1a, G1b, G2 | Not needed: the interim whole form exists because names are stored in specs |
 | | B.6 S4b, G3, G5, and G4's `law.without` | Replaced by steps P2 to P4 of § 8; G3's paths through held objects, G4's paths into a record input, and G5's `[]` on batches of laws and of functions are dropped |
-| | B.4, rows T30 and I10 | `without` through a law held at a leaf, and on a batch of laws, is dropped |
+| | B.4, rows T30 and I10 | `without` through a law held in a field, and on a batch of laws, is dropped |
 | `batch-contract.md` | § 4.3, step B1 | The one check is this plan's `conforms_to`, from step P1 |
 | | § 4.5, § 5.1 | `element=OutputSpec(x=())` becomes `element=(), output_name="x"` |
 | | § 4.8 | The lifted-operation rule does not cover `[]` at a path, `without`, or `rename`: a batch whose element is not a record has no paths |
