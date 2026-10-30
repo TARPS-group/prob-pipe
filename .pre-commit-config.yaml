@@ -64,7 +64,7 @@ repos:
           - --check-yield-types=False
           - --check-class-attributes=False
 
-  # CONTRACTS.md directive 2 bans PR and issue references in code: a word form
+  # STYLE_GUIDE.md §3.4 bans PR and issue references in code: a word form
   # such as "issue 12" or "PR #12", a bare "#12", or a GitHub issue or pull URL.
   - repo: local
     hooks:
