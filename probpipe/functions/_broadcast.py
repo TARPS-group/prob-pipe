@@ -333,13 +333,15 @@ def _lift_result(
     atoms, declaration = _output_atoms(
         draws.outputs, draws.count, output_label, output_spec, output_name
     )
-    event = _plan.evaluations_event_spec(declaration, output_name=output_name)
+    event_spec = _plan.evaluations_event_spec(declaration, output_name=output_name)
     if not include_inputs:
-        return EmpiricalDistribution(atoms, draws.weights, label=output_label, event_spec=event)
-    fields = _plan.joint_event_fields(
-        event, values=values, lifted_refs=broadcast_args, output_label=output_label
+        return EmpiricalDistribution(
+            atoms, draws.weights, label=output_label, event_spec=event_spec
+        )
+    joint_field_specs = _plan.joint_event_fields(
+        event_spec, argument_values=values, lifted_refs=broadcast_args, output_label=output_label
     )
-    joint = _joint_atoms(atoms, event, fields, draws, broadcast_args, output_label)
+    joint = _joint_atoms(atoms, event_spec, joint_field_specs, draws, broadcast_args, output_label)
     return EmpiricalDistribution(joint, draws.weights, label=output_label)
 
 
@@ -409,7 +411,7 @@ def _output_atoms(
                 f"output, but the evaluations return batches on the levels "
                 f"{list(returned)}, which include it. Pass an explicit OutputSpec with a distinct "
                 f"output name, such as "
-                f"output_spec=OutputSpec({_plan.free_output(dict.fromkeys(returned))}=None)."
+                f"output_spec=OutputSpec({_plan.unused_output_name(dict.fromkeys(returned))}=None)."
             )
         completed = None if output_spec is None else _aggregate_output_spec(output_spec, rows)
         try:
@@ -468,8 +470,8 @@ def _rows_of(outputs: Any, output_label: str) -> Any:
 
 def _joint_atoms(
     atoms: Batch,
-    event: OutputSpec,
-    fields: Mapping[str, TermSpec],
+    event_spec: OutputSpec,
+    joint_field_specs: Mapping[str, TermSpec],
     draws: _LiftDraws,
     broadcast_args: Sequence[FunctionInputRef],
     output_label: str,
@@ -479,17 +481,17 @@ def _joint_atoms(
     Each lifted parameter contributes one field, under its label, holding its
     complete draw at the kind its law's event spec names, so a record
     draw stays nested even when it has one field. The returned values
-    contribute the outputs of *event*.
+    contribute the outputs of *event_spec*.
 
     Parameters
     ----------
     atoms : Batch
         The outputs on the level the output names, as :func:`_output_atoms`
         returns them.
-    event : OutputSpec
+    event_spec : OutputSpec
         The evaluations' event spec, as :func:`._plan.evaluations_event_spec`
         gives it.
-    fields : Mapping of str to TermSpec
+    joint_field_specs : Mapping of str to TermSpec
         The joint event's fields, as :func:`._plan.joint_event_fields` gives
         them, which the atoms' element spec takes.
     draws : _LiftDraws
@@ -498,7 +500,7 @@ def _joint_atoms(
     broadcast_args : sequence of FunctionInputRef
         The references to the lifted arguments, in the order of their fields.
     output_label : str
-        The batch's label. The function's outputs come from *event*.
+        The batch's label. The function's outputs come from *event_spec*.
 
     Returns
     -------
@@ -507,21 +509,21 @@ def _joint_atoms(
     """
     columns: dict[str, Any] = {}
     for ref in broadcast_args:
-        draw = fields[ref.label]
+        draw_spec = joint_field_specs[ref.label]
         inputs = draws.inputs[ref]
-        if isinstance(draw, BatchSpec):
+        if isinstance(draw_spec, BatchSpec):
             # A batch-valued field holds one batch per draw in its object column.
-            inputs = _record_columns(inputs, ref.label, draw, as_batch=True)
+            inputs = _record_columns(inputs, ref.label, draw_spec, as_batch=True)
         columns.update(_draw_columns(ref.label, inputs))
-    if isinstance(event.term_spec, BatchSpec):
-        columns[cast(str, _root_output_name(event))] = _from_iterable(
+    if isinstance(event_spec.term_spec, BatchSpec):
+        columns[cast(str, _root_output_name(event_spec))] = _from_iterable(
             [atoms[index] for index in range(draws.count)], kind="batch-valued output atoms"
         )
-    elif _has_record_outputs(event):
+    elif _has_record_outputs(event_spec):
         columns.update(_batch_columns(atoms))
     else:
-        columns.update(_prefixed(cast(str, _root_output_name(event)), _batch_columns(atoms)))
-    element = RecordSpec(dict(fields))
+        columns.update(_prefixed(cast(str, _root_output_name(event_spec)), _batch_columns(atoms)))
+    element = RecordSpec(dict(joint_field_specs))
     return _batch_class_for(element)(
         columns, atoms.level_names[0], element=element, label=output_label
     )

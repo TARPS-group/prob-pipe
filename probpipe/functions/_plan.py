@@ -372,7 +372,7 @@ def planned_result(
     output_spec: OutputSpec | None,
     plan: BroadcastPlan,
     *,
-    values: Mapping[str, Any],
+    argument_values: Mapping[str, Any],
     output_name: str,
     output_label: str,
     include_inputs: bool,
@@ -405,7 +405,7 @@ def planned_result(
         inputs bound, or ``None`` when nothing declares it.
     plan : BroadcastPlan
         The call's lifting regime, its swept levels, and its lifted laws.
-    values : Mapping of str to Any
+    argument_values : Mapping of str to Any
         The call's arguments by parameter name, from which each lifted law's
         event spec is read under *include_inputs*.
     output_name : str
@@ -449,33 +449,42 @@ def planned_result(
         return None
     if plan.regime == "sweep":
         require_distinct_swept_levels(plan, output_spec, output_label=output_label)
-        return None if output_spec.term_spec is None else _swept(output_spec, plan)
-    event = evaluations_event_spec(output_spec, output_name=output_name)
-    if event.term_spec is None:
+        return None if output_spec.term_spec is None else _swept_output_spec(output_spec, plan)
+    event_spec = evaluations_event_spec(output_spec, output_name=output_name)
+    if event_spec.term_spec is None:
         if include_inputs:
             # The outputs' names are known, so a clash with a parameter is too.
             require_distinct_joint_names(
-                event, lifted_refs=plan.dist_args, output_label=output_label
+                event_spec, lifted_refs=plan.dist_args, output_label=output_label
             )
         return None
     if include_inputs:
-        fields = joint_event_fields(
-            event, values=values, lifted_refs=plan.dist_args, output_label=output_label
+        joint_field_specs = joint_event_fields(
+            event_spec,
+            argument_values=argument_values,
+            lifted_refs=plan.dist_args,
+            output_label=output_label,
         )
-        event = OutputSpec(RecordSpec(fields))
-    law = OutputSpec(DistributionSpec(event))
-    return law if plan.regime == "distribution" else _swept(law, plan)
+        event_spec = OutputSpec(RecordSpec(joint_field_specs))
+    law_output_spec = OutputSpec(DistributionSpec(event_spec))
+    return (
+        law_output_spec
+        if plan.regime == "distribution"
+        else _swept_output_spec(law_output_spec, plan)
+    )
 
 
-def _swept(element: OutputSpec, plan: BroadcastPlan) -> OutputSpec:
-    """*element*'s form and names over the batch of such elements on *plan*'s swept levels.
+def _swept_output_spec(element_output_spec: OutputSpec, plan: BroadcastPlan) -> OutputSpec:
+    """*element_output_spec*'s form and names over the batch of such elements on *plan*'s swept levels.
 
-    *element* states its spec, as :func:`planned_result` requires of a lifted call.
+    *element_output_spec* states its spec, as :func:`planned_result` requires of a lifted call.
     """
     swept = BatchSpec._from_groups(
-        cast(TermSpec, element.term_spec), plan.sweep_axis_groups, plan.sweep_level_names
+        cast(TermSpec, element_output_spec.term_spec),
+        plan.sweep_axis_groups,
+        plan.sweep_level_names,
     )
-    return element._with_term_spec(_flat_batch_spec(swept))
+    return element_output_spec._with_term_spec(_flat_batch_spec(swept))
 
 
 def require_distinct_swept_levels(
@@ -548,7 +557,7 @@ def evaluations_event_spec(output_spec: OutputSpec, *, output_name: str) -> Outp
 
 
 def require_distinct_joint_names(
-    event: OutputSpec,
+    event_spec: OutputSpec,
     *,
     lifted_refs: Sequence[_binding.FunctionInputRef],
     output_label: str,
@@ -557,12 +566,12 @@ def require_distinct_joint_names(
 
     The joint event of a broadcast under ``include_inputs`` holds each lifted
     parameter's draw under the parameter's label beside the outputs, so a
-    label must name no output. The outputs are known from *event*'s names
+    label must name no output. The outputs are known from *event_spec*'s names
     even while its spec is unspecified.
 
     Parameters
     ----------
-    event : OutputSpec
+    event_spec : OutputSpec
         The evaluations' event spec, as :func:`evaluations_event_spec` gives it.
     lifted_refs : sequence of FunctionInputRef
         The references to the lifted laws.
@@ -572,10 +581,10 @@ def require_distinct_joint_names(
     Raises
     ------
     ApplicabilityError
-        If a lifted parameter's label is also an output of *event*.
+        If a lifted parameter's label is also an output of *event_spec*.
     """
-    labels = dict.fromkeys(ref.label for ref in lifted_refs)
-    clash = sorted(set(labels) & set(event.outputs))
+    parameter_labels = dict.fromkeys(ref.label for ref in lifted_refs)
+    clash = sorted(set(parameter_labels) & set(event_spec.outputs))
     if not clash:
         return
     if len(clash) == 1:
@@ -585,15 +594,15 @@ def require_distinct_joint_names(
     raise ApplicabilityError(
         f"include_inputs=True cannot add {named} to the output of {output_label!r}, which "
         f"already has {held}. Rename the {'parameter' if len(clash) == 1 else 'parameters'}, "
-        f"or pass output_spec=OutputSpec({free_output(labels)}=None) to hold the output "
+        f"or pass output_spec=OutputSpec({unused_output_name(parameter_labels)}=None) to hold the output "
         "under a name no parameter has"
     )
 
 
 def joint_event_fields(
-    event: OutputSpec,
+    event_spec: OutputSpec,
     *,
-    values: Mapping[str, Any],
+    argument_values: Mapping[str, Any],
     lifted_refs: Sequence[_binding.FunctionInputRef],
     output_label: str,
 ) -> dict[str, TermSpec]:
@@ -601,15 +610,15 @@ def joint_event_fields(
 
     Each lifted parameter contributes one field under its label, holding the
     spec of its law's draw, in the order of *lifted_refs*. A batch-valued draw
-    is one batch over all its levels. The outputs of *event* follow: a record's
+    is one batch over all its levels. The outputs of *event_spec* follow: a record's
     fields, or the one output at the root.
 
     Parameters
     ----------
-    event : OutputSpec
+    event_spec : OutputSpec
         The evaluations' event spec, as :func:`evaluations_event_spec` gives
         it, whose spec is specified.
-    values : Mapping of str to Any
+    argument_values : Mapping of str to Any
         The call's arguments by parameter name, which hold the lifted laws.
     lifted_refs : sequence of FunctionInputRef
         The references to the lifted laws, in the order of their fields.
@@ -624,22 +633,26 @@ def joint_event_fields(
     Raises
     ------
     ApplicabilityError
-        If a lifted parameter's label is also an output of *event*, as
+        If a lifted parameter's label is also an output of *event_spec*, as
         :func:`require_distinct_joint_names` states.
     """
-    require_distinct_joint_names(event, lifted_refs=lifted_refs, output_label=output_label)
-    fields: dict[str, TermSpec] = {}
+    require_distinct_joint_names(event_spec, lifted_refs=lifted_refs, output_label=output_label)
+    joint_field_specs: dict[str, TermSpec] = {}
     for ref in lifted_refs:
-        draw = _binding.input_ref_value(values, ref).event_spec.term_spec
-        fields[ref.label] = _flat_batch_spec(draw) if isinstance(draw, BatchSpec) else draw
-    if _has_record_outputs(event):
-        fields.update(cast(RecordSpec, event.term_spec).children)
+        draw_spec = _binding.input_ref_value(argument_values, ref).event_spec.term_spec
+        joint_field_specs[ref.label] = (
+            _flat_batch_spec(draw_spec) if isinstance(draw_spec, BatchSpec) else draw_spec
+        )
+    if _has_record_outputs(event_spec):
+        joint_field_specs.update(cast(RecordSpec, event_spec.term_spec).children)
     else:
-        fields[cast(str, _root_output_name(event))] = cast(TermSpec, event.term_spec)
-    return fields
+        joint_field_specs[cast(str, _root_output_name(event_spec))] = cast(
+            TermSpec, event_spec.term_spec
+        )
+    return joint_field_specs
 
 
-def free_output(taken: Mapping[str, Any]) -> str:
+def unused_output_name(taken: Mapping[str, Any]) -> str:
     """An output name that no key of *taken* is: ``output``, extended by ``_`` until it is free."""
     name = "output"
     while name in taken:

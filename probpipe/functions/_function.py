@@ -2061,7 +2061,7 @@ def _planned_result(
     return _plan.planned_result(
         output_spec,
         broadcast_plan,
-        values=argument_values,
+        argument_values=argument_values,
         output_name=function._output_name,
         output_label=function.output_label,
         include_inputs=resolved_controls["include_inputs"],
