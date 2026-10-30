@@ -222,7 +222,7 @@ The `/` character is reserved as the path separator, and
 `named_tree._PATH_SEP` is the one definition of it: code that splits or
 joins a path imports it. Field names may not contain `/` (raises
 `ValueError` at construction). A path is always a `str`, and a tuple is
-a list of paths; a nested path is written with `/`. `[]` takes a path or
+read as a list of paths; a nested path is written with `/`. `[]` takes a path or
 a list or tuple of paths, and one reader,
 `_as_paths` in `probpipe/core/_shapes.py`, parses it and owns every
 error message:
@@ -1034,6 +1034,13 @@ judge.
     a consequence: a law's paths come from its event type, because not every
     law can be sampled, and indexing commutes with sampling for each law that
     can.
+14. **Reserve "is" for identity and class membership.** An accepted input
+    form is said to be converted to, or read as, what it stands for, since "a
+    tuple is a `NumericArraySpec` of that shape" claims that the tuple is that
+    spec. Write "a tuple is converted to a `NumericArraySpec` of that shape" or
+    "a tuple is read as a list of paths". A shorthand and a sentinel follow
+    the same rule, so a mapping is read as a record, and a returned `None`
+    means that no value was found.
 
 ### 10.1 Explanatory documents
 

@@ -70,7 +70,7 @@ def _record_batch(value: Any, call: BoundCall, result: OutputSpec | None) -> Any
 
 
 def _sample_shape(sample_shape: Any) -> tuple[int, ...]:
-    """*sample_shape* as a tuple of sizes, a bare integer being one axis.
+    """*sample_shape* as a tuple of sizes, with a bare integer read as one axis.
 
     Parameters
     ----------
