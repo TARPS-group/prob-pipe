@@ -32,7 +32,7 @@ The declarations and addressing plan as it stood before the inputs and outputs m
 ## Standing directives
 
 These apply to every person and agent working on the push.
-They add to `CONTRACTS.md`, `STYLE_GUIDE.md`, and the implementation guidelines of `execution-layer.md` §12, which still apply in full.
+They add to `CONTRIBUTING.md` § Changing the code, `STYLE_GUIDE.md`, and the implementation guidelines of `execution-layer.md` §12, which still apply in full.
 
 1. **Read the full design first.** Before working on a step, read this file, `decisions.md`, and the two design plans in full: `declarations-and-addressing.md` and `execution-layer.md`, whose § 6.16 holds the call context. Read them whole, not only the sections the step implements. Check that the work fits the broader goals of the push and of `design/`.
 2. **Design gaps go to the maintainer.** The plans will have gaps that implementation exposes. A gap that needs a real design decision is never settled by the implementer alone: follow § When to stop and ask. A fix to a gap serves the long-term design, never only the step at hand. A question already in the queue of `decisions.md` is never settled by a session (§ When to stop and ask).
@@ -276,7 +276,7 @@ At a checkpoint:
 ## When the push ends
 
 Steps S0 and E1 move the design into `design/`, which stays the single source of the target design; later steps update `design/` with their code.
-Before `plans/` is deleted, one PR re-evaluates the repository's rule documents against this push: `STYLE_GUIDE.md`, `CONTRACTS.md`, `CONTRIBUTING.md`, `AGENTS.md`, and the skills in `.claude/skills/`. It moves into them every directive of this file that proved useful and is not already there, such as the code-quality rules of directive 5 and the rule of directive 14, so the standards outlive the push. The same PR removes what the push added to the `review-pr` skill (its plan check and the matching line in `.claude/skills/README.md`), since `plans/` no longer exists.
+The rule documents now hold the directives of this file that proved useful: `CONTRIBUTING.md` § Changing the code and § Opening the PR, and `STYLE_GUIDE.md` §1.12, §2.4, §2.5, §3.4, and §8.7 state the contract, code-quality, and PR-text directives, and `CONTRACTS.md` is folded into them. Before `plans/` is deleted, one PR removes what the push added to the `review-pr` skill (its plan check and the matching line in `.claude/skills/README.md`), since `plans/` no longer exists.
 The same PR removes the push-status workflow (`.github/workflows/push-status.yml`), its test (`tests/ci/test_push_status.py`), the matching line of `AGENTS.md`, and the checks of the step labels in the `review-pr` and `check-pr` skills, and deletes the `step:*` and `push:*` labels.
 Once that PR has merged, every step before the workshop has merged, and the post-workshop work is recorded, `plans/` is deleted; git keeps its history.
 The items left in `deferred.md` become GitHub issues.

@@ -4,3 +4,26 @@
 .md-source__fact--version {
   display: none;
 }
+
+/* Navy header and links, matching the ProbPipe layer in the workflow figure. */
+:root {
+  --md-primary-fg-color: #1E3A5F;
+  --md-primary-fg-color--light: #2B5C94;
+  --md-primary-fg-color--dark: #142A45;
+  --md-accent-fg-color: #2B5C94;
+  --md-accent-fg-color--transparent: rgba(43, 92, 148, 0.1);
+  --md-typeset-a-color: #2B5C94;
+}
+
+[data-md-color-scheme="slate"] {
+  --md-accent-fg-color: #8FB3E0;
+  --md-accent-fg-color--transparent: rgba(143, 179, 224, 0.1);
+  --md-typeset-a-color: #8FB3E0;
+}
+
+
+/* "Pipe" of the site name in the header takes the collar color of the logo on
+   dark backgrounds, as in the logo's wordmark. mkdocs_hooks.py adds the span. */
+.md-header__topic .pp-pipe {
+  color: #D06E4F;
+}
