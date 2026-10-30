@@ -8,7 +8,7 @@ reconstructed kernel output of the merged joint ``K & mixing``.
 from __future__ import annotations
 
 from ..core._specs import OutputSpec
-from ..distributions._conditional import ConditionalDistribution, ConditionalDistributionSpec
+from ..distributions._conditional import ConditionalDistribution
 from ..distributions._distribution import Distribution, DistributionSpec
 from ..distributions._factored import _event_of
 from ..values import Function
@@ -28,10 +28,14 @@ def _kernel_output_projection(K: ConditionalDistribution) -> Function:
 
 
 @operation(
-    result=lambda K, mixing: None 
-    if any(name not in mixing.event_spec.outputs for name in K.given_spec.required)
-    else OutputSpec(DistributionSpec(K.event_spec)),
-    derived_route_check=lambda K, mixing: pushforward.check(K & mixing, _kernel_output_projection(K)),
+    result=lambda K, mixing: (
+        None
+        if any(name not in mixing.event_spec.outputs for name in K.given_spec.required)
+        else OutputSpec(DistributionSpec(K.event_spec))
+    ),
+    derived_route_check=lambda K, mixing: pushforward.check(
+        K & mixing, _kernel_output_projection(K)
+    ),
 )
 def mixture(K: ConditionalDistribution, mixing: Distribution):
     """The mixture of the kernel *K* under the mixing distribution *mixing*.

@@ -1385,7 +1385,9 @@ expectation.capability_route(
     protocol=SupportsExpectation,
     method="_expectation",
     exact=True,
-    execute=lambda call, _: call.operands["d"]._expectation(_integrand(call)),  # closed form expectation
+    execute=lambda call, _: call.operands["d"]._expectation(
+        _integrand(call)
+    ),  # closed form expectation
 )
 
 
@@ -1411,5 +1413,5 @@ _install_expression_rule(cov, _moment_expression("Cov"))
 _install_expression_rule(quantile, _moment_expression("Q"))
 _install_expression_rule(
     expectation,
-    lambda d, f: Summary("E", Applied(_output_label(f, subject="expectation"), (draw_of(d),)))
-    )
+    lambda d, f: Summary("E", Applied(_output_label(f, subject="expectation"), (draw_of(d),))),
+)
