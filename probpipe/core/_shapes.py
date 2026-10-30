@@ -12,13 +12,13 @@ argument has one reading and one set of error messages wherever it is taken:
   tuple of strings, and a bare ``str`` is one name, so ``"draw"`` is
   ``("draw",)``;
 - **axis counts** (:func:`_as_axis_counts`) are a tuple of positive integers,
-  one per level, and a bare ``int`` is one count;
+  one per level, and a bare ``int`` is read as one count;
 - **levels** (:func:`_as_levels`) are a mapping from level name to that level's
   shape, given as a mapping or as keyword arguments;
 - **paths** (:func:`_as_paths`) are what ``[]`` takes on a term indexed by
-  path: a ``str`` is one path, and a list or a tuple of ``str`` is a list of
-  paths. On a batch, an integer, a slice, or a tuple of them is a position
-  (:func:`_as_positions`). An argument that takes one path per argument, such
+  path: a ``str`` is read as one path, and a list or a tuple of ``str`` as a
+  list of paths. On a batch, an integer, a slice, or a tuple of them is read as
+  a position (:func:`_as_positions`). An argument that takes one path per argument, such
   as ``without(*paths)``, is read by :func:`_as_path_arguments`.
 
 A **path** is the ``/``-joined names from the top of a term down to a node,
@@ -361,8 +361,8 @@ def _as_levels(
 def _as_paths(arg: Any, *, action: str, positions: bool = False) -> str | tuple[str, ...]:
     """What ``[]`` takes on a term indexed by path: one path, or a list of paths.
 
-    A ``str`` is one path, returned as a ``str``. A list or a tuple of ``str``
-    is a list of paths, returned as a tuple in the order given. A subclass of
+    A ``str`` is read as one path, returned as a ``str``. A list or a tuple of
+    ``str`` is read as a list of paths, returned as a tuple in the order given. A subclass of
     ``str``, such as ``numpy.str_``, is returned as a Python ``str``.
 
     Parameters

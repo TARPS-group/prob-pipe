@@ -4419,6 +4419,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a worker needed by its callbacks; ordinary Function bodies retain their
   selected-executor behavior.
 
+- **The contributor rules are stated once each, and `CONTRACTS.md` is
+  removed.** `CONTRIBUTING.md` § Changing the code states how a change follows
+  `design/`, when and how to ask the maintainer, and how a change settles and
+  fixes contracts. `STYLE_GUIDE.md` gains the naming rules of §1.12, module
+  order and reuse (§2.4 and §2.5), what a docstring states (§3.4), and tests
+  that assert a contract (§8.7). `CONTRIBUTING.md` § Opening the PR asks each
+  PR body to show its changes of behavior as runnable examples with their
+  output, to record its contract decisions, and to be reviewed as a draft
+  before review is requested. The PR template gains an Examples section, which
+  the advisory PR hygiene check expects in every body, and its checklist cites
+  these sections.
+
 ### Removed (breaking)
 
 - **`NumericArray.value`, `Opaque.value`, and `NumericArrayBatch.values` are
