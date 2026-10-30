@@ -1,6 +1,6 @@
 name: Feature request
 description: Propose a new capability or an improvement to an existing one
-labels: ["enhancement"]
+labels: ["type:feature", "status:needs-triage"]
 body:
   - type: markdown
     attributes:

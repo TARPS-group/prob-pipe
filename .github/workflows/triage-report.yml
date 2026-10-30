@@ -1,0 +1,40 @@
+name: Triage report
+
+# Writes the weekly triage report of scripts/triage/report.py as the body of the
+# pinned tracking issue whose number is the repository variable TRIAGE_ISSUE
+# (Settings → Secrets and variables → Actions → Variables). The job runs early on
+# Monday, before the weekly triage session, and on demand. Without the variable it
+# reports a notice and writes nothing.
+
+on:
+  schedule:
+    - cron: "0 11 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  report:
+    name: Triage report
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Write the report to the tracking issue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          TRIAGE_ISSUE: ${{ vars.TRIAGE_ISSUE }}
+        run: |
+          if [ -z "$TRIAGE_ISSUE" ]; then
+            echo "::notice::The repository variable TRIAGE_ISSUE is not set, so no report was written."
+            exit 0
+          fi
+          python3 scripts/triage/report.py --post "$TRIAGE_ISSUE"

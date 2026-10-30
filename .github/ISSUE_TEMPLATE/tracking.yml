@@ -1,6 +1,6 @@
 name: Tracking issue
 description: Coordinate a multi-PR effort (refactors, migrations, feature programs)
-labels: ["kind:tracking"]
+labels: ["type:tracking"]
 body:
   - type: markdown
     attributes:

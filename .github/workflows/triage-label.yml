@@ -1,0 +1,28 @@
+name: Triage label
+
+# Adds `status:needs-triage` to each new issue that does not carry it, so an issue
+# opened without a form, such as a blank issue or one from `gh issue create`, joins
+# the triage queue of CONTRIBUTING.md § Issue triage. The issue forms add the label
+# themselves, and this job then has nothing to do.
+#
+# No issue text reaches a shell command: the job reads only the issue's number.
+
+on:
+  issues:
+    types: [opened]
+
+permissions:
+  issues: write
+
+jobs:
+  label:
+    name: Add status:needs-triage
+    if: ${{ !contains(github.event.issue.labels.*.name, 'status:needs-triage') }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Add the label
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          NUMBER: ${{ github.event.issue.number }}
+        run: gh issue edit "$NUMBER" --add-label "status:needs-triage"
