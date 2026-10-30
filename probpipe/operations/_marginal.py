@@ -8,11 +8,13 @@ the detached building-block factor of a joint that produces the named output.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
-from ..core._dispatch import Feasibility
+from ..core._batch import BatchSpec, _flat_batch_spec
 from ..core._expression import Expression
+from ..core._record_batch import _batch_over
 from ..core._shapes import PathsLike
+from ..core._spec_base import TermSpec
 from ..core._specs import OutputSpec
 from ..distributions._capabilities import SupportsMarginals, _capability_guard
 from ..distributions._conditional import ConditionalDistributionSpec
@@ -22,10 +24,23 @@ from ..distributions._distribution import (
     _detached_term,
     _read_event_paths,
 )
-from ..distributions._factored import SupportsFactors
-from ..distributions._views import _marginal_expression_at, _view_declaration
+from ..distributions._empirical import EmpiricalDistribution
+from ..distributions._factored import SupportsFactors, _raw_record
+from ..distributions._views import (
+    _drawn_form,
+    _marginal_expression_at,
+    _projector,
+    _view_declaration,
+)
 from ..functions._call import ApplicabilityError
-from ._operation import BoundCall, _install_expression_rule, operation
+from ..functions._result import SAMPLE_LEVEL
+from ._operation import (
+    BoundCall,
+    _can_sample,
+    _install_expression_rule,
+    _monte_carlo_draws,
+    operation,
+)
 
 __all__ = ["factor", "marginal"]
 
@@ -127,6 +142,23 @@ def marginal(d: Distribution, paths: PathsLike):
     ``{a, g: {c}}``. A lift draws the marginal independently of *d* and of
     the laws *d* is built from (V.5).
 
+    The law's exact marginal capability is preferred. Otherwise, the ``monte_carlo`` route
+    draws ``num_samples`` joint samples once and returns their projected
+    empirical law. Its atoms have uniform weights and remain fixed when the
+    result is sampled again. Set the count with
+    ``marginal.using(num_samples=4096)(d, paths)``. The call records its
+    approximation and sample count in provenance.
+
+    With ``given=``, the kernel's exact conditional marginal is tried first,
+    followed by exact conditioning and the conditioned law's exact marginal.
+    Monte Carlo through the conditional sampler follows when neither exact
+    route applies. A check does not evaluate the kernel, so it reports the
+    conditional route unresolved when that choice needs the bound law.
+    An explicit ``method="monte_carlo"`` selects sampling directly.
+
+    The atoms' leading level is ``sample``. For a batch-valued event,
+    underscores are appended until that name differs from the event's levels.
+
     Parameters
     ----------
     d : Distribution
@@ -185,19 +217,21 @@ def _detached_marginal(call: BoundCall, result: OutputSpec | None) -> Distributi
     return _detached_term(call.operands["d"]._marginal(_call_paths(call)))
 
 
-def _can_sample(call: BoundCall, result: OutputSpec | None) -> Any:
-    """The empirical marginal of projected draws is not implemented, so no call selects the route.
-
-    The route is to apply when the law samples, so that projected draws form
-    an empirical marginal; until its execution exists, ``check`` and the call
-    both report it infeasible.
-    """
-    return Feasibility(False, "the empirical marginal of projected draws is not implemented yet")
-
-
-def _empirical_marginal(call: BoundCall, result: OutputSpec | None) -> Any:
+def _empirical_marginal(call: BoundCall, result: OutputSpec | None) -> EmpiricalDistribution:
     """The empirical law of draws projected onto the field, declaring the node's event."""
-    raise NotImplementedError("the empirical marginal of projected draws is not implemented yet")
+    law = call.operands["d"]
+    count = call.controls["num_samples"]
+    draws = _monte_carlo_draws(call, "marginal")
+    event_spec = cast(DistributionSpec, cast(OutputSpec, result).term_spec).event_spec
+    event_term_spec = cast(TermSpec, event_spec.term_spec)
+    projected = _projector(law.event_spec, _call_paths(call))(draws)
+    raw_atoms = _drawn_form(_raw_record(projected), event_term_spec, (count,))
+    level = SAMPLE_LEVEL
+    if isinstance(event_term_spec, BatchSpec):
+        while level in _flat_batch_spec(event_term_spec).level_names:
+            level += "_"
+    atoms = _batch_over(raw_atoms, BatchSpec(event_spec, {level: count}), law.label)
+    return EmpiricalDistribution(atoms, event_spec=event_spec, label=law.label)
 
 
 marginal.capability_route(

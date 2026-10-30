@@ -2139,6 +2139,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Monte Carlo marginals.** `marginal(d, paths)` estimates a standalone
+  marginal from joint samples when no exact marginal is available. Set the
+  count with `marginal.using(num_samples=4096)(d, paths)`. The empirical result
+  keeps the selected fields' structure and dependence, and provenance records
+  the approximation and sample count. With `given=`, exact conditioning that
+  exposes an exact marginal takes precedence over Monte Carlo through the
+  conditional sampler.
+
 - **`print(x.provenance)` prints the lineage of `x`.** Each line is one step,
   from the loaded data or another root down to `x`, with the call that made it,
   its route and method, and whether it is exact or approximate. A step that two

@@ -76,10 +76,11 @@ from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass, field
 from enum import Enum
 from types import MappingProxyType
-from typing import Any, ClassVar, Protocol, runtime_checkable
+from typing import Any, ClassVar, Protocol, cast, runtime_checkable
 
 from .._messages import unknown_names
 from ..core._array_backend import _event_shape_of, _is_numeric_leaf, _numpy_dtype_of
+from ..core._call_context import _note_num_samples_used
 from ..core._catalog import EntrySummary, SupportsRegistryCataloging, registry_catalog
 from ..core._dispatch import BaseDispatchRegistry, Feasibility, MethodInfo, ResolutionError
 from ..core._expression import Expression, Named
@@ -91,12 +92,17 @@ from ..core._specs import OutputSpec
 from ..core.provenance import Provenance
 from ..core.record import Record
 from ..core.tracked import TrackedTerm
-from ..distributions._capabilities import _capability_guard, _guard_condition, _requirement
+from ..distributions._capabilities import (
+    SupportsSampling,
+    _capability_guard,
+    _guard_condition,
+    _requirement,
+)
 from ..distributions._distribution import Distribution, DistributionSpec
 from ..distributions._views import _drawn_form
 from ..functions import _descendants, _evaluation_keys, _result
-from ..functions._call import ApplicabilityError, CallReport
-from ..functions._resolution import PointReport, StandIn
+from ..functions._call import ApplicabilityError, CallReport, checking
+from ..functions._resolution import PointReport, RouteOutcome, StandIn
 from ..values import Function, FunctionSpec
 from ..values._binding import (
     make_signature_info_from_signature,
@@ -1188,15 +1194,21 @@ def _kind_names(kinds: Iterable[type]) -> str:
     return ", ".join(kind.__name__ for kind in kinds)
 
 
+@dataclass(frozen=True)
+class _ExactGivenReport(PointReport):
+    """An exact delegated route's report, retaining the law evaluated during resolution."""
+
+    law: Any = None
+
+
 class _GivenCandidate:
     """The conditional route, deferred until the kernel's law is available.
 
-    Feasibility means the inputs can be bound. Normalization, the resulting
-    law's capability checks, and operation fidelity are deferred, and its exactness is unknown
-    until the delegated operation executes. The kernel is never applied by a
-    check. This candidate is the last fallback, after every route served by the
-    kernel's declared conditional capabilities. A declaration-only given
-    leaves conditioning feasibility unresolved until its values are available.
+    The unrestricted candidate checks input binding and defers the resulting
+    law's capabilities and fidelity to execution. For marginal, an exact
+    candidate precedes Monte Carlo and resolves the bound law during execution.
+    A check never applies the kernel and reports this choice unresolved.
+    A declaration-only given leaves input binding unresolved too.
     """
 
     label = route_name = "conditional"
@@ -1204,8 +1216,12 @@ class _GivenCandidate:
     #: The conditioned call runs the operation, whose Monte Carlo draws the call states.
     collects_calls = True
 
+    def __init__(self, *, exact_only: bool = False) -> None:
+        self._exact_only = exact_only
+        self.label = "conditional (exact)" if exact_only else "conditional"
+
     def probe(self, call: BoundCall, result: OutputSpec | None) -> Feasibility:
-        """Check input binding without constructing or normalizing the kernel's law."""
+        """Check binding, and resolve exact delegation only outside a check."""
         from ._given import _GivenLaw
 
         subject = call.operands[call.operation._given_subject]
@@ -1224,12 +1240,38 @@ class _GivenCandidate:
         if report.feasible is not True:
             return report
         exact = _BIND_INPUTS.exact(binding)
-        if call.controls["exact_only"] and not exact:
+        if (self._exact_only or call.controls["exact_only"]) and not exact:
             return Feasibility(
                 False,
                 "binding the inputs runs approximate conditioning "
                 "(SupportsApproximateConditioning), which exact_only excludes",
             )
+        if self._exact_only:
+            if checking():
+                return Feasibility(
+                    None, pending=("the exact conditional route needs the kernel's bound law",)
+                )
+            from ._condition import _needs_normalization
+
+            law = condition_on.using(
+                method="unnormalized",
+                method_options=call.controls["method_options"],
+            )(subject.kernel, subject.given)
+            if _needs_normalization(law):
+                normalize = condition_on.using(
+                    exact_only=True, method_options=call.controls["method_options"]
+                )
+                normalization = normalize.check(law, {})
+                if normalization.feasible is not True:
+                    return normalization
+                law = normalize(law, {})
+            operands = {**call.operands, "d": law}
+            bound = values_to_bound_arguments(call.operation.signature, operands)
+            operation = call.operation.using(**{**call.controls, "exact_only": True})
+            report = operation.check(*bound.args, **bound.kwargs)
+            if report.feasible is not True:
+                return report
+            return _ExactGivenReport(True, exact=True, law=law)
         return PointReport(
             True,
             "delegation is available; the conditioned law's operation capabilities and fidelity are checked at execution",
@@ -1241,13 +1283,20 @@ class _GivenCandidate:
         from ._condition import condition_on
 
         subject = call.operands[call.operation._given_subject]
-        law = condition_on.using(
-            exact_only=call.controls["exact_only"],
-            method_options=call.controls["method_options"],
-        )(subject.kernel, subject.given)
+        if self._exact_only:
+            law = cast(_ExactGivenReport, report).law
+        else:
+            law = condition_on.using(
+                exact_only=call.controls["exact_only"],
+                method_options=call.controls["method_options"],
+            )(subject.kernel, subject.given)
         values = {**call.operands, call.operation._given_subject: law}
         bound = values_to_bound_arguments(call.operation.signature, values)
-        return call.operation.using(**dict(call.controls))(*bound.args, **bound.kwargs)
+        controls = (
+            {**call.controls, "exact_only": True} if self._exact_only else dict(call.controls)
+        )
+        result = call.operation.using(**controls)(*bound.args, **bound.kwargs)
+        return RouteOutcome(result, True) if self._exact_only else result
 
     def exactness(self, report: Feasibility) -> bool | None:
         """Known approximate conditioning is approximate; otherwise fidelity is deferred."""
@@ -1943,6 +1992,20 @@ class Operation(Function):
             and values is not None
             and values.get("given") is not None
         ):
+            if (
+                self.name == "marginal"
+                and controls["method"] is None
+                and not controls["exact_only"]
+            ):
+                index = next(
+                    i for i, c in enumerate(candidates) if c.route.source is RouteSource.FALLBACK
+                )
+                return (
+                    *candidates[:index],
+                    _GivenCandidate(exact_only=True),
+                    *candidates[index:],
+                    _GivenCandidate(),
+                )
             return (*candidates, _GivenCandidate())
         return tuple(candidates)
 
@@ -2257,6 +2320,27 @@ class Operation(Function):
 # ---------------------------------------------------------------------------
 # Randomness
 # ---------------------------------------------------------------------------
+
+
+def _can_sample(call: BoundCall, result: OutputSpec | None) -> Feasibility:
+    """The law samples, and its sampling guard admits the call."""
+    law = call.operands["d"]
+    if not isinstance(law, SupportsSampling):
+        return Feasibility(False, f"{_subject_name(law)} does not sample")
+    return _capability_guard(law, "_sample")
+
+
+def _monte_carlo_draws(call: BoundCall, operation_kind: str) -> Any:
+    """Workflow-owned draws of the law, recording the call's ``num_samples`` count."""
+    count = call.controls["num_samples"]
+    draws = _workflow_draws(
+        call.operands["d"],
+        (count,),
+        operation_kind=operation_kind,
+        execution_mode="monte_carlo",
+    )
+    _note_num_samples_used(count)
+    return draws
 
 
 def _workflow_draws(

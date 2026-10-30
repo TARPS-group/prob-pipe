@@ -2,20 +2,36 @@
 
 from __future__ import annotations
 
+import jax
+import jax.numpy as jnp
 import numpy as np
 import pytest
 
 from probpipe import (
     ApplicabilityError,
     DistributionBatch,
+    EmpiricalDistribution,
     Function,
     Normal,
+    NumericArrayBatch,
+    NumericArraySpec,
+    OpaqueSpec,
     RecordSpec,
     condition_on,
+    conditional_distribution,
+    replay_run,
+    sample,
     workflow_run,
 )
-from probpipe.core._dispatch import ResolutionError
+from probpipe.core._batch import BatchSpec
+from probpipe.core._dispatch import Feasibility, ResolutionError
 from probpipe.core._specs import OutputSpec
+from probpipe.distributions._capabilities import (
+    SupportsApproximateConditioning,
+    SupportsConditionalSampling,
+    SupportsSampling,
+    SupportsUnnormalizedLogProb,
+)
 from probpipe.distributions._conditional import ConditionalDistribution
 from probpipe.distributions._distribution import Distribution, DistributionSpec, _fixed_paths
 from probpipe.functions import _descendants
@@ -32,6 +48,63 @@ class _Nested(Distribution):
             RecordSpec(x=RecordSpec(a=REAL), y=RecordSpec(a=REAL)),
             label=label,
         )
+
+
+class _JointSampler(Distribution, SupportsSampling):
+    """A scalar, twice that scalar in a group, and an opaque field, with recorded draws."""
+
+    def __init__(self, label="joint"):
+        super().__init__(RecordSpec(a=REAL, g=RecordSpec(a=REAL), tag=OpaqueSpec(str)), label=label)
+        self.sample_shapes = []
+        self.draws = []
+
+    def _sample(self, key, sample_shape=()):
+        self.sample_shapes.append(tuple(sample_shape))
+        values = jax.random.normal(key, sample_shape, dtype=jnp.float32)
+        draws = {
+            "a": values,
+            "g": {"a": 2 * values},
+            "tag": np.full(sample_shape, "tag", dtype=object),
+        }
+        self.draws.append(draws)
+        return draws
+
+
+class _BatchSampler(Distribution, SupportsSampling):
+    """A record holding a batch, returned as one batch per draw."""
+
+    def __init__(self, levels=("time",)):
+        super().__init__(
+            RecordSpec(trajectory=BatchSpec(REAL, dict.fromkeys(levels, 2))), label="trajectories"
+        )
+        self.levels = levels
+
+    def _sample(self, key, sample_shape=()):
+        values = jax.random.normal(
+            key, (*sample_shape, *((2,) * len(self.levels))), dtype=jnp.float32
+        )
+        batches = np.empty(sample_shape, dtype=object)
+        for index in np.ndindex(sample_shape):
+            batches[index] = NumericArrayBatch(values[index], self.levels, label="trajectory")
+        return {"trajectory": batches}
+
+
+class _SamplingKernel(ConditionalDistribution, SupportsConditionalSampling):
+    """A kernel with a conditional sampler and a recorded application to its inputs."""
+
+    def __init__(self, law):
+        super().__init__({"mu": REAL}, law.event_spec, label="kernel")
+        self.law = law
+        self.bindings = []
+        self.sample_shapes = []
+
+    def _condition_on(self, given, /, **options):
+        self.bindings.append(given)
+        return self.law
+
+    def _conditional_sample(self, given, key, sample_shape=()):
+        self.sample_shapes.append(sample_shape)
+        return self.law._sample(key, sample_shape)
 
 
 class TestMarginal:
@@ -91,16 +164,15 @@ class TestMarginal:
         with pytest.raises(ResolutionError, match="the marginal is exact at the field a"):
             marginal(Marginalizing("law"), "b")
 
-    def test_check_and_the_call_agree_while_the_fallback_is_not_implemented(self):
+    def test_check_and_the_call_select_the_fallback_when_no_exact_marginal_exists(self):
         report = marginal.check(Pair("p"), "a")
-        assert report.feasible is False
-        assert "not implemented" in report.description
-        with pytest.raises(ResolutionError, match="not implemented"):
-            marginal(Pair("p"), "a")
+        assert report.feasible is True
+        assert (report.route, report.exact) == ("monte_carlo", False)
+        with workflow_run(seed=0):
+            result = marginal(Pair("p"), "a")
+        assert result.provenance.metadata["route"] == report.route
+        assert result.provenance.metadata["exact"] is False
 
-    @pytest.mark.pending(
-        reason="an empirical marginal declares the node's event", raises=ResolutionError
-    )
     def test_the_fallback_projects_draws_onto_the_field(self):
         assert marginal(Pair("p"), "a").event_spec == OutputSpec(a=REAL)
 
@@ -128,6 +200,224 @@ class TestMarginal:
 
     def test_the_marginal_of_a_law_without_factors_keeps_its_label(self):
         assert marginal(Marginalizing("law"), "a").label == "law"
+
+
+class TestMonteCarloMarginal:
+    @pytest.mark.parametrize("count", [1, 13])
+    @pytest.mark.parametrize("paths", ["a", "g/a", "g", ["g"], ["g/a", "a"], "tag", ["tag"]])
+    def test_the_atoms_have_the_planned_event_and_keep_the_projected_values(self, paths, count):
+        law = _JointSampler()
+        configured = marginal.using(num_samples=count)
+        planned = configured.check(law, paths).result.term_spec.event_spec
+        assert law.sample_shapes == []
+        with workflow_run(seed=5):
+            result = configured(law, paths)
+        assert isinstance(result, EmpiricalDistribution)
+        assert result.event_spec == planned
+        assert result.num_atoms == count
+        assert law.sample_shapes == [(count,)]
+        np.testing.assert_allclose(result.weights, np.full(count, 1 / count), rtol=1e-7, atol=0)
+        if paths in ("a", "g/a"):
+            expected = law.draws[-1]["a"] if paths == "a" else law.draws[-1]["g"]["a"]
+            np.testing.assert_array_equal(result.atoms.raw, expected)
+        elif paths == "g":
+            np.testing.assert_array_equal(result.atoms.raw["a"], law.draws[-1]["g"]["a"])
+        elif paths == ["g"]:
+            np.testing.assert_array_equal(result.atoms.raw["g"]["a"], law.draws[-1]["g"]["a"])
+        elif paths == ["g/a", "a"]:
+            assert list(result.event_spec.outputs) == ["a", "g"]
+            np.testing.assert_array_equal(result.atoms.raw["a"], law.draws[-1]["a"])
+            np.testing.assert_array_equal(result.atoms.raw["g"]["a"], 2 * result.atoms.raw["a"])
+        else:
+            tags = result.atoms.raw if paths == "tag" else result.atoms.raw["tag"]
+            np.testing.assert_array_equal(tags, np.full(count, "tag", dtype=object))
+
+    def test_sampling_the_result_reuses_its_atoms_without_sampling_the_source(self):
+        law = _JointSampler("a law with spaces")
+        with workflow_run(seed=8):
+            result = marginal.using(num_samples=13)(law, ["a", "g/a"])
+            resampled = sample(result, sample_shape=100)
+        assert law.sample_shapes == [(13,)]
+        assert _descendants.capture_stochastic_consumer(result).root is result
+        assert result.label == law.label
+        assert set(np.asarray(resampled.raw["a"])) <= set(np.asarray(result.atoms.raw["a"]))
+        np.testing.assert_array_equal(resampled.raw["g"]["a"], 2 * resampled.raw["a"])
+        assert result.provenance.metadata["num_samples"] == 13
+
+    def test_seeded_workflows_reproduce_the_atoms(self):
+        law = _JointSampler()
+        with workflow_run(seed=3):
+            first = marginal.using(num_samples=13)(law, "a")
+        with workflow_run(seed=3):
+            second = marginal.using(num_samples=13)(law, "a")
+        np.testing.assert_array_equal(first.atoms.raw, second.atoms.raw)
+
+    def test_replay_reproduces_the_atoms(self):
+        with workflow_run(seed=3):
+            original = marginal.using(num_samples=13)(_JointSampler(), "a")
+        with replay_run(original.provenance):
+            replayed = marginal.using(num_samples=13)(_JointSampler(), "a")
+        np.testing.assert_array_equal(original.atoms.raw, replayed.atoms.raw)
+
+    @pytest.mark.parametrize(
+        "guard",
+        [Feasibility(False, "sampling guard"), Feasibility(None, pending=("sampling guard",))],
+    )
+    def test_check_respects_the_sampling_guard_without_sampling(self, monkeypatch, guard):
+        monkeypatch.setattr(
+            _JointSampler,
+            "_sample_guard",
+            lambda self: guard,
+            raising=False,
+        )
+        law = _JointSampler()
+        report = marginal.check(law, "a")
+        assert report.feasible is guard.feasible
+        assert law.sample_shapes == []
+        if guard.feasible is False:
+            with pytest.raises(ResolutionError, match="sampling guard"):
+                marginal(law, "a")
+
+    def test_an_exact_marginal_is_preferred_and_the_fallback_can_be_selected(self):
+        class ExactSampler(_JointSampler):
+            def _marginal(self, paths):
+                return Gaussian("a")
+
+        law = ExactSampler()
+        assert marginal.check(law, "a").route == "exact"
+        assert not isinstance(marginal(law, "a"), EmpiricalDistribution)
+        assert law.sample_shapes == []
+        with workflow_run(seed=2):
+            result = marginal.using(method="monte_carlo", num_samples=7)(law, "a")
+        assert isinstance(result, EmpiricalDistribution)
+        assert law.sample_shapes == [(7,)]
+
+    def test_exact_only_rejects_the_fallback_without_sampling(self):
+        law = _JointSampler()
+        with pytest.raises(ResolutionError, match="exact_only"):
+            marginal.using(exact_only=True)(law, "a")
+        assert law.sample_shapes == []
+
+    @pytest.mark.parametrize(
+        ("levels", "atom_level"),
+        [(("time",), "sample"), (("sample",), "sample_"), (("sample", "sample_"), "sample__")],
+    )
+    def test_a_batch_valued_field_keeps_the_event_levels_separate_from_the_atom_level(
+        self, levels, atom_level
+    ):
+        law = _BatchSampler(levels)
+        with workflow_run(seed=9):
+            result = marginal.using(num_samples=7)(law, "trajectory")
+        assert result.event_spec == OutputSpec(trajectory=BatchSpec(REAL, dict.fromkeys(levels, 2)))
+        assert result.num_atoms == 7
+        assert result.atoms.level_names == (atom_level, *levels)
+        assert result.atoms.batch_shape == (7, *((2,) * len(levels)))
+        with workflow_run(seed=0):
+            draw = sample(result)
+        assert draw.level_names == levels
+        assert draw.batch_shape == (2,) * len(levels)
+
+    def test_given_prefers_the_conditioned_laws_exact_marginal(self):
+        kernel = conditional_distribution(
+            lambda mu: Normal("a", mu, 1.0) & Normal("b", mu, 1.0),
+            given_spec={"mu": NumericArraySpec((), jnp.float32)},
+            label="kernel",
+        )
+        with workflow_run(seed=0):
+            result = marginal.using(num_samples=7)(kernel, "a", given={"mu": 2.0})
+            conditioned = marginal(condition_on(kernel, {"mu": 2.0}), "a")
+            exact = marginal.using(exact_only=True)(kernel, "a", given={"mu": 2.0})
+            sampled = marginal.using(method="monte_carlo", num_samples=7)(
+                kernel, "a", given={"mu": 2.0}
+            )
+        assert isinstance(sampled, EmpiricalDistribution)
+        assert sampled.num_atoms == 7
+        assert result.event_spec == kernel.event_spec["a"]
+        assert _fixed_paths(result) == ("mu",)
+        assert result.provenance.metadata["route"] == "conditional"
+        assert result.provenance.metadata["exact"] is True
+        assert sampled.provenance.metadata["exact"] is False
+        for law in (result, conditioned, exact):
+            assert isinstance(law, Normal)
+            assert law.loc == 2.0
+            assert law.scale == 1.0
+            assert _fixed_paths(law) == ("mu",)
+
+    def test_a_batch_of_laws_sweeps_the_fallback(self):
+        laws = DistributionBatch(
+            [_JointSampler("first"), _JointSampler("second")], "model", label="models"
+        )
+        with workflow_run(seed=0):
+            result = marginal.using(num_samples=7)(laws, "a")
+        assert isinstance(result, DistributionBatch)
+        assert result.level_names == ("model",)
+        assert all(law.num_atoms == 7 for law in result)
+
+    def test_check_defers_exact_conditional_selection_without_applying_the_kernel(self):
+        kernel = _SamplingKernel(Normal("a", 2.0, 1.0) & Normal("b", 0.0, 1.0))
+        report = marginal.check(kernel, "a", given={"mu": 2.0})
+        assert report.feasible is None
+        assert "bound law" in " ".join(report.pending)
+        assert kernel.bindings == []
+        assert kernel.sample_shapes == []
+        result = marginal(kernel, "a", given={"mu": 2.0})
+        assert isinstance(result, Normal)
+        assert result.provenance.metadata["exact"] is True
+        assert len(kernel.bindings) == 1
+        assert kernel.sample_shapes == []
+
+    def test_a_bound_law_without_an_exact_marginal_keeps_the_conditional_sampling_fallback(self):
+        kernel = _SamplingKernel(_JointSampler())
+        with workflow_run(seed=0):
+            result = marginal.using(num_samples=7)(kernel, "a", given={"mu": 2.0})
+        assert isinstance(result, EmpiricalDistribution)
+        assert result.num_atoms == 7
+        assert result.provenance.metadata["route"] == "monte_carlo"
+        assert result.provenance.metadata["exact"] is False
+        assert len(kernel.bindings) == 1
+        assert kernel.sample_shapes == [(7,)]
+
+    def test_approximate_binding_does_not_precede_conditional_sampling(self):
+        class ApproximateKernel(_SamplingKernel, SupportsApproximateConditioning):
+            pass
+
+        kernel = ApproximateKernel(_JointSampler())
+        with workflow_run(seed=0):
+            result = marginal.using(num_samples=7)(kernel, "a", given={"mu": 2.0})
+        assert isinstance(result, EmpiricalDistribution)
+        assert kernel.bindings == []
+        assert kernel.sample_shapes == [(7,)]
+
+    def test_a_conditioning_error_propagates_without_sampling(self):
+        class BrokenKernel(_SamplingKernel):
+            def _condition_on(self, given, /, **options):
+                raise ValueError("binding failed")
+
+        kernel = BrokenKernel(_JointSampler())
+        with pytest.raises(ValueError, match="binding failed"):
+            marginal(kernel, "a", given={"mu": 2.0})
+        assert kernel.sample_shapes == []
+
+    def test_normalization_without_an_exact_method_keeps_the_sampling_fallback(self):
+        class UnnormalizedLaw(Distribution, SupportsUnnormalizedLogProb):
+            def __init__(self):
+                super().__init__(RecordSpec(a=REAL), label="target")
+
+            def _unnormalized_log_prob(self, value):
+                return -0.5 * value["a"] ** 2
+
+        class Kernel(_SamplingKernel):
+            def _conditional_sample(self, given, key, sample_shape=()):
+                self.sample_shapes.append(sample_shape)
+                return {"a": jax.random.normal(key, sample_shape)}
+
+        kernel = Kernel(UnnormalizedLaw())
+        with workflow_run(seed=0):
+            result = marginal.using(num_samples=7)(kernel, "a", given={"mu": 2.0})
+        assert isinstance(result, EmpiricalDistribution)
+        assert result.provenance.metadata["route"] == "monte_carlo"
+        assert len(kernel.bindings) == 1
+        assert kernel.sample_shapes == [(7,)]
 
 
 class TestTheMarginalsNotation:
@@ -198,7 +488,11 @@ class TestOptionalInputs:
 
         kernel = conditional_distribution(lambda scale=2.0: Normal("y", 0.0, scale), label="lik")
         with pytest.raises(ResolutionError, match="integrates out the fields \\['scale'\\]"):
-            marginal((kernel & HalfNormal("scale", 1.0)), "y")
+            marginal.using(exact_only=True)(kernel & HalfNormal("scale", 1.0), "y")
+        with workflow_run(seed=0):
+            result = marginal.using(num_samples=13)(kernel & HalfNormal("scale", 1.0), "y")
+        assert isinstance(result, EmpiricalDistribution)
+        assert result.provenance.metadata["route"] == "monte_carlo"
 
 
 def _difference(fn):

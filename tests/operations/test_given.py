@@ -526,8 +526,8 @@ class TestConditionalOperations:
         np.testing.assert_allclose(cov(kernel, given={"mu": 2.0}), [[1.0]])
         np.testing.assert_allclose(mean(marginal(kernel, "y", given={"mu": 2.0})), 2.0)
         report = marginal.check(kernel, "y", given={"mu": -2.0})
-        assert report.route == "conditional"
-        assert report.exact is False
+        assert report.feasible is None
+        assert "bound law" in " ".join(report.pending)
 
     def test_apply_supports_the_fused_argument(self):
         np.testing.assert_allclose(
