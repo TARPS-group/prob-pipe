@@ -54,10 +54,11 @@ Record each command and its counts for the test plan.
 
 ## Step 4: Check the contracts and the documentation
 
-- For each abstraction the branch adds or changes, apply the directives of
-  `CONTRACTS.md` and note whether its contract is unambiguous. List each
+- For each abstraction the branch adds or changes, apply the rules of
+  `CONTRIBUTING.md` § Changing the code and note whether its contract is
+  unambiguous. List each
   ambiguity and the decision that resolved it, for the contract assessment.
-- Audit each changed docstring against `CONTRACTS.md` directive 2: its Raises
+- Audit each changed docstring against `STYLE_GUIDE.md` §3.4: its Raises
   section, its shapes, and drift from the behavior.
 - Check the CHANGELOG entry against `CONTRIBUTING.md` § Opening the PR.
 - Check that a convention change updates the documents that state the
@@ -69,6 +70,9 @@ Copy `.github/PULL_REQUEST_TEMPLATE.md` and fill each section:
 
 - **Summary**: what the PR does and why, motivated from the repository's code,
   merged PRs, `design/`, and open issues;
+- **Examples**: a short runnable example of each change of behavior, run on
+  the branch, with its real output, and the same call before and after for a
+  changed behavior;
 - **Linked issue(s)**: one of the three forms that the template's comment
   states;
 - **Contract assessment**: the result of Step 4;

@@ -41,6 +41,54 @@ last task is done.
 For small fixes (typos, bug fixes, test additions), skip the plan step and
 go straight to an implementation PR.
 
+### Changing the code
+
+Each abstraction and operation of ProbPipe has a contract: its API, shapes,
+return types, error cases, invariants, and parameter names. The section of
+`design/` that owns an abstraction states its target contract,
+`design/package-structure.md` § Correspondence to the implementation maps each
+module to that section, and the module's docstrings state the contract as
+implemented. Every change to `probpipe/` follows these rules, whoever makes it.
+
+1. **The design decides.** Where `design/` disagrees with the code or with a
+   contributor document, the design decides, and the change moves the code
+   toward the design without asking. Docstrings and names follow the design's
+   target contract and vocabulary, not the behavior of code elsewhere that the
+   design will change. Ask the maintainer in four cases:
+   - a conflict, where two parts of the design disagree;
+   - a gap, where the design leaves a real choice open;
+   - a public name, where the change names or renames a public API;
+   - an amendment, where the change would amend the design.
+2. **Settle the contract before coding.** Before writing code, make the contract
+   of every abstraction the change modifies or calls clear: its shapes, its single and
+   batched behavior, its orderings, its error cases, its return types, and its
+   invariants. An ambiguity is settled by asking the maintainer or by stating a
+   choice, and the PR's contract assessment records each decision.
+3. **Fix the contract rather than code around it.** A contract in `design/` or
+   in a docstring that turns out wrong, missing, or unclear is fixed in the
+   documentation or raised with the maintainer. Code that conflicts with the
+   design, or that has vague names, poor organization, or duplicated logic, is
+   rewritten within the change's scope rather than patched around. Work outside
+   the scope gets an issue.
+4. **Label interim code.** A change that must coexist with code that does not
+   yet follow the design may describe that coexistence in a docstring as an
+   *interim implementation detail*. The note never defines the contract and never blurs a
+   distinction the design draws.
+5. **Write a question for a reader without the context.** A question to the
+   maintainer, on the issue or the PR, gives the background from first
+   principles, today's behavior and the proposed behavior in code, the options
+   with what each means, and a recommendation with its reason. Until it is
+   answered, a change that the question does not block makes the most
+   conservative choice consistent with the design, and says so beside the
+   question.
+
+`STYLE_GUIDE.md` states the conventions of the code itself:
+
+- names, in `STYLE_GUIDE.md` §1.12;
+- the layout of a module, in `STYLE_GUIDE.md` §2;
+- what a docstring states, in `STYLE_GUIDE.md` §3.4;
+- the tests that assert a contract, in `STYLE_GUIDE.md` §8.7.
+
 ### Opening the PR
 
 A few conventions keep PRs consistent; the PR template
@@ -53,12 +101,25 @@ A few conventions keep PRs consistent; the PR template
   the affected subpackage or area.
 - **Description = final state.** The title and body describe the change as
   it stands, and are updated whenever the scope shifts during review — a
-  stale description is a review blocker. The PR text follows the writing
+  stale description is a review blocker. The body gives a reviewer who does
+  not know ProbPipe's internals the context of the change, in prose that
+  reads in order rather than in dense lists. The PR text follows the writing
   rules of `STYLE_GUIDE.md` §10, whose rules 9 and 10 keep it free of plan
   labels and self-contained. Scratch planning artifacts, such as `*_plan.md`
   files, stay off the branch. The one exception is `plans/`, which holds the shared
   plans of a multi-PR push while it runs and is deleted once its sections
   have moved into `design/` (`plans/README.md`).
+- **Examples** — the body shows each change of behavior as a short runnable
+  example with its real output. A changed behavior shows the same call before
+  and after, and a new feature shows a call that uses it. A PR with no behavior
+  to run, such as a CI or documentation change, writes N/A in that section.
+- **Contract assessment** — for each abstraction the PR adds or changes, the
+  body says whether its contract is unambiguous and records each decision that
+  settled an ambiguity (§ Changing the code, rule 2). A PR that changes no
+  contract writes None.
+- **Review before requesting review** — open the PR as a draft and run the
+  `review-pr` skill on it, or review it against these documents by hand. Fix
+  or answer each finding, and then mark the PR ready for review.
 - **CHANGELOG** — a PR with a user-visible change adds its entry to
   `CHANGELOG.md` in the same PR, under `## [Unreleased]` and the one heading
   of its change type, such as `### Added` or `### Changed (breaking)`.
@@ -391,7 +452,7 @@ comment density of the surrounding code, and when in doubt, delete: an
 over-explained obvious line is worse than no comment.
 
 The prose of comments and docstrings follows the writing rules of
-`STYLE_GUIDE.md` §10. `CONTRACTS.md` directive 2 states what a public docstring
+`STYLE_GUIDE.md` §10. `STYLE_GUIDE.md` §3.4 states what a docstring
 documents, and it bans references to PRs and issues in code.
 
 ### Linting & pre-commit
@@ -412,7 +473,7 @@ Homebrew or pipx works too.
 
 Once the hooks are installed, `ruff` (lint + format), a few file-hygiene hooks,
 the `pydoclint` docstring check of STYLE_GUIDE.md §3.3, and the
-`no-issue-numbers` hook of CONTRACTS.md directive 2 run on your staged
+`no-issue-numbers` hook of STYLE_GUIDE.md §3.4 run on your staged
 files at commit time. The hooks see only the files you're
 changing, so a commit is checked without re-linting the whole tree.
 `AGENTS.md` § Commands runs the linter and the hooks over the whole tree.
