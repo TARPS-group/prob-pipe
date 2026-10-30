@@ -14,6 +14,7 @@ settle:
 
 from __future__ import annotations
 
+from types import MappingProxyType
 from typing import Any
 
 import jax.numpy as jnp
@@ -31,6 +32,7 @@ from probpipe import (
     Normal,
     NumericArrayBatch,
     NumericArraySpec,
+    OpaqueSpec,
     OutputSpec,
     RecordSpec,
     function,
@@ -440,6 +442,23 @@ class TestTheCheckedResult:
         report = f.check(tfd.Normal(0.0, 1.0), _items() if swept else 1.0)
         assert report.selected is None and report.routes[0].unresolved
         assert report.result == (OutputSpec(f=BatchSpec(_FLOAT, item=2)) if swept else _SCALAR)
+
+    @pytest.mark.parametrize(
+        ("role", "passes_whole"),
+        [((OpaqueSpec, DistributionSpec), True), ((OpaqueSpec, NumericArraySpec), False)],
+        ids=["admits-a-law", "admits-its-draws"],
+    )
+    def test_a_role_decides_whether_a_conversion_is_consumed_whole(self, role, passes_whole):
+        class Consumer(Function):
+            _roles = MappingProxyType({"x": role})
+
+        def consume(x: Normal, scale):
+            raise AssertionError("check must not evaluate the body")
+
+        f = Consumer(consume, output_spec=_SCALAR, traceable=False)
+        report = f.check(tfd.Normal(0.0, 1.0), 1.0)
+        assert report.selected is None and report.routes[0].unresolved
+        assert report.result == (_SCALAR if passes_whole else None)
 
     def test_one_unknown_conversion_keeps_the_result_open(self):
         @function(output_spec=_SCALAR, traceable=False)

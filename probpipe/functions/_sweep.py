@@ -31,7 +31,7 @@ from ..core.record import Record
 from ..core.tracked import TrackedTerm
 from ..distributions._distribution import Distribution
 from ..values import _binding
-from ..values._function_base import _NAMELESS_OUTPUT, _validate_stacked_output
+from ..values._function_base import _validate_stacked_output
 from . import _plan, _recipe, _result
 from ._execution import (
     evaluate_requested_points,
@@ -60,7 +60,7 @@ def execute_sweep(
         Distribution,
     ],
     function_name: str,
-    output_name: str = _NAMELESS_OUTPUT,
+    output_name: str,
     output_label: str | None = None,
     output_expression: Expression | None = None,
     output_spec: OutputSpec | None = None,

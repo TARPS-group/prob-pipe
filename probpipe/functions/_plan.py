@@ -279,6 +279,21 @@ def lift_of(value: Any, expected: Any, role: tuple[type[TermSpec], ...] | None =
     return role_lift(value, role) or "whole"
 
 
+def law_passes_whole(expected: Any, role: tuple[type[TermSpec], ...] | None = None) -> bool:
+    """Whether every unbatched law passes whole at a parameter annotated *expected* with role *role*.
+
+    This is the answer :func:`lift_of` gives for every such law, so it holds
+    for a law not yet constructed: without a role, the annotation names a
+    distribution or is ``Any``, and with one, the annotation is ``Any`` or
+    the role names no kind or admits a law.
+    """
+    if _binding.resolved_hint(expected) is Any:
+        return True
+    if role is None:
+        return _normalization.is_distribution_hint(expected)
+    return not role or role_admits(role, DistributionSpec)
+
+
 def lift_at(function: Any, parameter: str | None, value: Any) -> Lift:
     """How a call of *function* passes *value* at *parameter*, as :func:`lift_of` states.
 
