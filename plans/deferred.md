@@ -93,6 +93,15 @@ A plan written on 2026-10-27, after the workshop's code freeze, in `plans/deferr
 |---|---|
 | One contract for every batch: every element conforms to one element spec in one dimension scope, so a `FunctionBatch` refuses functions of different specs as a `DistributionBatch` refuses laws of different event specs; the element spec inferred as the common spec of the elements, independent of their order; one storage interface and `Batch.stack` in place of the `isinstance` checks of fourteen modules; and `output`, `rename`, `without`, `&`, and equality by value on every batch by one lifted-operation rule, which takes over the batch parts of S4b, G5, and the deferred `&` and `without` entries above (steps B1 to B6) | `plans/deferred/batch-contract.md` |
 
+### Annotations
+
+A plan written on 2026-10-28, in `plans/deferred/` and not yet approved; it lists its open questions, which are reviewed before any of it is implemented.
+
+| Work | Source |
+|---|---|
+| One rule for when an annotation follows a term: each operation declares its result's relation to its source (same, renamed, part, or new), each entry declares its propagation (term, run, or by path), and one function carries the entries, so a marginal of an MCMC posterior keeps its draws' ArviZ data and the run's sampler statistics; annotations on every term, batches included, written through one method `annotate` (steps A1 to A5) | `plans/deferred/annotations.md` |
+| An inference result's ArviZ `posterior` group derived from its atoms rather than stored, so the draws are stored once | `plans/deferred/annotations.md` § 6.1, decision 2 |
+
 ### Derivatives
 
 A plan written on 2026-10-28, in `plans/deferred/` and not yet approved; it lists its open questions, which are reviewed before any of it is implemented. It builds on the numeric-contract and vector-interface plans, and it answers the execution plan's Q11.

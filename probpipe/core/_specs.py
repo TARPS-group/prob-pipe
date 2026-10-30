@@ -101,8 +101,8 @@ class InputSpec(Mapping[str, TermSpec]):
         preserves its optional flags. Other sources supply required inputs.
     **inputs_by_name : TermSpec or tuple
         Alternatively, the inputs by keyword, including RecordSpec-valued inputs.
-        A tuple of sizes is a NumericArraySpec of that shape. No constructor
-        keyword is reserved.
+        A tuple of sizes is converted to a NumericArraySpec of that shape. No
+        constructor keyword is reserved.
 
     Raises
     ------
@@ -497,7 +497,7 @@ class OutputSpec:
     **term : TermSpec, tuple, or None
         The keyword form: one keyword, the output's name, over the spec of the
         whole value. None means the type is not known yet; :meth:`with_term_spec`
-        gives it later. A tuple is a NumericArraySpec of that shape.
+        gives it later. A tuple is converted to a NumericArraySpec of that shape.
 
     Raises
     ------
@@ -583,8 +583,8 @@ class OutputSpec:
         Parameters
         ----------
         paths : str, or list or tuple of str
-            A path, such as ``"g/b"``, or a list of paths. A tuple is a list of
-            paths; a nested path is written with ``/``.
+            A path, such as ``"g/b"``, or a list of paths. A tuple is read as a
+            list of paths; a nested path is written with ``/``.
 
         Returns
         -------

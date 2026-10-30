@@ -1,8 +1,14 @@
-# ProbPipe
+<img alt="ProbPipe logo" src="assets/logo/probpipe-lockup.svg#only-light" width="360">
+<img alt="ProbPipe logo" src="assets/logo/probpipe-lockup-dark.svg#only-dark" width="360">
+
+# Connect the Tools You Already Use into a Unified, Reliable Workflow
 
 --8<-- "README.md:intro"
 
-![The tools you already use, such as Stan, PyMC, BlackJAX, NumPy, pandas, and ArviZ, supported by the ProbPipe layer, which provides provenance tracking, random key management, model format conversion, uncertainty propagation, and swappable execution backends and inference algorithms](assets/probpipe-workflow-language.png)
+<picture>
+  <source media="(max-width: 600px)" srcset="assets/probpipe-workflow-language-narrow.svg">
+  <img alt="The tools you already use, such as Stan, PyMC, BlackJAX, NumPy, pandas, and ArviZ, joined together by ProbPipe, which provides provenance tracking, random key management, model format conversion, uncertainty propagation, and swappable execution backends and inference algorithms" src="assets/probpipe-workflow-language.svg">
+</picture>
 
 ## What you can do
 

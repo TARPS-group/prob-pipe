@@ -60,7 +60,7 @@ def batch_class_for_spec(spec: TermSpec) -> type: ...   # its batch form
 
 **Shape arguments.** An argument that takes a shape, such as `NumericArraySpec`'s `shape`, a level of a `BatchSpec` (II.5), or `sample_shape` (VI.3), takes a single int or str as one dimension and a sequence, such as a tuple, a list, a `range`, or a 1-D array, as one dimension per item, and it stores the tuple. So `3` is `(3,)` and `"n"` is `("n",)`, as NumPy reads `np.zeros(3)`. An iterator such as a generator, a set, `bytes`, a `memoryview`, and a mapping are refused: an iterator is used up by one reading, a set has no order, and the others iterate into byte values or keys. An integer of another type, such as `numpy.int64`, is stored as a Python `int`, a name of a `str` subclass is stored as a `str`, and a `bool` is refused. A shape that sizes draws or an array, such as `sample_shape`, takes integers only. Two arguments that hold sizes are not shape arguments: `with_dim_sizes` takes one non-negative int per name, and the size shorthand below takes a tuple only.
 
-**The size shorthand.** Wherever an input of an `InputSpec`, a field of a `RecordSpec`, or the keyword form of an `OutputSpec` (II.2) takes a spec, a tuple of sizes is the `NumericArraySpec` of that shape, with no dtype or support: `InputSpec(x=())`, `RecordSpec(x=("n",))`, and `OutputSpec(y=(3,))`. A bare int, as `x=3`, is refused, since it would read as a size where a spec is expected.
+**The size shorthand.** Wherever an input of an `InputSpec`, a field of a `RecordSpec`, or the keyword form of an `OutputSpec` (II.2) takes a spec, a tuple of sizes is converted to the `NumericArraySpec` of that shape, with no dtype or support: `InputSpec(x=())`, `RecordSpec(x=("n",))`, and `OutputSpec(y=(3,))`. A bare int, as `x=3`, is refused, since it would read as a size where a spec is expected.
 
 `with_dim_sizes` substitutes supplied sizes and leaves other dimensions symbolic. `with_dim_names` renames simultaneously. Binding reads concrete sizes in one shared scope and rejects disagreements; unobserved dimensions remain symbolic.
 
@@ -623,9 +623,9 @@ class NamedTree[L]:
 The parameter `L` declares the leaf type, which is what `values()`, `[]` at a field, and `map` accept and return; groups are always the family's own class. Implementations should check leaves against the declared leaf type at construction.
 
 **How `[]` reads its argument.** One reader parses what `[]` takes, for every kind that `[]` indexes by path (II.2, II.5, III.3, III.5, III.6, III.7, III.9, III.10):
-1. a `str` is one path, and a `str` subclass is read as a `str`;
-2. a list or a tuple of `str` is a **list of paths**, so `x["a", "g/b"]` and `x[["a", "g/b"]]` agree;
-3. an `int`, an object with `__index__`, a `slice`, or a tuple of these is a position, which only a batch takes (II.5).
+1. a `str` is read as one path, and a `str` subclass as a `str`;
+2. a list or a tuple of `str` is read as a **list of paths**, so `x["a", "g/b"]` and `x[["a", "g/b"]]` agree;
+3. an `int`, an object with `__index__`, a `slice`, or a tuple of these is read as a position, which only a batch takes (II.5).
 
 `bool`, `None`, and `...` raise `TypeError`. Every argument that takes one path, such as each path of `without(*paths)`, `at_path(*segments)`, and `is_field(path)`, is checked by the same reader, so `at_path(("g", "b"))` raises `TypeError`: "at_path takes each segment as a separate argument, got a tuple. Write at_path(*segments)". The reader refuses a malformed argument before anything is looked up:
 
@@ -670,7 +670,7 @@ For example, in `{"g": "h", "g/mu": "g/m"}` the original `g` becomes `h`. The ta
 
 ### Rationale
 
-Named paths satisfy `C5 – Naming for unambiguous meaning`, and keying a rename by path gives every node one address, fixed by its position in the tree. One reader of paths, shared by every kind, gives `[]` one meaning: a string is one path and a list is several, so a law, its draws, and a batch of its draws read the same argument alike (`C1 – Uniform interface to functions, distributions, and values`). A list keeps each node at its own path, so the result can be merged with terms that use those paths, and two nodes that share a last name in different groups are both kept (`D1 – Mathematical fidelity`). A merge by top-level name keeps each output whole, since a group is one output (II.2), and a deeper merge would let one operand supply only part of another's output. Housing the collection contract in one shared class ensures the type- and value-level structures built on it cannot drift apart on how a field is named or a path is resolved (`C1 – Uniform interface to functions, distributions, and values`).
+Named paths satisfy `C5 – Naming for unambiguous meaning`, and keying a rename by path gives every node one address, fixed by its position in the tree. One reader of paths, shared by every kind, gives `[]` one meaning: a string is read as one path and a list as several, so a law, its draws, and a batch of its draws read the same argument alike (`C1 – Uniform interface to functions, distributions, and values`). A list keeps each node at its own path, so the result can be merged with terms that use those paths, and two nodes that share a last name in different groups are both kept (`D1 – Mathematical fidelity`). A merge by top-level name keeps each output whole, since a group is one output (II.2), and a deeper merge would let one operand supply only part of another's output. Housing the collection contract in one shared class ensures the type- and value-level structures built on it cannot drift apart on how a field is named or a path is resolved (`C1 – Uniform interface to functions, distributions, and values`).
 
 ### Notes
 
