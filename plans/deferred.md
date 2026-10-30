@@ -102,6 +102,23 @@ A plan written on 2026-10-28, in `plans/deferred/` and not yet approved; it list
 | One rule for when an annotation follows a term: each operation declares its result's relation to its source (same, renamed, part, or new), each entry declares its propagation (term, run, or by path), and one function carries the entries, so a marginal of an MCMC posterior keeps its draws' ArviZ data and the run's sampler statistics; annotations on every term, batches included, written through one method `annotate` (steps A1 to A5) | `plans/deferred/annotations.md` |
 | An inference result's ArviZ `posterior` group derived from its atoms rather than stored, so the draws are stored once | `plans/deferred/annotations.md` § 6.1, decision 2 |
 
+### Derivatives
+
+A plan written on 2026-10-28, in `plans/deferred/` and not yet approved; it lists its open questions, which are reviewed before any of it is implemented. It builds on the numeric-contract and vector-interface plans, and it answers the execution plan's Q11.
+
+| Work | Source |
+|---|---|
+| One contract for derivatives: a continuous leaf is a leaf of a real floating dtype whose support `Constraint.is_discrete` does not call discrete; the derivative of a map is a `LinOp`, its Jacobian operator; every `Function` has a `Differentiability` (inputs, modes, order, source), claimed with paths or `False` and otherwise presumed from traceability; supplied `vjp`, `jvp`, and `jacobian` are installed as JAX rules; a law's derivatives are those of `log_prob_function(d)` and `sampler(d)`; the operations `jacobian`, `grad`, and `hessian`, with `inverse` and `log_det_jacobian` implemented; and gradient methods dispatched on `is_differentiable` rather than on traceability (steps D1 to D6) | `plans/deferred/differentiability.md` |
+| An `optimize` operation with Newton, gradient, and gradient-free routes, and the mode and the Laplace approximation of a law derived from it | `plans/deferred/differentiability.md` § 6.2 |
+
+### Controls and options
+
+A plan written on 2026-10-28, in `plans/deferred/` and not yet approved; it lists its open questions, which are reviewed before any of it is implemented. Every operation takes controls, so its § 6 lists the edits the other deferred plans need, the inference-interface plan's first.
+
+| Work | Source |
+|---|---|
+| One contract for `using`: controls (ProbPipe's names), options (a registered entry's names), and settings (`config`), each declared once by an `Option` that validation, defaults, provenance, the catalog, and the documentation all read; option names checked against every method a call could select; a warning, `UnusedControlWarning`, for each given control or option a call does not read (#675); one vocabulary of common options, which renames `num_results` to `num_draws`; `backend_options` for backend arguments; `describe_using()` and `CallReport.unused`; and the hand-kept lists of control names replaced by one `passes` field (steps C1 to C5) | `plans/deferred/controls-and-options.md` |
+
 ## Open issues the push changes
 
 Each row says what the push does for an open issue before the workshop, and what the issue keeps for after it.
