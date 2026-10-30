@@ -149,13 +149,12 @@ def marginal(d: Distribution, paths: PathsLike):
     ``marginal.using(num_samples=4096)(d, paths)``. The call records its
     approximation and sample count in provenance.
 
-    By default, with ``given=``, the kernel's conditional marginal is tried first,
-    followed by Monte Carlo through its conditional sampler. Conditioning
-    the kernel to a law and taking that law's marginal is the last route.
-    The Monte Carlo result can therefore be approximate even when the
-    conditioned law has an exact marginal. Use ``exact_only=True`` to
-    require an exact result, or call ``marginal(condition_on(d, given), paths)``
-    to condition first.
+    With ``given=``, the kernel's exact conditional marginal is tried first,
+    followed by exact conditioning and the conditioned law's exact marginal.
+    Monte Carlo through the conditional sampler follows when neither exact
+    route applies. A check does not evaluate the kernel, so it reports the
+    conditional route unresolved when that choice needs the bound law.
+    An explicit ``method="monte_carlo"`` selects sampling directly.
 
     The atoms' leading level is ``sample``. For a batch-valued event,
     underscores are appended until that name differs from the event's levels.
