@@ -7,13 +7,13 @@
 > It revisits the concepts of `plans/declarations-and-addressing.md` (Part I §§ 2 to 4, Part II §§ 9 to 12) and replaces that plan's unmerged steps S4b and G1a to G5; § 8 lists the edits that plan and the other deferred plans need.
 > Once approved, its rules move into `design/` (II.1, II.2, II.5, II.6, III.3, III.5, III.7, III.9, III.10, and the glossary) and its steps into the plans of the work after the workshop.
 
-**Settled with the maintainer on 2026-10-28 (items 1 to 12) and 2026-10-29 (items 13 to 16):**
+**Settled with the maintainer on 2026-10-28 (items 1 to 12), 2026-10-29 (items 13 to 16), and 2026-10-30 (item 17, and item 5 revised):**
 
 1. A record's paths are the paths of its own tree and end at its fields; any other object has paths exactly when it is record-valued, that is, when its value spec is a `RecordSpec` (§ 4.1, § 4.2). This reverses the decision of 2026-10-16 that paths go through an object a record holds.
 2. `in` is part of the path interface, and it raises as `[]` does for a malformed path or an object without paths (§ 4.1).
 3. A list of paths keeps each node at its full path, as II.6 states (§ 4.1).
 4. `select` is not part of the path interface, and this plan leaves it unchanged (§ 4.1).
-5. Outputs follow two cases instead of II.2's five, so that every named object has outputs (§ 4.3).
+5. Outputs follow three cases instead of II.2's five: a record-valued term has one output per top-level child of its value, an array or an opaque value has none, and every other term has one, itself, under its output name, which it always has; a batch falls under its element's case (§ 4.3).
 6. The output name is stored on the object, not inside its spec; `OutputSpec` is removed, and an object's output spec is a `RecordSpec` (§ 4.3, § 6).
 7. Inputs and outputs are named by single names, never by paths (§ 4.3, § 4.4).
 8. `x.output_names` is the one public read of an object's output names; the stored name is private, a constructor states it with `output_name=`, and `rename` changes it (§ 4.3).
@@ -25,6 +25,7 @@
 14. `InputSpec` is removed. A spec's inputs are a `RecordSpec`, its `input_spec`, and the inputs a binding may omit are a separate field of the spec, `optional_input_names`, which a term built from a callable reads from the callable's defaults (§ 4.4).
 15. A spec conforms when the declared spec's optional inputs are among its own (§ 4.5).
 16. A record may be empty only at its root: `RecordSpec()` and `Record({}, label=...)` have no fields and stand for no inputs and no outputs, and a constructor refuses an empty group inside a record (§ 4.1).
+17. A batch built from elements takes the `output_name` it is given, or else the name every element has, and otherwise raises `ValueError`; a batch and each of its elements have the same output names (§ 4.3).
 
 **Decisions still open** (each explained where it arises, and gathered in § 10):
 
@@ -78,8 +79,9 @@ The goal is one definition of each idea, one implementation that every kind shar
 | The input spec | an `InputSpec`, whose `[]` takes paths into a record input (II.2) | a `RecordSpec`, whose top-level names are the input names |
 | Optional inputs | flags inside `InputSpec`, set with `with_optional` and checked against the defaults (II.2, III.3) | the spec's field `optional_input_names`, read from the defaults |
 | Conformance on optional inputs | the same optional inputs (II.1) | the declared spec's optional inputs among the actual spec's |
-| The outputs of an object whose value is not a record | five cases, one of which gives no outputs (II.2) | one output, the object, under its output name |
+| The outputs of an object whose value is not a record | five cases, one of which gives no outputs (II.2) | none for an array or an opaque value, and one, the object, under its output name for every other kind; a batch follows its element |
 | The record of the outputs of an object without outputs | none: reading it raises (II.2) | `RecordSpec()` |
+| The output name of a batch whose elements differ in their names | `"element"` (II.5) | refused unless `output_name=` is given |
 | Where an output name is stored | in an `OutputSpec`, inside the spec (II.2) | on the object |
 | The outputs of a batch of laws or kernels | none (II.5, III.10) | an output for each top-level name of the element's event, when it is a record |
 | Conformance and unification | defined by kind (II.1) | kept; the code's departures fixed |
@@ -215,7 +217,7 @@ A term is **record-valued** when its value spec is a `RecordSpec`.
 2. **`in` refuses as `[]` does.** `p in x` is true exactly when `x[p]` raises no `KeyError`, and a malformed path, or any path given to an object without paths, raises as it does for `[]`. II.6 has `p in x` false for an object without paths, never raising.
 3. **A constructor refuses an empty group.** `RecordSpec`, `Record`, and the other `NamedTree` constructors raise `ValueError` for a field whose value is an empty mapping or an empty `RecordSpec`, as II.6's "a tree holds no empty groups" requires; the code keeps such a group and hides it from `keys()` (§ 2.2). The message reads "RecordSpec cannot hold the empty group 'g', since a record holds no empty groups. Give 'g' at least one field, or leave it out".
 
-**The empty record.** A record with no fields exists only at the root, as `RecordSpec()` and `Record({}, label="none")`. It has exactly one value, the record with no fields, so it describes an absence that still has a structure: a kind that takes no inputs has the input spec `RecordSpec()` (§ 4.4), since it needs nothing from a binding, and an object without outputs has the output spec `RecordSpec()` (§ 4.3), since a merge reads nothing from it. `None` stays reserved for "not known yet". `RecordSpec()` counts as numeric, since it has no leaf that is not numeric, so it displays as `NumericRecordSpec()` and equals `RecordSpec()`.
+**The empty record.** A record with no fields exists only at the root, as `RecordSpec()` and `Record({}, label="none")`. It has exactly one value, the record with no fields, so it describes an absence that still has a structure: a kind that takes no inputs has the input spec `RecordSpec()` (§ 4.4), since it needs nothing from a binding, and an array or an opaque value, which has no outputs, has the output spec `RecordSpec()` (§ 4.3), since a merge reads nothing from it. `None` stays reserved for "not known yet". `RecordSpec()` counts as numeric, since it has no leaf that is not numeric, so it displays as `NumericRecordSpec()` and equals `RecordSpec()`.
 
 > [!NOTE]
 > **For reviewers: should an empty record exist at all?**
@@ -287,9 +289,20 @@ d.spec["mu"] == d["mu"].spec   # True
 **Kept from II.2:** an output is one name for one whole value, never a path; a record-valued object has one output per top-level child of its value spec; and an output name gives no path, so `Normal("x", 0.0, 1.0)["x"]` is a `TypeError`.
 
 **Changed in II.2:**
-1. **Two cases instead of five.** An object that is not record-valued has one output, the object itself, under its output name. This replaces II.2's cases 2 to 5: an object whose value is a function, a batch, or a law is one output, and no object lacks outputs because of its value's kind. An object without an output name has no outputs.
-2. **The output name is stored on the object.** No spec holds it, and a record-valued object refuses one with `ValueError`. II.2 stores it in `OutputSpec`.
-3. **The output spec is II.2's record of the outputs,** as a plain `RecordSpec`: the value spec itself when it is a `RecordSpec`, and `RecordSpec({output_name: value_spec})` otherwise. It is `RecordSpec()` for an object without outputs (§ 4.1), and `None` while the value spec is not known, as for a function before its first call. `OutputSpec` is removed. The operations on an output spec, `O["g/b"]`, `O[["a"]]`, `O.without("g")`, `O.rename(...)`, and `O & P`, are those of a `RecordSpec` (II.6).
+1. **Three cases instead of five.** Every term that is not a batch falls under exactly one case:
+   1. **A record-valued term** has one output for each top-level child of its value spec. This is II.2's case 1.
+   2. **An array or an opaque value** has no outputs. Wherever such a value is received, its position names it: a parameter, a keyword, a record key, or a conditioning key. Its arithmetic and the JAX functions applied to it therefore never need to carry a name.
+   3. **Every other term,** a law, a kernel, or a function that is not record-valued, has one output, the term itself, under its output name, which it always has. This replaces II.2's cases 2 to 5, under which a function that returns a law, and a batch of laws or kernels, have no outputs.
+
+   **A batch falls under its element's case.** A batch of record-valued terms has an output for each top-level child of the element's value, and each output is the batch of the elements' parts over the same levels, as `laws["mu"]`; this follows from case 1, since a batch's value is its element's (settled item 13). A batch of arrays or opaque values has no outputs. A batch of any other terms has one output, the batch itself, under its output name. The case follows the element's kind, not the value spec alone: a batch of functions that return arrays has the value spec `NumericArraySpec(())`, as a batch of arrays does, and falls under case 3.
+2. **The output name is stored on the object.** No spec holds it. A record-valued object refuses one with `ValueError`, and an array, an opaque value, and a batch of them take none. II.2 stores it in `OutputSpec`.
+3. **The output spec is II.2's record of the outputs,** as a plain `RecordSpec`: the value spec itself when it is a `RecordSpec`, and `RecordSpec({output_name: value_spec})` otherwise. It is `RecordSpec()` for an array, an opaque value, and a batch of them (§ 4.1), and `None` while the value spec is not known, as for a function before its first call. `OutputSpec` is removed. The operations on an output spec, `O["g/b"]`, `O[["a"]]`, `O.without("g")`, `O.rename(...)`, and `O & P`, are those of a `RecordSpec` (II.6).
+4. **A batch and each of its elements have the same output names.** A batch built from elements of case 3, as `DistributionBatch([d1, d2], "dataset")`, names its output by three rules, in order:
+   1. the `output_name` it is given;
+   2. otherwise, the output name that every element has;
+   3. otherwise, it raises `ValueError`: "DistributionBatch cannot take its output name from its elements, since they have the output names 'x' and 'y'. Pass output_name= to name the batch's output".
+
+   An element read from a batch takes the batch's name, and renaming a batch renames every element. A batch that an operation builds, such as the batch of a sweep, takes the name its rule gives (§ 6). II.5 names the element `"element"` when nothing names it.
 
 **New:** two public reads of the outputs, `x.output_names` and `x.outputs` (§ 5.4).
 The stored name is private, so `output_names` is the one way to read the names.
@@ -300,7 +313,7 @@ In this table, `fit` is a callable of one argument `data`, and `h` is a callable
 
 | Object `x` | `x.value_spec` | Paths of `x` | `x.output_names` | `x.outputs[c]` |
 |---|---|---|---|---|
-| `NumericArray(1.0, label="a", output_name="a")` | `NumericArraySpec(())` | none | `("a",)` | `x` |
+| `NumericArray(1.0, label="a")` | `NumericArraySpec(())` | none | `()` | none |
 | `Record({"a": 1.0, "b": {"c": 2.0}})` | `RecordSpec(a=NumericArraySpec(()), b=RecordSpec(c=NumericArraySpec(())))` | `"a"`, `"b"`, `"b/c"` | `("a", "b")` | `x[c]` |
 | `Function(h, return_spec=NumericArraySpec(()), output_name="y")` | `NumericArraySpec(())` | none | `("y",)` | `x` |
 | `Function(fit, return_spec=RecordSpec(mu=(), sigma=()))` | `RecordSpec(mu=..., sigma=...)` | `"mu"`, `"sigma"` | `("mu", "sigma")` | `x[c]`, a selected function |
@@ -308,6 +321,7 @@ In this table, `fit` is a callable of one argument `data`, and `h` is a callable
 | `d` | `d.event_spec` | `"mu"`, `"sigma"` | `("mu", "sigma")` | `x[c]`, a coupled marginal |
 | `DistributionBatch([d, d], "dataset")` | `d.event_spec` | `"mu"`, `"sigma"` | `("mu", "sigma")` | `x[c]`, a batch of coupled marginals |
 | `DistributionBatch([n, n], "dataset")`, with `n = Normal("x", 0.0, 1.0)` | `NumericArraySpec(())` | none | `("x",)`, the name its elements share | `x` |
+| `sample(n, sample_shape=(3,))` | `NumericArraySpec(())` | none | `()` | none |
 | `Record({"x": 3.0, "g": d})` | `RecordSpec(x=NumericArraySpec(()), g=d.spec)` | `"x"`, `"g"` | `("x", "g")` | `x[c]` |
 | `Function(fit)`, before its first call | `None` | not known | `None` | not known |
 
@@ -770,7 +784,8 @@ def _output_spec_of(value_spec: TermSpec | None, output_name: str | None) -> Rec
 
     A record-valued term's output spec is its value spec. Any other term's is
     ``RecordSpec({output_name: value_spec})``, or ``RecordSpec()`` when it has
-    no output name. ``TrackedTerm.output_spec`` calls this, and so does code
+    no output name, as an array or an opaque value has none.
+    ``TrackedTerm.output_spec`` calls this, and so does code
     that holds only specs, such as an operation's ``result=`` rule.
 
     Parameters
@@ -799,6 +814,8 @@ def _output_spec_of(value_spec: TermSpec | None, output_name: str | None) -> Rec
     RecordSpec(x=NumericArraySpec(shape=()))
     >>> _output_spec_of(RecordSpec(mu=(), sigma=()), None)
     RecordSpec(mu=NumericArraySpec(shape=()), sigma=NumericArraySpec(shape=()))
+    >>> _output_spec_of(NumericArraySpec(()), None) == RecordSpec()
+    True
     """
 
 
@@ -922,8 +939,9 @@ class TrackedTerm(Immutable, metaclass=_TrackedTermMeta):
         record-valued term has one output for each top-level name of its value
         spec, so its output spec is its value spec. Any other term has one
         output, the term itself, under its output name, so its output spec is
-        ``RecordSpec({output_name: value_spec})``; a term with no output name
-        has no outputs, and its output spec is ``RecordSpec()``. A ``None``
+        ``RecordSpec({output_name: value_spec})``. An array, an opaque value,
+        and a batch of them have no output name and no outputs, so their output
+        spec is ``RecordSpec()``. A ``None``
         output spec means that the value spec is not known yet. The property is
         read-only.
         """
@@ -935,8 +953,8 @@ class TrackedTerm(Immutable, metaclass=_TrackedTermMeta):
         A record-valued term's output names are the top-level names of its
         value spec, and any other term's output name is the one it states, so
         ``Normal("x", 0.0, 1.0)`` has ``("x",)`` and a law over
-        ``RecordSpec(mu=..., sigma=...)`` has ``("mu", "sigma")``. A term with
-        no outputs has ``()``. ``None`` means that the outputs are not known
+        ``RecordSpec(mu=..., sigma=...)`` has ``("mu", "sigma")``. An array, an
+        opaque value, and a batch of them have no outputs, so theirs is ``()``. ``None`` means that the outputs are not known
         yet, as for a function before its first call. This is the one public
         way to read a term's output names, and the property is read-only.
         """
@@ -1980,9 +1998,8 @@ The table gives each signature change; the docstring entries follow it.
 | `GaussianRandomFunction`, `GaussianProcess`, `LinearBasisFunction` | `output_spec: OutputSpec \| None, event_spec: OutputSpec \| None` | `return_spec: TermSpec \| None, event_spec: TermSpec \| None` |
 | `Function.__init__`, `function(...)` | `input_spec: ... \| OutputSpec, output_spec: OutputSpec \| TermSpec \| None` | `input_spec: RecordSpec \| Mapping[str, TermSpec \| tuple] \| None, return_spec: TermSpec \| None, output_name: str \| None = None` |
 | `EvaluationPoints.__init__` | `output_spec: OutputSpec \| None` | `return_spec: TermSpec \| None, output_name: str \| None = None` |
-| `NumericArray.__init__`, `Opaque.__init__` | (none) | `output_name: str \| None = None`, keyword-only |
-| `NumericArrayBatch`, `OpaqueBatch`, `FunctionBatch`, `DistributionBatch`, `ConditionalDistributionBatch` | (none) | `output_name: str \| None = None`, keyword-only |
-| `RecordBatch`, `NumericRecordBatch` | unchanged | unchanged: a record element has no output name |
+| `FunctionBatch`, `DistributionBatch`, `ConditionalDistributionBatch` | (none) | `output_name: str \| None = None`, keyword-only |
+| `NumericArray`, `Opaque`, `NumericArrayBatch`, `OpaqueBatch`, `RecordBatch`, `NumericRecordBatch` | unchanged | unchanged: these take no output name |
 
 The new and changed docstring entries:
 
@@ -2054,21 +2071,20 @@ return_spec : TermSpec, optional
     law's output name.
 """
 
-# NumericArray.__init__, Opaque.__init__
+# FunctionBatch, DistributionBatch, ConditionalDistributionBatch
 """
 output_name : str, optional
-    The value's output name, under which a merge or an input receives it. None
-    by default, so the value has no outputs.
-"""
+    The batch's output name, under which a merge or an input receives it. Each
+    element read from the batch takes the same name. By default, the output
+    name that every element has. A batch whose element is record-valued has an
+    output for each top-level name of the element's value instead, and refuses
+    an output name.
 
-# NumericArrayBatch, OpaqueBatch, FunctionBatch, DistributionBatch, ConditionalDistributionBatch
-"""
-output_name : str, optional
-    The batch's output name, under which a merge or an input receives it. By
-    default, the output name that every element has, when the elements share
-    one, and ``"element"`` otherwise. A batch whose element is record-valued
-    has an output for each top-level name of the element's value instead, and
-    refuses an output name with ``ValueError``.
+Raises
+------
+ValueError
+    If *output_name* is omitted and the elements have different output
+    names, or *output_name* is given and the element is record-valued.
 """
 ```
 
@@ -2093,7 +2109,7 @@ class Declared(NamedTuple):
 
 The rule of `@operation(result=rule)` takes the arguments it takes today and returns a `Declared` or `None`, where it returns an `OutputSpec` or `None` today.
 The operation builds its result with the planned name, and checks the result's spec against `value_spec` with `_check_conforms`.
-An output spec cannot replace `Declared`, since `RecordSpec(y=NumericArraySpec(()))` is the output spec both of `Record({"y": 1.0})` and of `NumericArray(1.0, label="y", output_name="y")`.
+An output spec cannot replace `Declared`, since `RecordSpec(y=NumericArraySpec(()))` is the output spec both of `Normal("y", 0.0, 1.0)` and of a law over `RecordSpec(y=())`, whose results the rules name differently.
 
 **Decision 2: names.**
 - **Recommendation.** `value_spec`, `return_spec` (today's `FunctionSpec.output_spec`, which no longer names an output spec), `output_names`, `outputs`, and `output_spec`. The constructor keyword stays `output_name=`, the canonical name of `design/glossary.md`.
@@ -2351,17 +2367,17 @@ It replaces `InputSpec.__and__`, whose one call outside `core/_specs.py` is in `
 
 This section lists every site that step P2 changes, beyond the API of § 5.
 
-**The name of a result.** Each operation names the term it returns by one of five rules:
+**The name of a result.** A result that is an array, an opaque value, or a batch of them has no output name (§ 4.3), whichever operation returns it, so `mean`, `variance`, `quantile`, `cov`, the densities, `log_det_jacobian`, a single draw of a law over arrays or opaque values, and arithmetic name nothing. Each operation names any other result by one of five rules:
 
 | Rule | The result's output name | Where it applies |
 |---|---|---|
-| keep | the operand's | `mean`, `variance`, `standard_deviation`, `quantile`; `expectation` (the integrand's); `convert`; `mixture` (the kernel's); `sample`, for each draw and for the batch of draws; `condition_on`, when the posterior is not record-valued; `make_posterior` (the target's); the converters and the resampling laws (the source's) |
+| keep | the operand's | `convert`; `mixture` (the kernel's); `sample`, for each draw and for the batch of draws, when the draws are laws, kernels, or functions; `condition_on`, when the posterior is not record-valued; `make_posterior` (the target's); the converters and the resampling laws (the source's) |
 | part | the last name of the path, when the node is not a `RecordSpec` | `x[p]` on every kind; `marginal(d, p)`; the column batches of a `RecordBatch`; `EmpiricalDistribution._marginal` |
-| own | a fixed name | `cov`, `"cov"`; each density, the operation's name; `log_det_jacobian`, `"log_det_jacobian"`; the Monte Carlo law, `"draws"`; `MinibatchedDistribution`, `"target"`, and its parameters, `"parameters"`; the BayesFlow likelihood, `_observation_input(prior)`; a posterior with no target name, `"posterior"` |
+| own | a fixed name | the Monte Carlo law, `"draws"`; `MinibatchedDistribution`, `"target"`, and its parameters, `"parameters"`; the BayesFlow likelihood, `_observation_input(prior)`; a posterior with no target name, `"posterior"` |
 | call | the function's | the value a `Function` call returns; `pushforward` (the map's); the batch of a sweep or a broadcast, and the law of a lifted call |
 | none | none, since the result is record-valued | `&` on every kind; `condition_on` when several outputs remain |
 
-Three results change: the batch of draws, the column batches of a `RecordBatch`, and the batch of a sweep name their element `"element"` today, and after P2 they carry the name their rule gives.
+Three results change: the batch of draws, the column batches of a `RecordBatch`, and the batch of a sweep name their element `"element"` today. After P2, such a batch has no output name when its elements are arrays or opaque values, and otherwise carries the name its rule gives.
 
 A function whose return spec is not known keeps its output name until its first call.
 If that call returns a record, a default name is dropped and a given name raises `TypeError`, as `OutputSpec(y=None).with_term_spec` raises today.
@@ -2394,7 +2410,7 @@ A merge refuses it because its conformance check needs a spec.
 1. A spec's equality and hash compare structure only. II.2's three rules for the name in equality become one: no spec holds a name.
 2. A term's equality and hash ignore its output name, as they ignore its label.
 3. The fingerprint drops the `OutputSpec` branch and the root name of a `DistributionSpec`, so `Normal("x", 0.0, 1.0)` and `Normal("y", 0.0, 1.0)` share a fingerprint. A result reused by fingerprint is named again by its rule, so it never carries another operand's name.
-4. The static data of a `NumericArray` and a `NumericArrayBatch` is `(spec, output_name)`, so a transform keeps the name, and two values that differ only in their names trace separately. A record and a batch of records have no name.
+4. The static data of a `NumericArray` and a `NumericArrayBatch` stays their spec, since neither has an output name.
 
 **Deleted.**
 - `OutputSpec` and `InputSpec`, and their exports from `probpipe`.
@@ -2417,9 +2433,9 @@ P2 rewrites them over the value spec, and P3 deletes them.
 2. One table test of `conforms_to`, `unify`, and `refine` per kind, including each case of § 2.2, and a test that a failed `_check_conforms` binds nothing into its `_DimensionSizes`.
 3. One test that `x.output_spec`, `x.output_names`, and `x.outputs` follow § 4.3 for each row of its table, with `x.output_names == tuple(x.output_spec.keys())`.
 4. One test that no module outside `core/_paths.py` splits or joins a path with `/` or `_PATH_SEP`.
-5. One table test of each constructor of § 5.8: its default output name, a given name, and its output spec. For each batch constructor, the default is the elements' shared name, `"element"` when they differ, and a `ValueError` for a name given to a batch whose element is record-valued.
+5. One table test of each constructor of § 5.8: its default output name, a given name, and its output spec. For each batch constructor of § 5.8, the default is the elements' shared name, a `ValueError` when they differ and no name is given, and a `ValueError` for a name given to a batch whose element is record-valued; an element read from a named batch has the batch's name.
 6. One table test of the five naming rules of § 6, with a row for each operation it lists.
-7. Two laws that differ only in their names have equal specs and equal fingerprints, and a `jax.jit` round trip keeps the name of a `NumericArray` and of a `NumericArrayBatch`.
+7. Two laws that differ only in their names have equal specs and equal fingerprints, and an array, an opaque value, and a batch of them have `output_names == ()` and `output_spec == RecordSpec()`, whichever operation built them.
 8. Stating an output name on a record-valued object raises `ValueError`, from a constructor or from `rename`, and `probpipe.OutputSpec` no longer exists.
 9. A function whose return spec is not known has `output_spec` `None`, and a merge with such a function refuses it with a message that names the function; every kind without inputs has `input_spec == RecordSpec()` and empty `optional_input_names`.
 10. One table test of `rename` over every kind with inputs: each key classified as an input name, the output name, or a path; an input renamed to a path raises `ValueError`; a rename that makes a name both an input and an output raises `ValueError`; and a function or kernel constructed with a name on both sides raises `ValueError`, as does a function whose first call returns a record with a child named like an input.
@@ -2439,14 +2455,14 @@ P2 rewrites them over the value spec, and P3 deletes them.
 
 | Plan | Its section | Edit |
 |---|---|---|
-| `declarations-and-addressing.md` | Part I § 3.2, § 3.5, § 3.7 | Outputs by the two cases of § 4.3; the output name stored on the object; no object without outputs because of its value's kind |
+| `declarations-and-addressing.md` | Part I § 3.2, § 3.5, § 3.7 | Outputs by the three cases of § 4.3; the output name stored on the object; the batch name rule |
 | | Part I § 2.3, § 4.1, § 4.2, and the figure of a held field | A record's paths end at its fields, and an object has paths only when its value type is a `RecordSpec` |
 | | § 11, and the technical notes of § 3.5 | `OutputSpec` is removed, and an output spec is a `RecordSpec` |
 | | B.6 G1a, G1b, G2 | Not needed: the interim whole form exists because names are stored in specs |
 | | B.6 S4b, G3, G5, and G4's `law.without` | Replaced by steps P2 to P4 of § 9; G3's paths through held objects and G4's paths into a record input are dropped, and G5's `[]` on batches of laws and of functions is kept, from the batch's value spec |
 | | B.4, rows T30 and I10 | `without` through a law held in a field is dropped; `without` on a batch of laws is kept |
 | `batch-contract.md` | § 4.3, step B1 | The one check is this plan's `_check_conforms`, from step P1 |
-| | § 4.5, § 5.1 | `element=OutputSpec(x=())` becomes `element=(), output_name="x"` |
+| | § 4.5, § 5.1 | `element=OutputSpec(x=())` becomes `element=()`, since a batch of arrays has no output name |
 | | § 4.8 | The lifted-operation rule covers `[]` at a path, `without`, and `rename` by path for a batch whose element is record-valued, and a batch whose element is not record-valued has no paths |
 | | § 5.4 rule 5, § 5.5 item 3, step B6 | Kept: `fb["a"]`, `laws["mu"]`, and `laws.without("mu")` are the batches of the elements' parts. They follow from the batch's value spec (§ 4.2), so B6 needs no positional element spec, and a batch of functions that return `{a, b}` has the outputs `a` and `b` by § 4.3 |
 | | § 4.9 | The name is out of spec equality with no canonical spec |
@@ -2468,12 +2484,12 @@ III.3 types `input_spec` as a `RecordSpec` or a mapping, reads a function's opti
 `design/package-structure.md` describes `core/_specs.py` as the re-export of the public spec types, now that `InputSpec` and `OutputSpec` are removed, and adds `core/_inputs.py`.
 II.1's `TermSpec` block replaces `bind_dims_from_value` and `bind_dims_from_spec` with `refine_from_value` and `refine`, adds `conforms_to`, and adds the module function `unify`. The three relations move out of the symbolic-dimension protocol into their own group, since refinement also fills unset fields, and II.1's prose states that each relation is one dimension scope (§ 4.5).
 II.6 changes `in` as § 4.1 states, adds the spec agreement rule, and states that a constructor refuses an empty group.
-II.2 replaces "it is never the empty record" in its record of the outputs: an object without outputs has the output spec `RecordSpec()` (§ 4.1, § 4.3).
+II.2 replaces its five cases of outputs with the three of § 4.3, keeps "a base value standing alone has no outputs", and replaces "it is never the empty record" in its record of the outputs: an array, an opaque value, and a batch of them have the output spec `RecordSpec()` (§ 4.1, § 4.3).
 `design/glossary.md` replaces *value type* with *value spec*, the structure of a term's value, which each kind defines as § 4 states, and adds *record-valued*: a term or spec whose value spec is a `RecordSpec`. Its *input spec* entry becomes the `input_spec` of every term and spec: a `RecordSpec` whose top-level names are the input names, `RecordSpec()` for a kind that takes no inputs, and still a conditional distribution's `given_spec`. Its *input* entry says that a spec records which inputs are optional in `optional_input_names`, and never their defaults. II.2 and II.6 use both terms.
 III.3 drops "a key that names both an input and an output of a function renames both", and states that a function's input names and output names are disjoint, as III.9 states for a kernel.
 III.9 drops the grouping and splitting of a kernel's inputs by path: its `rename` renames each input to one name.
 IV.2's condition 5, that no name of an operand is both an input and an output, now holds for every operand by construction, so a merge never raises it.
-II.5 and III.10 replace "a batch of laws or of kernels has no outputs" with the two cases of § 4.3: a batch whose element is record-valued has an output for each top-level name of the element's value, and any other batch has one output under its name. III.10's indexing of a batch of laws or kernels by the paths of its elements' events is kept, and II.5 adds the rule that positions and paths commute (§ 4.2).
+II.5 and III.10 replace "a batch of laws or of kernels has no outputs" with § 4.3's rule that a batch falls under its element's case: a batch whose element is record-valued has an output for each top-level name of the element's value, a batch of arrays or opaque values has none, and any other batch has one output under its name. II.5 drops its element name for a batch of arrays or opaque values, with what rests on it: `b.output(c)` at the element name, `b & c` merging two such batches into a batch of records, `x[["x"]]` on samples of `Normal("x", 0.0, 1.0)`, and the note on the name lost in a raw JAX transform. None is implemented today, and two such batches combine by their record keys instead, as `RecordBatch({"x": xs, "y": ys}, xs.level_names)`. For any other batch, II.5 replaces the default element name `"element"` with the batch name rule of § 4.3. III.10's indexing of a batch of laws or kernels by the paths of its elements' events is kept, and II.5 adds the rule that positions and paths commute (§ 4.2).
 II.2's open point on "the record of the outputs of a batch" is settled: a batch's output spec describes the value of one element, as a law's describes one draw.
 
 ## 9. Steps
@@ -2487,8 +2503,8 @@ Each step is one PR.
 5. **P5, outputs and feeding:** `outputs`, and merge's check through § 4.6.
 
 **What users see.**
-- **Breaking:** `OutputSpec` is removed; `event_spec`, `element_spec`, and `return_spec` (today's `FunctionSpec.output_spec`) are bare specs; an object's output names are read with `output_names`, and the stored name is private; `x["x"]` on a law over an array named `x` raises `TypeError`; a function whose inputs accept less than declared no longer conforms; `bind_dims_from_spec` becomes `refine`, and `bind_dims_from_value` becomes `refine_from_value`, which also fills a dtype, support, type, or metadata the spec leaves unset; `InputSpec` and `with_optional` are removed, and an input spec is a `RecordSpec` beside the spec's `optional_input_names`; a function or kernel built from a callable takes its optional inputs from the callable's defaults only; a function with a name that is both an input and an output raises at construction; a kernel's inputs can no longer be grouped or split by `rename`, and an input renamed to a path raises.
-- **Added:** renaming a function's inputs; paths on record-valued kernels and functions, and on batches of record-valued laws, kernels, and functions; `without` on laws and on those batches; `input_spec`, `optional_input_names`, and `required_input_names` on every term and spec, `output_names`, `outputs`, `conforms_to`, `unify`, `refine`, and `output_name=` on `NumericArray` and `Opaque`.
+- **Breaking:** `OutputSpec` is removed; `event_spec`, `element_spec`, and `return_spec` (today's `FunctionSpec.output_spec`) are bare specs; an object's output names are read with `output_names`, and the stored name is private; `x["x"]` on a law over an array named `x` raises `TypeError`; a function whose inputs accept less than declared no longer conforms; `bind_dims_from_spec` becomes `refine`, and `bind_dims_from_value` becomes `refine_from_value`, which also fills a dtype, support, type, or metadata the spec leaves unset; `InputSpec` and `with_optional` are removed, and an input spec is a `RecordSpec` beside the spec's `optional_input_names`; a function or kernel built from a callable takes its optional inputs from the callable's defaults only; a function with a name that is both an input and an output raises at construction; a kernel's inputs can no longer be grouped or split by `rename`, and an input renamed to a path raises; a batch whose elements have different output names needs `output_name=`, where it named its element `"element"`.
+- **Added:** renaming a function's inputs; paths on record-valued kernels and functions, and on batches of record-valued laws, kernels, and functions; `without` on laws and on those batches; `input_spec`, `optional_input_names`, and `required_input_names` on every term and spec, `output_names`, `outputs`, `conforms_to`, `unify`, and `refine`.
 - **Fixed:** the output name leaves spec equality and fingerprints; `with_dim_sizes` on a `FunctionSpec` keeps its optional inputs; a record or record spec built with an empty group raises `ValueError`, where it kept a group that `keys()` missed.
 
 ## 10. Questions for the maintainer and reviewers
@@ -2517,6 +2533,6 @@ Each step is one PR.
 ## Appendix B. Readings this plan adopts
 
 1. **"Feeds", not "binds".** Connecting an output to an input is *feeding* (IV.2). In `design/`, binding supplies values to inputs at a call.
-2. **A bare value.** An array or an opaque value standing alone may state an output name with `output_name=` (§ 5.8). Without one it has no outputs, as II.2 says today.
+2. **A bare value.** An array or an opaque value has no outputs and takes no output name, as II.2 says of a base value standing alone, and so does a batch of them (§ 4.3).
 3. **Promotion to a numeric record.** A list of paths that leaves only numeric fields gives a numeric record, since `RecordSpec.__new__` returns a `NumericRecordSpec` when every field is numeric. `numeric-contract.md` § 4.1 makes numeric-ness a property of the spec, so the answer stays the same without a class change.
 4. **Coupled and standalone marginals.** `x[p]` gives the coupled marginal, and the operation `marginal(d, p)` the standalone one (VI.8). Both follow the paths of § 4.2, and this plan changes neither.
