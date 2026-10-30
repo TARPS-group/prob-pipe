@@ -10,12 +10,12 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from math import prod
-from typing import Any
+from typing import Any, cast
 
 import jax.numpy as jnp
 import numpy as np
 
-from ..core._batch import Batch
+from ..core._batch import Batch, BatchSpec
 from ..core._evaluation_points import _requested_evaluation_points
 from ..core._expression import Expression
 from ..core._numeric_array import NumericArray
@@ -60,6 +60,7 @@ def execute_sweep(
         Distribution,
     ],
     function_name: str,
+    output_name: str,
     output_label: str | None = None,
     output_expression: Expression | None = None,
     output_spec: OutputSpec | None = None,
@@ -77,7 +78,9 @@ def execute_sweep(
     cannot. *route* is the selected route's name and exactness, which
     provenance records. The aggregate is labeled *output_label* and carries
     *output_expression*, the expression the call gives its result, when one
-    is given.
+    is given. An empty nested sweep takes its element output spec from
+    :func:`._plan.planned_result`; *output_name* names a whole evaluation in
+    each law's event.
     """
     if plan.regime not in ("sweep", "nested"):
         raise ValueError(f"execute_sweep requires a sweep plan; got {plan.regime!r}")
@@ -158,12 +161,25 @@ def execute_sweep(
             distribution_broadcast(row_values, stochastic_plan, logical_unit, False)
         )
 
+    empty_element_spec = None
+    if plan.n_sweep == 0:
+        call_output_spec = _plan.planned_result(
+            output_spec,
+            plan,
+            argument_values=values,
+            output_name=output_name,
+            output_label=output_label,
+            include_inputs=include_inputs,
+        )
+        if call_output_spec is not None:
+            empty_element_spec = cast(BatchSpec, call_output_spec.term_spec).element_spec
     stacked = _make_stack(
         per_row_laws,
         batch_shape=plan.sweep_batch_shape,
         level_names=plan.sweep_level_names,
         axis_groups=plan.sweep_axis_groups,
         label=output_label,
+        output_spec=empty_element_spec,
     )
     provenance = make_sweep_provenance(
         values=values,

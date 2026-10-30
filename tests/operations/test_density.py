@@ -22,7 +22,7 @@ from probpipe.core._dispatch import ResolutionError
 from probpipe.core._specs import OutputSpec
 from probpipe.core.constraints import non_negative
 from probpipe.distributions._batches import DistributionBatch
-from probpipe.distributions._distribution import Distribution
+from probpipe.distributions._distribution import Distribution, DistributionSpec
 from probpipe.operations import RouteSource
 from probpipe.operations._density import (
     log_prob,
@@ -223,7 +223,9 @@ class TestLiftedScores:
         report = log_prob.check(Gaussian("g"), Gaussian("v"))
         assert (report.feasible, report.route, report.exact) == (True, "exact", True)
         assert report.lifted == ("value",)
-        assert report.result == OutputSpec(**{"log_prob": NumericArraySpec(())})
+        assert report.result == OutputSpec(
+            DistributionSpec(OutputSpec(log_prob=NumericArraySpec(())))
+        )
         lifted = log_prob(Gaussian("g"), Gaussian("v"))
         assert isinstance(lifted, Distribution)
         # The law of the score at draws of the value is the operation at a draw,
@@ -252,7 +254,9 @@ class TestLiftedScores:
             "derived",
             ("value",),
         )
-        assert prob.check(Bare("b"), Gaussian("v")).feasible is False
+        declined = prob.check(Bare("b"), Gaussian("v"))
+        assert declined.feasible is False
+        assert isinstance(declined.result.term_spec, DistributionSpec)
 
 
 class TestDerivedDensities:

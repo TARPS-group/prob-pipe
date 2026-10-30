@@ -111,8 +111,20 @@ class CallReport:
     deferred : tuple of str
         The checks left to the return.
     result : OutputSpec or None
-        The planned output spec of the result, or ``None`` when only the return
-        settles it.
+        The call's planned output spec, whose ``term_spec`` is the spec of the
+        tracked term the call returns (V.6). The spec of the returned term
+        completes it, filling in what the declarations leave open, such as a
+        dtype. A plain call's is the function's output spec, which describes
+        one evaluation. A sweep's term spec is a batch spec on the swept levels
+        of the evaluations' values. A broadcast's is
+        ``OutputSpec(DistributionSpec(event))`` for the law it returns, and a
+        nested sweep's term spec is a batch spec of such laws on the swept
+        levels. Planning precedes resolution, so a call whose routes are
+        infeasible still reports it. ``None`` when a pending conversion decides
+        the lift, when only the returned values complete the spec of a lifted
+        call's elements or event, and when a Function realized by routes has no
+        feasible evaluation rule for its lift, since its points, which declare
+        its result, are checked under the selected rule.
     lifted : tuple of str
         The parameters whose arguments lift or sweep.
     conversions : Mapping of str to ConversionInfo

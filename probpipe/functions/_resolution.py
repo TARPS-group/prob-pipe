@@ -466,6 +466,7 @@ def lifted_declaration(
 def call_report(
     point: PointReport,
     *,
+    result: OutputSpec | None,
     lifted: tuple[str, ...],
     conversions: Mapping[str, Any],
     candidates: Sequence[Any] = (),
@@ -475,11 +476,12 @@ def call_report(
 
     Each probed candidate's report is named by its label, or by ``route/method``
     for the method its report names, and states the candidate's exactness; a
-    report whose exactness is open states the call approximate. The report lists
-    the methods of each registry that a route among *candidates* delegates to
-    once, keyed by the names of the routes that delegate to it. *execution*
-    reports how a lifted call would run its evaluation points; ``None``
-    reports none.
+    report whose exactness is open states the call approximate. *result* is
+    the planned output spec of the call's result, which for a lifted call is
+    not the output spec of one point. The report lists the methods of each
+    registry that a route among *candidates* delegates to once, keyed by the
+    names of the routes that delegate to it. *execution* reports how a lifted
+    call would run its evaluation points; ``None`` reports none.
     """
     routes = tuple(
         MethodInfo(
@@ -513,7 +515,7 @@ def call_report(
         routes=routes,
         selected=chosen,
         deferred=point.deferred,
-        result=point.result,
+        result=result,
         lifted=lifted,
         conversions=MappingProxyType(dict(conversions)),
         methods=MappingProxyType(methods),

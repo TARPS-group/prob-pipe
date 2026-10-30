@@ -1139,13 +1139,16 @@ class TestLiftedChecks:
         report = center.check(batch)
         assert (report.feasible, report.route, report.exact) == (True, "closed_form", True)
         assert report.lifted == ("d",)
-        assert report.result == Gaussian("g").event_spec
+        element = Gaussian("g").event_spec.term_spec
+        assert report.result == OutputSpec(g=BatchSpec(element, laws=2))
         np.testing.assert_array_equal(np.asarray(center(batch).raw), [1.0, 2.0])
 
     def test_an_element_no_route_applies_to_makes_the_check_infeasible(self):
         batch = _laws(Gaussian("g"), Bare("g"))
         report = center.check(batch)
         assert report.feasible is False
+        # Planning precedes resolution, so the declaration stands without a route.
+        assert report.result.term_spec.level_names == ("laws",)
         assert "sweep cell (1,)" in report.description
         assert "does not implement SupportsMean" in report.description
         with pytest.raises(
