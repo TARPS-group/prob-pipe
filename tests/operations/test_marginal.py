@@ -66,16 +66,21 @@ class _JointSampler(Distribution, SupportsSampling):
 
 
 class _BatchSampler(Distribution, SupportsSampling):
-    """A record holding a batch on the level time, returned as one batch per draw."""
+    """A record holding a batch, returned as one batch per draw."""
 
-    def __init__(self):
-        super().__init__(RecordSpec(trajectory=BatchSpec(REAL, time=2)), label="trajectories")
+    def __init__(self, levels=("time",)):
+        super().__init__(
+            RecordSpec(trajectory=BatchSpec(REAL, dict.fromkeys(levels, 2))), label="trajectories"
+        )
+        self.levels = levels
 
     def _sample(self, key, sample_shape=()):
-        values = jax.random.normal(key, (*sample_shape, 2), dtype=jnp.float32)
+        values = jax.random.normal(
+            key, (*sample_shape, *((2,) * len(self.levels))), dtype=jnp.float32
+        )
         batches = np.empty(sample_shape, dtype=object)
         for index in np.ndindex(sample_shape):
-            batches[index] = NumericArrayBatch(values[index], "time", label="trajectory")
+            batches[index] = NumericArrayBatch(values[index], self.levels, label="trajectory")
         return {"trajectory": batches}
 
 
@@ -270,18 +275,24 @@ class TestMonteCarloMarginal:
             marginal.using(exact_only=True)(law, "a")
         assert law.sample_shapes == []
 
-    def test_a_batch_valued_field_keeps_the_event_levels_separate_from_the_atom_level(self):
-        law = _BatchSampler()
+    @pytest.mark.parametrize(
+        ("levels", "atom_level"),
+        [(("time",), "sample"), (("sample",), "sample_"), (("sample", "sample_"), "sample__")],
+    )
+    def test_a_batch_valued_field_keeps_the_event_levels_separate_from_the_atom_level(
+        self, levels, atom_level
+    ):
+        law = _BatchSampler(levels)
         with workflow_run(seed=9):
             result = marginal.using(num_samples=7)(law, "trajectory")
-        assert result.event_spec == OutputSpec(trajectory=BatchSpec(REAL, time=2))
+        assert result.event_spec == OutputSpec(trajectory=BatchSpec(REAL, dict.fromkeys(levels, 2)))
         assert result.num_atoms == 7
-        assert result.atoms.level_names == ("sample", "time")
-        assert result.atoms.batch_shape == (7, 2)
+        assert result.atoms.level_names == (atom_level, *levels)
+        assert result.atoms.batch_shape == (7, *((2,) * len(levels)))
         with workflow_run(seed=0):
             draw = sample(result)
-        assert draw.level_names == ("time",)
-        assert draw.batch_shape == (2,)
+        assert draw.level_names == levels
+        assert draw.batch_shape == (2,) * len(levels)
 
     def test_given_uses_the_conditional_sampling_capability(self):
         kernel = conditional_distribution(
@@ -291,10 +302,19 @@ class TestMonteCarloMarginal:
         )
         with workflow_run(seed=0):
             result = marginal.using(num_samples=7)(kernel, "a", given={"mu": 2.0})
+            conditioned = marginal(condition_on(kernel, {"mu": 2.0}), "a")
+            exact = marginal.using(exact_only=True)(kernel, "a", given={"mu": 2.0})
         assert isinstance(result, EmpiricalDistribution)
         assert result.num_atoms == 7
         assert result.event_spec == kernel.event_spec["a"]
         assert _fixed_paths(result) == ("mu",)
+        assert result.provenance.metadata["route"] == "monte_carlo"
+        assert result.provenance.metadata["exact"] is False
+        for law in (conditioned, exact):
+            assert isinstance(law, Normal)
+            assert law.loc == 2.0
+            assert law.scale == 1.0
+            assert _fixed_paths(law) == ("mu",)
 
     def test_a_batch_of_laws_sweeps_the_fallback(self):
         laws = DistributionBatch(

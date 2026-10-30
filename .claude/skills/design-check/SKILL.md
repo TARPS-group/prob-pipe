@@ -64,6 +64,7 @@ and `design/README.md` § Conventions, and report the ones that hold.
 ## Step 5: Report
 
 For each section, list its findings. Classify a disagreement between the
-design and the code as `design/README.md` and `CONTRACTS.md` directive 5 state:
+design and the code as `design/README.md` and `CONTRIBUTING.md` § Changing the
+code, rule 1, state:
 the design ahead of the code, which is expected, or a defect of the design or
 of the code. Name the command that found each finding.

@@ -35,6 +35,6 @@ provide them:
 Build the corpus in the default directory that `build_corpus.py` uses, so that
 a later session finds it.
 
-The repository's contributor files, such as `AGENTS.md`, `CONTRACTS.md`, and
+The repository's contributor files, such as `AGENTS.md`, `CONTRIBUTING.md`, and
 `STYLE_GUIDE.md`, govern changes to ProbPipe itself. INSTRUCTIONS.md governs
 this session's design, code, and messages for the user.

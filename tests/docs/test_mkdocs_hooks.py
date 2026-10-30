@@ -142,3 +142,14 @@ def test_the_page_hook_rewrites_a_notebook_s_page_links_only():
         '<a href="../02_forecasting/">next</a>'
     )
     assert hooks.on_page_content(html, page=markdown, files=_files(URLS)) == html
+
+
+def test_the_header_s_site_name_colors_pipe_only():
+    header = (
+        '<div class="md-header__topic">\n  <span class="md-ellipsis">\n    ProbPipe\n  </span>\n</div>'
+        '<div class="md-header__topic" data-md-component="header-topic">'
+        '<span class="md-ellipsis">ProbPipe</span></div>'
+    )
+    assert hooks.on_post_page(header) == header.replace(
+        "ProbPipe\n", 'Prob<span class="pp-pipe">Pipe</span>\n', 1
+    )

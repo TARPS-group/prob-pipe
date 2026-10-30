@@ -61,7 +61,7 @@ class OpaqueSpec(TermSpec):        # the fallback spec; is_valid accepts a value
     meta: Hashable = None          # free-form metadata, never checked or inferred
 ```
 
-**`type` and `meta`.** `type` is the Python type of the values the spec admits, and `is_valid` checks `isinstance(value, type)`. `None` admits every value that is not a mapping, since a mapping is a group (III.5). Construction from a value infers the type: an `Opaque` built from a string and a string leaf of a record built from values both have `OpaqueSpec(type=str)`. An `OpaqueBatch` infers the type its elements share exactly, and `None` when they differ. `meta` is free-form hashable metadata, such as units or a tag. It is part of the spec's equality and hash, and it is never checked against a value or inferred. Two opaque specs unify when their types are equal or one of them is `None` and their `meta` are equal or one of them is `None`, and the unification takes the known type and the set `meta`, so a declared `meta` is kept when a declared spec is completed with the spec a value infers, which carries none. Completion keeps the declared type and checks that the produced value conforms (II.2).
+**`type` and `meta`.** `type` is the Python type of the values the spec admits, and `is_valid` checks `isinstance(value, type)`. `None` admits every value that is not a mapping, since a mapping is read as a group (III.5). Construction from a value infers the type: an `Opaque` built from a string and a string leaf of a record built from values both have `OpaqueSpec(type=str)`. An `OpaqueBatch` infers the type its elements share exactly, and `None` when they differ. `meta` is free-form hashable metadata, such as units or a tag. It is part of the spec's equality and hash, and it is never checked against a value or inferred. Two opaque specs unify when their types are equal or one of them is `None` and their `meta` are equal or one of them is `None`, and the unification takes the known type and the set `meta`, so a declared `meta` is kept when a declared spec is completed with the spec a value infers, which carries none. Completion keeps the declared type and checks that the produced value conforms (II.2).
 
 `OpaqueBatch` is its batch form. It **stores** each element outright. Its `raw` is an object array of the stored raw values.
 
@@ -251,7 +251,7 @@ class RecordSpec(NamedTree[TermSpec], TermSpec):
     def __init__(self, field_specs: Mapping[str, Any] | None = None, /,
                  **fields: TermSpec | Mapping | tuple[int | str, ...]) -> None: ...
     # a tuple of sizes is the size shorthand of II.1; a field given None raises
-    # TypeError, since None is an unspecified spec (II.2), and an opaque field is OpaqueSpec();
+    # TypeError, since None stands for an unspecified spec (II.2), and an opaque field is OpaqueSpec();
     # the positional mapping form accepts "/"-path keys and names that collide with keywords
 
     @classmethod

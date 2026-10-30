@@ -449,9 +449,9 @@ def _raw_form_named(value: Any, hint: Any) -> Any:
 def arrived_kind(value: Any) -> type[TermSpec]:
     """The kind *value* is, named by its spec class, by the kind-directed wrap of V.4.
 
-    A tracked term is the kind of its spec; a raw mapping is a record, a numeric
-    host an array, and a callable a function; any other value, a list, a tuple,
-    or a set among them, is opaque.
+    A tracked term is the kind of its spec. A raw mapping arrives as a record, a
+    numeric host as an array, and a callable as a function; any other value, a
+    list, a tuple, or a set among them, arrives as an opaque value.
     """
     if isinstance(value, TrackedTerm):
         spec = getattr(value, "spec", None)

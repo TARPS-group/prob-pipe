@@ -222,7 +222,7 @@ The `/` character is reserved as the path separator, and
 `named_tree._PATH_SEP` is the one definition of it: code that splits or
 joins a path imports it. Field names may not contain `/` (raises
 `ValueError` at construction). A path is always a `str`, and a tuple is
-a list of paths; a nested path is written with `/`. `[]` takes a path or
+read as a list of paths; a nested path is written with `/`. `[]` takes a path or
 a list or tuple of paths, and one reader,
 `_as_paths` in `probpipe/core/_shapes.py`, parses it and owns every
 error message:
@@ -307,9 +307,29 @@ uses:
   vocabulary.
 - **Symmetry.** Paired APIs get symmetric names — e.g.,
   `NumericRecord.to_vector` / `NumericRecord.from_vector`.
-- **Rename sweeps are complete.** A rename covers every analogous symbol,
+- **Renames and changes of meaning are complete.** A PR that renames a thing
+  or changes its meaning changes every use in the same PR, so the main branch
+  stays coherent after every merge. A rename covers every analogous symbol,
   such as the `with_*` method of a renamed attribute. It also covers the test
   files named after the old symbol and the docs that mention it.
+- **Qualify a generic word with its object.** Write `current_context` rather
+  than `current`, and `config_values` rather than `values`. A generic word, such
+  as `data`, `result`, `info`, or `tmp`, never stands alone as a name.
+- **Name a function for what it does.** A wrapper is named for its work, as
+  `run_in_child_call_context` is, not for its position or the moment it runs,
+  as `wrapper`, `inner`, or `impl` would be.
+- **Single letters only for mathematics or a short loop.** `d`, `x`, and
+  `theta` may name a law or a value where the mathematics names it, and `i` may
+  index a loop of a few lines.
+- **One name for one thing.** A name never reuses a term that ProbPipe defines
+  for something else, such as "record", "event", or "key". The names of
+  recurring concepts are those of `design/glossary.md` § Canonical names. A PR
+  that introduces a recurring parameter or a new term adds it to the glossary
+  in the same PR, after checking that it collides with no existing term.
+- **Fix the vague names in the code you change.** A PR renames the vague names
+  in the functions, classes, and modules it edits, parameters and local
+  variables included, and every use of each. A vague name elsewhere gets an
+  issue rather than a piecemeal rename.
 
 ---
 
@@ -370,6 +390,17 @@ re-exported via its package `__init__.py`.
 Test: *if a user can plausibly type the module path on a doc page or
 in their own code, the module is public. If it only exists to
 factor implementation off the foundational class, it is private.*
+
+### 2.4 Order within a module
+
+A module puts its most important public objects first and its private helpers
+at the bottom, so a reader meets the API before its implementation.
+
+### 2.5 Reuse before writing
+
+Before writing a helper, search the codebase for one that already does the job,
+and call it. Two copies of one piece of logic become one helper, in the module
+that owns the concept, and both callers use it.
 
 ---
 
@@ -457,7 +488,32 @@ def sample(d: Distribution, sample_shape: tuple[int, ...] = ()):
 The `pydoclint` pre-commit hook checks the parameters and the returned value, and
 the CI lint job runs it over `probpipe/` (CONTRIBUTING.md § Linting & pre-commit).
 
-### 3.4 Section separators
+### 3.4 What a docstring states
+
+A docstring states each part of its contract:
+
+- the return type and shape, distinguishing single from batched, such as
+  `(vector_size,)` against `(*batch_shape, vector_size)`;
+- canonical orderings, such as the leaf order of vectorization;
+- every condition that raises;
+- invariants and round-trip guarantees, such as
+  `from_vector(to_vector(v)) == v`.
+
+The summary line and the first paragraphs describe the API: what the object
+is, what it accepts and returns, and how a caller uses it. A public docstring
+is written for a user and carries no design reasoning. Motivation, history, and
+trade-offs, where a docstring needs them, go later, in a Notes section.
+
+A docstring or a comment cites no PR, issue, or other discussion, since the
+contract is what the docstring states. The `no-issue-numbers` pre-commit hook
+rejects an issue or PR number in `probpipe/`.
+
+A private object of central importance, such as the call context, gets a full
+docstring: what it is, its lifecycle, its invariants, and each attribute. An
+inline comment appears only where it adds something that the code and the
+docstring do not already say.
+
+### 3.5 Section separators
 
 Use `# --` comment blocks to separate logical sections within a class
 or module:
@@ -778,6 +834,12 @@ tolerance arithmetic — its failure output shows the offending values.
 Flag both failure directions when choosing bounds: too loose masks
 bugs; too tight is flaky on other platforms.
 
+### 8.7 Tests assert the contract
+
+A PR that adds or changes a contract adds the tests that assert it: its shapes,
+its orderings, and its error cases, beyond the values of the usual case. The
+tests also check that the code does what its docstring states.
+
 ---
 
 ## 9. Miscellaneous
@@ -972,13 +1034,20 @@ judge.
     a consequence: a law's paths come from its event type, because not every
     law can be sampled, and indexing commutes with sampling for each law that
     can.
+14. **Reserve "is" for identity and class membership.** An accepted input
+    form is said to be converted to, or read as, what it stands for, since "a
+    tuple is a `NumericArraySpec` of that shape" claims that the tuple is that
+    spec. Write "a tuple is converted to a `NumericArraySpec` of that shape" or
+    "a tuple is read as a list of paths". A shorthand and a sentinel follow
+    the same rule, so a mapping is read as a record, and a returned `None`
+    means that no value was found.
 
 ### 10.1 Explanatory documents
 
 An explanatory document teaches a design or a concept: a section of `design/`,
 a guide page of the documentation, or a plan. It reads like a textbook, in
 which each idea is introduced because an earlier one needs it. Docstrings
-state contracts instead, as `CONTRACTS.md` directive 2 requires.
+state contracts instead, as §3.4 requires.
 
 1. **Present each concept in three layers.** First the motivation: what the
    concept is for and the intuition behind it. Then the general definition.
