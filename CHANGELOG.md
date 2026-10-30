@@ -21,6 +21,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   single array `element` rather than the function's output name. `result` is
   `None` for a lifted call whose element or event spec only the returned values
   complete, and for a call that waits on a conversion that decides its lift.
+  A conversion consumed whole preserves the planned result. An empty nested
+  sweep returns a batch of laws with the declared event spec.
   `check` now raises two declaration conflicts that the call raised only at
   return: an `include_inputs=True` parameter named like an output, and a swept
   batch output on a level the sweep ranges over.

@@ -29,9 +29,9 @@ from ..core.config import WorkflowKind
 from ..core.provenance import Provenance
 from ..core.record import Record
 from ..core.tracked import TrackedTerm
-from ..distributions._distribution import Distribution
+from ..distributions._distribution import Distribution, DistributionSpec
 from ..values import _binding
-from ..values._function_base import _validate_stacked_output
+from ..values._function_base import _NAMELESS_OUTPUT, _validate_stacked_output
 from . import _plan, _recipe, _result
 from ._execution import (
     evaluate_requested_points,
@@ -60,6 +60,7 @@ def execute_sweep(
         Distribution,
     ],
     function_name: str,
+    output_name: str = _NAMELESS_OUTPUT,
     output_label: str | None = None,
     output_expression: Expression | None = None,
     output_spec: OutputSpec | None = None,
@@ -77,7 +78,8 @@ def execute_sweep(
     cannot. *route* is the selected route's name and exactness, which
     provenance records. The aggregate is labeled *output_label* and carries
     *output_expression*, the expression the call gives its result, when one
-    is given.
+    is given. An empty nested sweep uses the declared output spec to return
+    a batch of laws; *output_name* names a whole evaluation in each law's event.
     """
     if plan.regime not in ("sweep", "nested"):
         raise ValueError(f"execute_sweep requires a sweep plan; got {plan.regime!r}")
@@ -164,6 +166,13 @@ def execute_sweep(
         level_names=plan.sweep_level_names,
         axis_groups=plan.sweep_axis_groups,
         label=output_label,
+        output_spec=(
+            OutputSpec(
+                DistributionSpec(_plan.evaluations_event_spec(output_spec, output_name=output_name))
+            )
+            if plan.n_sweep == 0 and output_spec is not None
+            else None
+        ),
     )
     provenance = make_sweep_provenance(
         values=values,

@@ -509,10 +509,8 @@ def require_distinct_swept_levels(
     shared = [name for name in declared.level_names if name in plan.sweep_level_names]
     if shared:
         raise ValueError(
-            f"{output_label!r} sweeps the level {shared[0]!r}, and its output_spec declares "
-            f"that each call returns a batch on the level {shared[0]!r} too, so the result "
-            f"would hold that level twice. Rename the level of the batch the function returns, "
-            f"in its output_spec and in its body"
+            f"cannot sweep {output_label!r}: its returned batch repeats the swept level "
+            f"{shared[0]!r}. Rename that level in output_spec and the function body"
         )
 
 

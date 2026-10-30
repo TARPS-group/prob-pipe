@@ -14,6 +14,8 @@ settle:
 
 from __future__ import annotations
 
+from typing import Any
+
 import jax.numpy as jnp
 import pytest
 import tensorflow_probability.substrates.jax.distributions as tfd
@@ -303,7 +305,9 @@ class TestTheCheckedResult:
         )
         assert isinstance(checked, ValueError) and isinstance(called, ValueError)
         assert str(checked) == str(called)
-        assert "'spread' sweeps the level 'item'" in str(checked)
+        assert "cannot sweep 'spread': its returned batch repeats the swept level 'item'" in str(
+            checked
+        )
 
     def test_a_broadcast_reports_a_law_over_the_outputs(self):
         f = _scalar_function()
@@ -361,6 +365,33 @@ class TestTheCheckedResult:
         assert isinstance(result, DistributionBatch)
         assert planned.term_spec.is_valid(result)
 
+    @pytest.mark.parametrize(
+        "declaration, event",
+        [
+            (_SCALAR, _SCALAR),
+            (OutputSpec(RecordSpec(a=_FLOAT)), OutputSpec(RecordSpec(a=_FLOAT))),
+            (
+                OutputSpec(DistributionSpec(_SCALAR)),
+                OutputSpec(f=DistributionSpec(_SCALAR)),
+            ),
+        ],
+        ids=["array", "record", "law"],
+    )
+    def test_an_empty_nested_sweep_returns_the_planned_batch_of_laws(self, declaration, event):
+
+        @function(output_spec=declaration, traceable=False)
+        def f(x, scale):
+            raise AssertionError("An empty nested sweep must not evaluate the body")
+
+        empty = NumericArrayBatch(jnp.zeros(0), "item", label="empty")
+        planned = f.check(standard_normal(), empty).result
+        with workflow_run(seed=0):
+            result = f(standard_normal(), empty)
+        assert isinstance(result, DistributionBatch)
+        assert result.batch_shape == (0,)
+        assert result.event_spec == event
+        assert planned.term_spec.is_valid(result)
+
     def test_an_operation_swept_over_laws_reports_a_batch(self):
         laws = DistributionBatch([standard_normal(), Normal("z", 1.0, 1.0)], "row", label="laws")
         planned = mean.check(laws).result
@@ -387,6 +418,35 @@ class TestTheCheckedResult:
     def test_a_conversion_that_decides_the_lift_leaves_the_result_open(self):
         report = _scalar_function().check(tfd.Normal(0.0, 1.0))
         assert report.selected is None and report.routes[0].unresolved
+        assert report.result is None
+
+    @pytest.mark.parametrize("annotation", [Normal, Any], ids=["distribution", "any"])
+    @pytest.mark.parametrize("swept", [False, True], ids=["plain", "sweep"])
+    def test_a_conversion_consumed_whole_preserves_the_planned_result(
+        self, annotation, swept, monkeypatch
+    ):
+        from probpipe.distributions._conversion import converter_registry
+
+        def refuse(*args, **kwargs):
+            raise AssertionError("check must not construct the conversion")
+
+        monkeypatch.setattr(converter_registry, "convert", refuse)
+
+        def consume(x, scale):
+            raise AssertionError("check must not evaluate the body")
+
+        consume.__annotations__["x"] = annotation
+        f = Function(consume, output_spec=_SCALAR, traceable=False)
+        report = f.check(tfd.Normal(0.0, 1.0), _items() if swept else 1.0)
+        assert report.selected is None and report.routes[0].unresolved
+        assert report.result == (OutputSpec(f=BatchSpec(_FLOAT, item=2)) if swept else _SCALAR)
+
+    def test_one_unknown_conversion_keeps_the_result_open(self):
+        @function(output_spec=_SCALAR, traceable=False)
+        def f(x: Normal, y):
+            raise AssertionError("check must not evaluate the body")
+
+        report = f.check(tfd.Normal(0.0, 1.0), tfd.Normal(0.0, 1.0))
         assert report.result is None
 
     def test_a_call_without_a_feasible_route_reports_its_planned_result(self):

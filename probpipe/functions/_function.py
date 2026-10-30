@@ -980,6 +980,7 @@ def _run_call(
             swept_point_traceability=lifted_point_traceability,
             distribution_broadcast=distribution_broadcast,
             function_name=function._label,
+            output_name=function._output_name,
             output_label=label,
             output_expression=_swept_expression(
                 function, argument_values, expression, stochastic_plan, explicit_parameter_names
@@ -1998,12 +1999,26 @@ def _check_call(function: Function, args: tuple[Any, ...], kwargs: dict[str, Any
         deferred = ("the result's type is completed from the returned value",)
     lifted = tuple(dict.fromkeys(ref.parameter_name for ref in lifted_refs))
     if waiting:
-        # The lift of a converted argument is decided by the law the conversion
-        # constructs, so the selection, and the kind of the result, wait on it.
+        converted_hints = (
+            _binding.input_ref_hint(function._signature_info, ref)
+            for ref in _binding.iter_input_refs(function._signature_info, argument_values)
+            if ref.label in conversions and ref not in lifted_refs
+        )
+        lift_is_known = all(
+            _normalization.is_distribution_hint(hint) or _binding.resolved_hint(hint) is Any
+            for hint in converted_hints
+        )
         pending = MethodInfo(None, pending=waiting, method_name=_PLANNED, exact=False)
         return CallReport(
             routes=(pending,),
             deferred=deferred,
+            result=(
+                _planned_result(
+                    function, output_spec, argument_values, broadcast_plan, resolved_controls
+                )
+                if lift_is_known
+                else None
+            ),
             lifted=lifted,
             conversions=MappingProxyType(conversions),
         )
