@@ -2139,6 +2139,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `mixture` retains unfed inputs as a kernel, with direct conditional sampling
+  and finite mixture construction after binding. `pushforward` accepts kernels
+  and infers their mapped event spec when possible. Complete binding computes
+  the ordinary pushforward, including its eager empirical approximation.
+
 - **Monte Carlo marginals.** `marginal(d, paths)` estimates a standalone
   marginal from joint samples when no exact marginal is available. Set the
   count with `marginal.using(num_samples=4096)(d, paths)`. The empirical result

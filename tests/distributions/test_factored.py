@@ -1023,6 +1023,11 @@ class TestFactorGuards:
         assert isinstance(joint, FactoredConditionalDistribution)
         assert _capability_guard(joint, "_conditional_sample").unresolved
 
+    def test_given_call_keeps_a_factor_guard_unresolved(self):
+        kernel = UndecidedSamplingKernel("k", {"s": SCALAR}, OutputSpec(a=SCALAR))
+        joint = kernel & PointLaw("p", OutputSpec(b=SCALAR), jnp.zeros(()))
+        assert _capability_guard(joint, "_conditional_sample", {"s": 1.0}).unresolved
+
 
 class TestMarginalValues:
     """The exact marginal is the sub-joint of the target's ancestor closure, reduced."""

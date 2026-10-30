@@ -70,6 +70,7 @@ from ._capabilities import (
     _capability_subclass,
     _claimed,
     _claims,
+    _conditional_capability_guard,
     _conjunction,
     _kernel_claims,
     _marginal_claims,
@@ -1945,12 +1946,16 @@ def _factors_guard(owner: str, joint_method: str, method: str) -> Callable[[Any]
     *method*, and the joint's call is feasible when every factor's is.
     """
 
-    def guard(self: Any) -> Feasibility:
+    def guard(self: Any, given: Any = None) -> Feasibility:
+        values = {} if given is None else _children(given)
         return _conjunction(
-            _capability_guard(
+            _conditional_capability_guard(
                 factor,
-                f"_conditional{method}" if isinstance(factor, ConditionalDistribution) else method,
+                f"_conditional{method}",
+                {name: values[name] for name in factor.given_spec if name in values},
             )
+            if isinstance(factor, ConditionalDistribution)
+            else _capability_guard(factor, method)
             for factor in self._graph.factors
         )
 
@@ -2440,6 +2445,8 @@ class FactoredConditionalDistribution(ConditionalDistribution, SupportsFactors):
     ) -> Distribution | ConditionalDistribution:
         """Bind inputs in every factor that names them, and rebuild the joint.
 
+        An input supplied by another factor remains open even when it is optional.
+
         Parameters
         ----------
         given : Record or Mapping[str, Any]
@@ -2467,8 +2474,12 @@ class FactoredConditionalDistribution(ConditionalDistribution, SupportsFactors):
         unknown = set(values) - set(self.given_spec)
         if unknown:
             raise KeyError(_unknown_inputs(self.label, sorted(unknown), self.given_spec))
+        prepared = options.pop("_prepared_factors", {})
         factors: list[Factor] = []
-        for factor in self.factors:
+        for index, factor in enumerate(self.factors):
+            if index in prepared:
+                factors.append(prepared[index])
+                continue
             if isinstance(factor, ConditionalDistribution):
                 bound = {
                     input_name: value
@@ -2476,7 +2487,15 @@ class FactoredConditionalDistribution(ConditionalDistribution, SupportsFactors):
                     if input_name in factor.given_spec
                 }
                 if bound:
-                    factor = _bound_factor(factor, bound, options)
+                    if (
+                        set(factor.given_spec.required) <= bound.keys()
+                        and factor.given_spec.optional & self.event_spec.outputs.keys()
+                    ):
+                        from ._views import _hold_inputs
+
+                        factor = _hold_inputs(factor, bound)
+                    else:
+                        factor = _bound_factor(factor, bound, options)
             factors.append(factor)
         if set(self.given_spec.required) <= set(values):
             joint = FactoredDistribution(

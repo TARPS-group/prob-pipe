@@ -16,22 +16,39 @@ from __future__ import annotations
 
 import inspect
 from collections.abc import Callable, Mapping
-from typing import Any
+from contextlib import suppress
+from typing import Any, ClassVar
+
+import jax
 
 from .._messages import unknown_names
 from ..core._batch import Batch, BatchSpec
-from ..core._dispatch import Feasibility
+from ..core._dispatch import Feasibility, ResolutionError
+from ..core._execution_claims import TRACING_ERRORS, spec_stand_in
+from ..core._record_batch import _batch_over
 from ..core._record_spec import RecordSpec
 from ..core._repr import type_name
 from ..core._spec_base import NumericArraySpec, TermSpec, _unify_specs
 from ..core._specs import OutputSpec
+from ..core.record import Record
 from ..core.tracked import _callable_label
-from ..distributions._conditional import ConditionalDistributionSpec
+from ..distributions._capabilities import (
+    SupportsApproximateConditioning,
+    SupportsConditionalSampling,
+    _capability_subclass,
+    _conditional_capability_guard,
+)
+from ..distributions._conditional import ConditionalDistribution, ConditionalDistributionSpec
 from ..distributions._distribution import Distribution, DistributionSpec
+from ..distributions._factored import _raw_record
+from ..distributions._views import _drawn_form
 from ..functions import _normalization, _plan, _rules, function
-from ..functions._call import ApplicabilityError, _consumes_kernel, role_admits
+from ..functions._call import ApplicabilityError, _consumes_kernel, checking, role_admits
+from ..functions._resolution import PointReport
 from ..values import Function, FunctionSpec
 from ..values._binding import resolved_hint, values_to_bound_arguments
+from ._condition import _remaining_given_spec, condition_on
+from ._given import _GivenLaw
 from ._operation import (
     BoundCall,
     Operation,
@@ -314,11 +331,6 @@ def _integrand_applicability_checks(subject: str) -> tuple[Callable[..., Any], C
 # ---------------------------------------------------------------------------
 
 
-def _pushforward_result(f: Any) -> OutputSpec | None:
-    """The result is a law over the map's output, which the returned law declares."""
-    return None
-
-
 def _output_label(f: Any, *, subject: str) -> str:
     """The map's output label: a ``Function``'s ``output_label``, or the name a callable is wrapped under.
 
@@ -330,25 +342,11 @@ def _output_label(f: Any, *, subject: str) -> str:
     return _callable_label(f, subject=subject, fix=NAMELESS_CALLABLE_FIX)
 
 
-def _map_output_label(f: Any) -> str:
-    """The map's output label, which the pushforward takes (V.10)."""
-    return _output_label(f, subject="pushforward")
-
-
-def _mapped_expression() -> None:
-    """None: the result carries the expression of the map's call on the law (II.4).
-
-    The pushforward of a law displays as the map applied to a draw of the law,
-    as ``f(mu ~ d)``.
-    """
-    return None
-
-
 @operation(
-    result=_pushforward_result,
-    roles={"f": (FunctionSpec,)},
+    result=lambda: None,
+    roles={"d": (DistributionSpec, ConditionalDistributionSpec), "f": (FunctionSpec,)},
     applicability_checks=_integrand_applicability_checks("pushforward"),
-    label=_map_output_label,
+    label=lambda f: _output_label(f, subject="pushforward"),
 )
 def pushforward(d: Distribution, f: Any, fixed_args: Mapping[str, Any] | None = None):
     """The law of ``f(X)`` for ``X ~ d``, the pushforward ``f♯d``.
@@ -361,10 +359,17 @@ def pushforward(d: Distribution, f: Any, fixed_args: Mapping[str, Any] | None = 
     ``using(method=...)`` names one, such as ``empirical_enumeration`` or
     ``sampling_lift``.
 
+    A kernel without ``given`` returns a kernel with the same inputs. Binding
+    its last required input computes the ordinary pushforward eagerly. Its
+    conditional sampler applies the map directly to source draws. The output
+    spec is inferred abstractly when possible; otherwise the map must declare it.
+    With ``given``, the source is bound before selecting the map's evaluation
+    rule, so a bound finite law retains its exact enumeration route.
+
     Parameters
     ----------
-    d : Distribution
-        The law whose draws the map receives. A ``DistributionBatch`` gives the
+    d : Distribution or ConditionalDistribution
+        The law or kernel whose draws the map receives. A ``DistributionBatch`` gives the
         batch of the pushforwards of its laws.
     f : callable or Function
         The map. Exactly one of its parameters has no default and is absent
@@ -377,7 +382,7 @@ def pushforward(d: Distribution, f: Any, fixed_args: Mapping[str, Any] | None = 
 
     Returns
     -------
-    Distribution or DistributionBatch
+    Distribution or ConditionalDistribution or DistributionBatch
         The law of the map's output, labeled by the map's output label and
         displayed as the map applied to a draw of *d*, as ``f(mu ~ prior)``.
         A ``DistributionBatch`` operand gives the batch of the pushforwards of
@@ -389,9 +394,8 @@ def pushforward(d: Distribution, f: Any, fixed_args: Mapping[str, Any] | None = 
         If *d* is not a law, *fixed_args* leaves other than one parameter of
         *f* open, the open parameter's declaration does not admit a draw of
         *d*, or a fixed argument is a law or a batch the call would lift. A
-        kernel without ``given`` raises it as well, as an interim detail: the
-        design's pushforward of a kernel, ``s ↦ f♯K(s, ·)``, is not implemented
-        yet.
+        kernel whose output cannot be inferred requires a complete
+        ``output_spec`` on the map.
     ResolutionError
         If no evaluation rule applies.
     """
@@ -471,6 +475,9 @@ class _EvaluationRules(_RegistryRoute):
     #: The controls the run forwards to the call of the map.
     _forwarded: tuple[str, ...] = _FORWARDED_CONTROLS
 
+    #: Pushforward binds explicit givens; fused expectation can use conditional sampling.
+    _bind_given_first = True
+
     def __init__(self, name: str = "evaluation_rules") -> None:
         super().__init__(name, registry=_rules.evaluation_rule_registry)
 
@@ -510,6 +517,22 @@ class _EvaluationRules(_RegistryRoute):
         self, call: BoundCall, result: OutputSpec | None, *, method: str | None, exact_only: bool
     ) -> Feasibility:
         """The registry's report for the law, at the parameter a draw binds."""
+        if (
+            self._bind_given_first
+            and isinstance(call.operands["d"], _GivenLaw)
+            and call._memo.get("given supplied")
+        ):
+            return Feasibility(
+                False, "pushforward binds the kernel before selecting evaluation rules"
+            )
+        if isinstance(call.operands["d"], ConditionalDistribution):
+            f = _as_function(call.operands["f"])
+            if f.output_spec is None or f.output_spec.term_spec is None:
+                if checking():
+                    return Feasibility(
+                        None, pending=("kernel output inference runs at construction",)
+                    )
+            return PointReport(True, exact=True)
         mapped, parameter, d, fixed = self._values(call, exact_only)
         return self.registry.check(
             mapped,
@@ -525,6 +548,25 @@ class _EvaluationRules(_RegistryRoute):
         self, call: BoundCall, result: OutputSpec | None, *, method: str | None, exact_only: bool
     ) -> Any:
         """The direct call of the map on the law, by the rule *method* names, if any."""
+        if isinstance(call.operands["d"], ConditionalDistribution):
+            controls = self._forwarded_controls(call)
+            controls.update(
+                {
+                    name: call.operation._options[name]
+                    for name in ("executor", "executor_options")
+                    if name in call.operation._options
+                }
+            )
+            if call.controls["exact_only"]:
+                controls["exact_only"] = True
+            if method is not None:
+                controls["method"] = method
+            return _PushforwardKernel(
+                call.operands["d"],
+                _as_function(call.operands["f"]),
+                dict(call.operands.get("fixed_args") or {}),
+                controls,
+            )
         mapped, parameter, d, fixed = self._values(call, exact_only)
         forwarded = self._forwarded_controls(call)
         forwarded.update(exact_only=exact_only, include_inputs=False)
@@ -533,5 +575,178 @@ class _EvaluationRules(_RegistryRoute):
         return _call_at(mapped.using(**forwarded), mapped, parameter, d, fixed)
 
 
+def _mapped_sample(self: Any, given: Any, key: Any, sample_shape: tuple[int, ...] = ()) -> Any:
+    """Map source draws at the supplied given and key through the Function engine."""
+    source = self._source
+    event_spec = _GivenLaw(source, given).event_spec if source.spec.free_dims else source.event_spec
+    draws = source._conditional_sample(given, key, sample_shape)
+    if isinstance(event_spec.term_spec, BatchSpec):
+        record_event = RecordSpec(value=event_spec.term_spec)
+        event_spec = OutputSpec(record_event)
+        draws = _drawn_form({"value": draws}, record_event, sample_shape)
+    if sample_shape:
+        points = _batch_over(draws, BatchSpec(event_spec, {"sample": sample_shape}), source.label)
+    else:
+        points = (
+            Record(draws, event_template=event_spec.term_spec)
+            if isinstance(event_spec.term_spec, RecordSpec)
+            else draws
+        )
+    result = self._sample_map(points)
+    return _drawn_form(_raw_record(result), self.event_spec.term_spec, sample_shape)
+
+
+class _PushforwardKernel(ConditionalDistribution):
+    """A kernel whose events are mapped by a Function.
+
+    Parameters
+    ----------
+    source : ConditionalDistribution
+        The source kernel.
+    f : Function
+        The event map.
+    fixed : mapping
+        Constant arguments of the map.
+    controls : mapping
+        Controls used when the bound pushforward is computed.
+    """
+
+    _capability_table: ClassVar = {
+        SupportsApproximateConditioning: {},
+        SupportsConditionalSampling: {
+            "_conditional_sample": _mapped_sample,
+            "_conditional_sample_guard": lambda self, given=None: _conditional_capability_guard(
+                self._source, "_conditional_sample", given
+            ),
+        },
+    }
+
+    def __new__(cls, source: Any, f: Any, fixed: Any, controls: Any) -> Any:
+        claims = (SupportsApproximateConditioning,)
+        if isinstance(source, SupportsConditionalSampling):
+            claims += (SupportsConditionalSampling,)
+        return object.__new__(_capability_subclass(cls, claims))
+
+    def __init__(self, source: Any, f: Function, fixed: Any, controls: Any) -> None:
+        parameter = _bound_parameter(f, fixed)
+        event = f.output_spec
+        if event is None or event.term_spec is None:
+            stand_in = spec_stand_in(source.event_spec.term_spec)
+            inferred = None
+            if stand_in is not None and f._execution_claims.traceable is not False:
+
+                def infer(value: Any) -> Any:
+                    nonlocal inferred
+                    if isinstance(source.event_spec.term_spec, RecordSpec):
+                        value = Record(value, event_template=source.event_spec.term_spec)
+                    output = _call_at(f.apply, f, parameter, value, fixed)
+                    inferred = _spec_of(output)
+                    return ()
+
+                with suppress(*TRACING_ERRORS):
+                    jax.eval_shape(infer, stand_in)
+            if inferred is None:
+                raise ApplicabilityError(
+                    f"cannot infer the output of {f.label!r} for a kernel; provide output_spec"
+                )
+            event = (
+                event.with_term_spec(inferred)
+                if event is not None
+                else OutputSpec.default(inferred, output_name=f._output_name)
+            )
+        super().__init__(source.given_spec, event, label=f.output_label)
+        self._source = source
+        self._map = f
+        self._fixed = fixed
+        self._controls = controls
+        batch_event = isinstance(source.event_spec.term_spec, BatchSpec)
+        self._sample_map = Function(
+            lambda draw: _call_at(
+                f.apply, f, parameter, draw["value"] if batch_event else draw, fixed
+            ),
+            input_spec={
+                "draw": RecordSpec(value=source.event_spec.term_spec)
+                if batch_event
+                else source.event_spec.term_spec
+            },
+            output_spec=event,
+            label=f.label,
+            **{
+                name: controls.get(name, f.options.get(name))
+                for name in ("executor", "executor_options")
+                if name in controls or name in f.options
+            },
+        )
+
+    def _bound_source(self, given: Any, controls: Any) -> Any:
+        """Bind the source through the existing conditioning operation."""
+        return condition_on.using(exact_only=controls.get("exact_only", False))(self._source, given)
+
+    def _finish(self, source: Any, controls: Any, *, check: bool = False) -> Any:
+        """Push the bound source forward, retaining a kernel for partial inputs."""
+        operation = pushforward.using(**controls)
+        return (
+            operation.check(source, self._map, self._fixed)
+            if check
+            else operation(source, self._map, self._fixed)
+        )
+
+    def _binding_report(self, given: Any, controls: Any, memo: dict) -> Feasibility:
+        """Report binding without running a kernel during a check."""
+        if not given:
+            # A renamed boundary can hold an incomplete input without evaluating its parent.
+            return PointReport(True, exact=True)
+        report = condition_on.using(exact_only=controls.get("exact_only", False)).check(
+            self._source, given
+        )
+        if report.feasible is False or (report.feasible is None and checking()):
+            return Feasibility(report.feasible, report.description, pending=report.pending)
+        if checking():
+            if _remaining_given_spec(self.given_spec, tuple(given)).required:
+                return PointReport(True, exact=report.exact)
+            return Feasibility(None, pending=("the bound kernel determines the pushforward route",))
+        source_exact = controls.get("exact_only", False) or report.exact
+        if source_exact is not True:
+            return PointReport(True, exact=False)
+        if "mapped source" not in memo:
+            try:
+                memo["mapped source"] = self._bound_source(given, controls)
+            except ResolutionError as error:
+                return Feasibility(False, str(error))
+        report = self._finish(memo["mapped source"], controls, check=True)
+        return PointReport(
+            report.feasible,
+            report.description,
+            exact=source_exact and report.exact,
+            pending=report.pending,
+        )
+
+    def _bind_with_controls(self, given: Any, controls: Any, *, prepared: Any = None) -> Any:
+        """Bind and materialize under the controls selected by condition_on."""
+        controls = {
+            **self._controls,
+            **controls,
+            "exact_only": self._controls.get("exact_only", False)
+            or controls.get("exact_only", False),
+        }
+        source = prepared if prepared is not None else self._bound_source(given, controls)
+        if _remaining_given_spec(self.given_spec, tuple(given)).required:
+            controls = self._controls
+        return self._finish(source, controls)
+
+    def _condition_on(self, given: Any, /, **options: Any) -> Any:
+        """Bind inputs, then eagerly compute the pushforward when they are complete."""
+        controls = options.pop("_binding_controls", {})
+        prepared = options.pop("_binding_prepared", None)
+        # Conditioning selects its own route; the saved method selects the pushforward.
+        controls = {key: value for key, value in controls.items() if key in ("exact_only",)}
+        if options:
+            controls["method_options"] = options
+        return self._bind_with_controls(given, controls, prepared=prepared)
+
+
 pushforward.register_route(_EvaluationRules())
-_install_expression_rule(pushforward, _mapped_expression)
+
+# None: the result carries the expression of the map's call on the law (II.4).
+# The pushforward of a law displays as the map applied to a draw of the law, as ``f(mu ~ d)``.
+_install_expression_rule(pushforward, lambda: None)

@@ -608,6 +608,28 @@ def _implements(cls: type, method: str) -> bool:
     return False
 
 
+def _conditional_capability_guard(
+    kernel: Any,
+    method: str,
+    given: Mapping[str, Any] | None = None,
+    *arguments: Any,
+    **keywords: Any,
+) -> Feasibility:
+    """Read a conditional guard with known inputs; an unread upstream input stays unresolved."""
+    predicate = getattr(kernel, f"{method}_guard", None)
+    if predicate is None or "given" not in inspect.signature(predicate).parameters:
+        return _capability_guard(kernel, method, *arguments, **keywords)
+    supplied = {} if given is None else given
+    try:
+        return _capability_guard(kernel, method, supplied, *arguments, **keywords)
+    except KeyError as error:
+        if error.args[0] not in kernel.given_spec or error.args[0] in supplied:
+            raise
+        return Feasibility(
+            None, pending=(f"the factor guard needs upstream input {error.args[0]!r}",)
+        )
+
+
 def _check_guards(cls: type) -> None:
     """Check that each guard in the body of *cls* guards a method *cls* implements.
 

@@ -27,6 +27,8 @@ from ..core._specs import OutputSpec, _has_record_outputs
 from ..core.constraints import _known_equal
 from ..core.named_tree import _PATH_SEP, _unflatten_paths
 from ..distributions._capabilities import (
+    SupportsApproximateConditioning,
+    SupportsConditionalSampling,
     SupportsCovariance,
     SupportsLogProb,
     SupportsMean,
@@ -36,6 +38,7 @@ from ..distributions._capabilities import (
     _capability_subclass,
     _conjunction,
 )
+from ..distributions._conditional import ConditionalDistribution
 from ..distributions._conversion import _event_difference, _term_difference
 from ..distributions._distribution import (
     Distribution,
@@ -44,11 +47,13 @@ from ..distributions._distribution import (
 )
 from ..distributions._empirical import EmpiricalDistribution
 from ..distributions._factored import _outputs_of, _raw_leaves
+from ..distributions._views import _hold_inputs
 from ..functions._resolution import PointReport
 from ..linalg import DenseLinOp, LinOp
 from ..operations import _mixture, _moments
-from ..operations._condition import condition_on
+from ..operations._condition import _remaining_given_spec, condition_on
 from ..operations._operation import BoundCall, RouteSource, _DelegatingRoute
+from ..operations._pushforward import _PushforwardKernel
 
 if TYPE_CHECKING:
     from ..custom_types import Array, ArrayLike, PRNGKey
@@ -535,7 +540,9 @@ class _FiniteMixture(_DelegatingRoute):
         if not isinstance(mixing, EmpiricalDistribution):
             return Feasibility(False, "mixing is not an EmpiricalDistribution")
         # Merging checks output overlap and input/output spec compatibility.
-        _ = K & mixing
+        joint = K & mixing
+        if isinstance(joint, ConditionalDistribution):
+            return PointReport(True, exact=True)
         reports = []
         for index in range(mixing.num_atoms):
             values = _outputs_of(mixing.event_spec, mixing._atoms_at(index))
@@ -551,12 +558,68 @@ class _FiniteMixture(_DelegatingRoute):
     ) -> Any:
         """Bind the atoms once and retain their weights in the finite mixture."""
         K, mixing = call.operands["K"], call.operands["mixing"]
+        joint = K & mixing
+        if isinstance(joint, ConditionalDistribution):
+            return _FiniteMixtureKernel(
+                joint,
+                _mixture._kernel_output_projection(K),
+                {},
+                {
+                    name: call.operation._options[name]
+                    for name in (
+                        "exact_only",
+                        "method",
+                        "max_evaluations",
+                        "method_options",
+                        "executor",
+                        "executor_options",
+                    )
+                    if name in call.operation._options
+                },
+                K=K,
+                mixing=mixing,
+            )
         components = []
         for index in range(mixing.num_atoms):
             values = _outputs_of(mixing.event_spec, mixing._atoms_at(index))
             given = {name: values[name] for name in K.given_spec if name in values}
             components.append(condition_on.using(exact_only=exact_only)(K, given))
         return MixtureDistribution(components, mixing.weights, label=K.label)
+
+
+class _FiniteMixtureKernel(_PushforwardKernel):
+    """A mixture kernel that retains finite enumeration when its inputs are bound."""
+
+    def __new__(cls, source: Any, f: Any, fixed: Any, controls: Any, **kwargs: Any) -> Any:
+        claims = (
+            (SupportsConditionalSampling,)
+            if isinstance(source, SupportsConditionalSampling)
+            else ()
+        )
+        if isinstance(kwargs["K"], SupportsApproximateConditioning):
+            claims += (SupportsApproximateConditioning,)
+        return object.__new__(_capability_subclass(cls, claims))
+
+    def __init__(
+        self, source: Any, f: Any, fixed: Any, controls: Any, *, K: Any, mixing: Any
+    ) -> None:
+        super().__init__(source, f, fixed, controls)
+        self._kernel = K
+        self._mixing = mixing
+
+    def _bound_source(self, given: Any, controls: Any) -> Any:
+        """Bind only the remaining kernel inputs, retaining the mixing law."""
+        if (
+            not _remaining_given_spec(self._kernel.given_spec, tuple(given)).required
+            and self._kernel.given_spec.optional & self._mixing.event_spec.outputs.keys()
+        ):
+            return _hold_inputs(self._kernel, given)
+        return condition_on.using(exact_only=controls.get("exact_only", False))(self._kernel, given)
+
+    def _finish(self, source: Any, controls: Any, *, check: bool = False) -> Any:
+        """Enumerate the mixing atoms after the remaining inputs have been bound."""
+        operation = _mixture.mixture.using(**controls)
+        return operation.check(source, self._mixing) if check else operation(source, self._mixing)
 
 
 _mixture.mixture.register_route(_FiniteMixture())
