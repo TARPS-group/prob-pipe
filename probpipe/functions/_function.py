@@ -2008,17 +2008,18 @@ def _check_call(function: Function, args: tuple[Any, ...], kwargs: dict[str, Any
             _normalization.is_distribution_hint(hint) or _binding.resolved_hint(hint) is Any
             for hint in converted_hints
         )
+        planned = (
+            _planned_result(
+                function, output_spec, argument_values, broadcast_plan, resolved_controls
+            )
+            if lift_is_known
+            else None
+        )
         pending = MethodInfo(None, pending=waiting, method_name=_PLANNED, exact=False)
         return CallReport(
             routes=(pending,),
             deferred=deferred,
-            result=(
-                _planned_result(
-                    function, output_spec, argument_values, broadcast_plan, resolved_controls
-                )
-                if lift_is_known
-                else None
-            ),
+            result=planned,
             lifted=lifted,
             conversions=MappingProxyType(conversions),
         )
