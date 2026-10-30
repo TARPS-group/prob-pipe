@@ -4519,6 +4519,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with top-level `await` and kernels that change tasks between cells keep the
   configured stream. User-created tasks retain their own ownership checks.
 
+- **The provenance of `convert` serializes.** Before,
+  `convert(d, Normal).provenance.to_dict()` raised `AttributeError`, since the
+  record described its target, the class `Normal`, by the `label` and
+  `provenance` properties that the class carries for its instances. Now a
+  provenance record reads a label and a provenance from a tracked term only,
+  so a class or another plain input is described by its type alone.
+
 - **An installed PyMC older than 6.2 raises an `ImportError` that names the
   upgrade,** as `PyMC 5.28.5 is installed, but PyMCModel requires PyMC 6.2 or
   later`, where PyMC 5 failed on import with an error about ArviZ. A missing

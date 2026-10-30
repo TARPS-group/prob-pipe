@@ -252,6 +252,18 @@ class TestConvertProvenance:
         assert ed.provenance.parents[0].label == "convert"
         assert ed.provenance.parents[1].label == "norm_src"
 
+    def test_a_class_target_is_a_plain_input(self):
+        """The target class carries neither a label nor a provenance, so the record serializes."""
+        src = StudentT("x", df=5.0, loc=0.0, scale=1.0, label="t_src")
+        converted = convert(src, Normal)
+        target = converted.provenance.inputs["target"]
+        assert target.label is None
+        assert target.provenance is None
+        record = converted.provenance.to_dict()
+        assert record["inputs"]["target"]["label"] is None
+        assert "provenance" not in record["inputs"]["target"]
+        json.dumps(record)
+
 
 # ===========================================================================
 # 3. BijectorTransformedDistribution provenance
