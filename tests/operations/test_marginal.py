@@ -26,7 +26,12 @@ from probpipe import (
 from probpipe.core._batch import BatchSpec
 from probpipe.core._dispatch import Feasibility, ResolutionError
 from probpipe.core._specs import OutputSpec
-from probpipe.distributions._capabilities import SupportsSampling
+from probpipe.distributions._capabilities import (
+    SupportsApproximateConditioning,
+    SupportsConditionalSampling,
+    SupportsSampling,
+    SupportsUnnormalizedLogProb,
+)
 from probpipe.distributions._conditional import ConditionalDistribution
 from probpipe.distributions._distribution import Distribution, DistributionSpec, _fixed_paths
 from probpipe.functions import _descendants
@@ -82,6 +87,24 @@ class _BatchSampler(Distribution, SupportsSampling):
         for index in np.ndindex(sample_shape):
             batches[index] = NumericArrayBatch(values[index], self.levels, label="trajectory")
         return {"trajectory": batches}
+
+
+class _SamplingKernel(ConditionalDistribution, SupportsConditionalSampling):
+    """A kernel with a conditional sampler and a recorded application to its inputs."""
+
+    def __init__(self, law):
+        super().__init__({"mu": REAL}, law.event_spec, label="kernel")
+        self.law = law
+        self.bindings = []
+        self.sample_shapes = []
+
+    def _condition_on(self, given, /, **options):
+        self.bindings.append(given)
+        return self.law
+
+    def _conditional_sample(self, given, key, sample_shape=()):
+        self.sample_shapes.append(sample_shape)
+        return self.law._sample(key, sample_shape)
 
 
 class TestMarginal:
@@ -294,7 +317,7 @@ class TestMonteCarloMarginal:
         assert draw.level_names == levels
         assert draw.batch_shape == (2,) * len(levels)
 
-    def test_given_uses_the_conditional_sampling_capability(self):
+    def test_given_prefers_the_conditioned_laws_exact_marginal(self):
         kernel = conditional_distribution(
             lambda mu: Normal("a", mu, 1.0) & Normal("b", mu, 1.0),
             given_spec={"mu": NumericArraySpec((), jnp.float32)},
@@ -304,13 +327,17 @@ class TestMonteCarloMarginal:
             result = marginal.using(num_samples=7)(kernel, "a", given={"mu": 2.0})
             conditioned = marginal(condition_on(kernel, {"mu": 2.0}), "a")
             exact = marginal.using(exact_only=True)(kernel, "a", given={"mu": 2.0})
-        assert isinstance(result, EmpiricalDistribution)
-        assert result.num_atoms == 7
+            sampled = marginal.using(method="monte_carlo", num_samples=7)(
+                kernel, "a", given={"mu": 2.0}
+            )
+        assert isinstance(sampled, EmpiricalDistribution)
+        assert sampled.num_atoms == 7
         assert result.event_spec == kernel.event_spec["a"]
         assert _fixed_paths(result) == ("mu",)
-        assert result.provenance.metadata["route"] == "monte_carlo"
-        assert result.provenance.metadata["exact"] is False
-        for law in (conditioned, exact):
+        assert result.provenance.metadata["route"] == "conditional"
+        assert result.provenance.metadata["exact"] is True
+        assert sampled.provenance.metadata["exact"] is False
+        for law in (result, conditioned, exact):
             assert isinstance(law, Normal)
             assert law.loc == 2.0
             assert law.scale == 1.0
@@ -325,6 +352,72 @@ class TestMonteCarloMarginal:
         assert isinstance(result, DistributionBatch)
         assert result.level_names == ("model",)
         assert all(law.num_atoms == 7 for law in result)
+
+    def test_check_defers_exact_conditional_selection_without_applying_the_kernel(self):
+        kernel = _SamplingKernel(Normal("a", 2.0, 1.0) & Normal("b", 0.0, 1.0))
+        report = marginal.check(kernel, "a", given={"mu": 2.0})
+        assert report.feasible is None
+        assert "bound law" in " ".join(report.pending)
+        assert kernel.bindings == []
+        assert kernel.sample_shapes == []
+        result = marginal(kernel, "a", given={"mu": 2.0})
+        assert isinstance(result, Normal)
+        assert result.provenance.metadata["exact"] is True
+        assert len(kernel.bindings) == 1
+        assert kernel.sample_shapes == []
+
+    def test_a_bound_law_without_an_exact_marginal_keeps_the_conditional_sampling_fallback(self):
+        kernel = _SamplingKernel(_JointSampler())
+        with workflow_run(seed=0):
+            result = marginal.using(num_samples=7)(kernel, "a", given={"mu": 2.0})
+        assert isinstance(result, EmpiricalDistribution)
+        assert result.num_atoms == 7
+        assert result.provenance.metadata["route"] == "monte_carlo"
+        assert result.provenance.metadata["exact"] is False
+        assert len(kernel.bindings) == 1
+        assert kernel.sample_shapes == [(7,)]
+
+    def test_approximate_binding_does_not_precede_conditional_sampling(self):
+        class ApproximateKernel(_SamplingKernel, SupportsApproximateConditioning):
+            pass
+
+        kernel = ApproximateKernel(_JointSampler())
+        with workflow_run(seed=0):
+            result = marginal.using(num_samples=7)(kernel, "a", given={"mu": 2.0})
+        assert isinstance(result, EmpiricalDistribution)
+        assert kernel.bindings == []
+        assert kernel.sample_shapes == [(7,)]
+
+    def test_a_conditioning_error_propagates_without_sampling(self):
+        class BrokenKernel(_SamplingKernel):
+            def _condition_on(self, given, /, **options):
+                raise ValueError("binding failed")
+
+        kernel = BrokenKernel(_JointSampler())
+        with pytest.raises(ValueError, match="binding failed"):
+            marginal(kernel, "a", given={"mu": 2.0})
+        assert kernel.sample_shapes == []
+
+    def test_normalization_without_an_exact_method_keeps_the_sampling_fallback(self):
+        class UnnormalizedLaw(Distribution, SupportsUnnormalizedLogProb):
+            def __init__(self):
+                super().__init__(RecordSpec(a=REAL), label="target")
+
+            def _unnormalized_log_prob(self, value):
+                return -0.5 * value["a"] ** 2
+
+        class Kernel(_SamplingKernel):
+            def _conditional_sample(self, given, key, sample_shape=()):
+                self.sample_shapes.append(sample_shape)
+                return {"a": jax.random.normal(key, sample_shape)}
+
+        kernel = Kernel(UnnormalizedLaw())
+        with workflow_run(seed=0):
+            result = marginal.using(num_samples=7)(kernel, "a", given={"mu": 2.0})
+        assert isinstance(result, EmpiricalDistribution)
+        assert result.provenance.metadata["route"] == "monte_carlo"
+        assert len(kernel.bindings) == 1
+        assert kernel.sample_shapes == [(7,)]
 
 
 class TestTheMarginalsNotation:
