@@ -7,7 +7,7 @@
 > It revisits the concepts of `plans/declarations-and-addressing.md` (Part I §§ 2 to 4, Part II §§ 9 to 12) and replaces that plan's unmerged steps S4b and G1a to G5; § 8 lists the edits that plan and the other deferred plans need.
 > Once approved, its rules move into `design/` (II.1, II.2, II.5, II.6, III.3, III.5, III.7, III.9, III.10, and the glossary) and its steps into the plans of the work after the workshop.
 
-**Settled with the maintainer on 2026-10-28:**
+**Settled with the maintainer on 2026-10-28 (items 1 to 12) and 2026-10-29 (items 13 to 15):**
 
 1. A record's paths are the paths of its own tree and end at its fields; any other object has paths exactly when it is record-valued, that is, when its value spec is a `RecordSpec` (§ 4.1, § 4.2). This reverses the decision of 2026-10-16 that paths go through an object a record holds.
 2. `in` is part of the path interface, and it raises as `[]` does for a malformed path or an object without paths (§ 4.1).
@@ -17,15 +17,19 @@
 6. The output name is stored on the object, not inside its spec; `OutputSpec` is removed, and an object's output spec is a `RecordSpec` (§ 4.3, § 6).
 7. Inputs and outputs are named by single names, never by paths (§ 4.3, § 4.4).
 8. `x.output_names` is the one public read of an object's output names; the stored name is private, a constructor states it with `output_name=`, and `rename` changes it (§ 4.3).
-9. `None` means "not known yet" for every spec accessor, `x.output_spec` included, and `InputSpec(None)` raises (§ 4.3, § 4.4).
+9. `None` means "not known yet" for every spec accessor, `x.output_spec` and `x.input_spec` included, and a kind without inputs has the input spec `RecordSpec()` (§ 4.3, § 4.4).
 10. No name is both an input name and an output name of one object, for every kind; one function checks it (§ 4.7).
 11. A rename never crosses between inputs and outputs, and an input is never renamed to a path. Each name is renamed where it is stored: `TermSpec.rename` renames a spec's inputs and paths, and `TrackedTerm.rename` renames an object's output name and passes every other key to its spec; each kind supplies only the mechanics (§ 4.7).
 12. Functions and kernels both rename their inputs, by one flat name each; the kernel's grouping and splitting of inputs by path is removed (§ 4.7).
+13. A batch's value is its element's value, so a batch of record-valued laws, kernels, or functions has paths and outputs, and positions and paths commute (§ 4.2, § 4.3).
+14. `InputSpec` is removed. A spec's inputs are a `RecordSpec`, its `input_spec`, and the inputs a binding may omit are a separate field of the spec, `optional_inputs`, which a term built from a callable reads from the callable's defaults (§ 4.4).
+15. A spec conforms when the declared spec's optional inputs are among its own (§ 4.5).
 
 **Decisions still open** (each explained where it arises, and gathered in § 10):
 
 1. One public conformance relation, `conforms_to`, with inputs compared contravariantly (§ 4.5).
 2. The names `value_spec`, `return_spec`, `output_names`, `outputs`, and `output_spec` (§ 5).
+3. For reviewers: whether input order counts when two specs are compared (§ 4.4).
 
 **How to read this plan.**
 § 4 states each rule, citing the section of `design/` it keeps and stating only what it changes or adds.
@@ -68,7 +72,9 @@ The goal is one definition of each idea, one implementation that every kind shar
 | The paths of a record | its tree, continued into the objects its fields hold (II.6) | its tree, ending at its fields |
 | Which other objects have paths | every object whose value type holds a `RecordSpec` at any depth (II.2, II.6) | every record-valued object |
 | `p in x` for an object without paths | `False` (II.6) | `TypeError` |
-| `[]` on an input spec | input names, and paths into a record input (II.2) | input names only |
+| The input spec | an `InputSpec`, whose `[]` takes paths into a record input (II.2) | a `RecordSpec`, whose top-level names are the input names |
+| Optional inputs | flags inside `InputSpec`, set with `with_optional` and checked against the defaults (II.2, III.3) | the spec's field `optional_inputs`, read from the defaults |
+| Conformance on optional inputs | the same optional inputs (II.1) | the declared spec's optional inputs among the actual spec's |
 | The outputs of an object whose value is not a record | five cases, one of which gives no outputs (II.2) | one output, the object, under its output name |
 | Where an output name is stored | in an `OutputSpec`, inside the spec (II.2) | on the object |
 | The outputs of a batch of laws or kernels | none (II.5, III.10) | an output for each top-level name of the element's event, when it is a record |
@@ -140,6 +146,15 @@ InputSpec(t=NumericArraySpec((), dtype=np.float32)) & InputSpec(t=NumericArraySp
 ```
 
 The first pair is the variance of inputs: the code compares them covariantly, and II.1 contravariantly.
+
+**Optional inputs are carried by hand.**
+`InputSpec` repeats the selection, removal, renaming, and dimension methods of `RecordSpec`, and adds optional flags, which every operation that rebuilds an input spec must carry over.
+Five sites rebuild them by hand (`distributions/_conditional.py`, `distributions/_views.py`, `families/_conditional.py`), and one drops them:
+
+```python
+spec = FunctionSpec(InputSpec(x=("n",), y=()).with_optional("y"), OutputSpec(r=()))
+spec.with_dim_sizes(n=3).input_spec.optional   # frozenset(): y is no longer optional
+```
 
 ### 2.3 The three questions, assessed
 
@@ -274,17 +289,45 @@ In this table, `fit` is a callable of one argument `data`, and `h` is a callable
 
 ### 4.4 Inputs
 
-**Kept from II.2:** an input and `InputSpec`, the sources an input spec is read from, `&`, and `rename`. The source that is an output spec is now a `RecordSpec`, which II.2 already reads.
+**Kept from II.2:**
+- an input, with its three parts: its name, its spec, and whether it is optional;
+- the input spec holds no defaults, which belong to the term;
+- an input whose spec is a `RecordSpec` is one input, which receives a whole record;
+- inputs bind by name, so two specs compare their inputs in any order;
+- an input that two merged operands both take is one input, whose spec is the unification of its two specs, and which is optional only when it is optional in both;
+- renaming inputs, by II.6's rules restricted to names.
 
 **Changed in II.2:**
-1. **Inputs are named by single names, never by paths.** An input spec's `[]` and `without` take input names only, so `i["g/b"]` raises `KeyError` even when the spec of `g` is a `RecordSpec`, and no input becomes required because a path cut it.
-2. **`None` is not a source of inputs.** `InputSpec()` has no inputs, and `InputSpec(None)` raises `TypeError`, since `None` stands for a spec not known yet, as in `FunctionSpec(input_spec=None)` and an unknown `output_spec`. So `InputSpec(f.output_spec)` fails for a function whose return spec is not known, rather than giving an input spec with no inputs.
+1. **An input spec is a `RecordSpec`.** `InputSpec` is removed. A spec's input names are the top-level names of its `input_spec`, and an input's spec is its child there. The record operations of II.6 serve inputs as they serve outputs, so `k.input_spec.without("sigma")` and `k.input_spec["g/b"]` are reads of a `RecordSpec`. A path names no input, since inputs are named by single names (settled item 7).
+2. **The optional inputs are a field of the spec, beside the input spec.** `FunctionSpec` and `ConditionalDistributionSpec` store `optional_inputs`, which names the inputs that a binding may omit. Every spec and every term reads it as the property `optional_inputs`, and `required_inputs` gives the others, in order (§ 5.4, § 5.5). `with_optional` is removed. The spec holds them because a result's kind depends on them: by IV.2, a merge that leaves only optional inputs is a law, and planning computes that kind from specs.
+3. **The optional inputs have one source, the term's defaults.** A function, and a kernel built by `conditional_distribution`, read their optional inputs from the parameters of the callable that have defaults, and take no argument that states them. III.3's check that a declared optional input has a default goes, since nothing declares one. A term built another way computes them: a merge, a binding, and a rename from their operands' specs, and a subclass of `ConditionalDistribution` passes `optional_inputs=` for the inputs it holds defaults for. Only a spec written by hand, such as the type of a field, states them, with `optional_inputs=`.
+4. **A kind without inputs has the empty input spec.** Its `input_spec` is `RecordSpec()`, and its `optional_inputs` is empty. `None` means only that the inputs are not known yet, as for `FunctionSpec(input_spec=None)`.
+5. **The input names are Python identifiers,** since an input is a parameter. The constructors of `FunctionSpec` and `ConditionalDistributionSpec` read their inputs through `_as_input_spec` (§ 5.12), which converts a mapping to a `RecordSpec` and checks each name.
+6. **Merging the inputs of two operands is one private function,** `_merge_inputs` (§ 5.12), in place of `InputSpec.__and__`.
 
 ```python
-InputSpec(d.output_spec)   # InputSpec(mu=NumericArraySpec(()), sigma=NumericArraySpec(()))
-InputSpec()                # no inputs
-InputSpec(None)            # TypeError
+def likelihood(mu, sigma=1.0):
+    return Normal("y", mu, sigma)
+
+k = conditional_distribution(likelihood, given_spec=d.output_spec)
+k.input_spec          # RecordSpec(mu=NumericArraySpec(()), sigma=NumericArraySpec(()))
+k.optional_inputs     # frozenset({'sigma'}), read from the default of sigma
+k.required_inputs     # ('mu',)
+d.input_spec          # RecordSpec(), since a law takes no inputs
+k & Normal("mu", 0.0, 1.0)   # a law, since only the optional input sigma remains (IV.2)
+
+declared = ConditionalDistributionSpec(
+    RecordSpec(mu=(), sigma=()), NumericArraySpec(()), optional_inputs={"sigma"}
+)
+k.spec.conforms_to(declared)   # True: k may be bound without sigma, as declared promises
 ```
+
+> [!NOTE]
+> **For reviewers: does input order count when two specs are compared?**
+> This plan keeps II.2's rule: a `FunctionSpec` or `ConditionalDistributionSpec` compares its inputs by name, in any order, in equality, conformance, and unification, and its input spec keeps their order for display.
+> Matching an output to an input, in a merge or a binding, is by name in every case, and is not in question.
+> The cost falls on a function called positionally: a function that conforms to a declared `FunctionSpec` may list its parameters in another order, so code that knows a function only by its declared spec passes its arguments by keyword.
+> The alternative compares inputs in order, as a `RecordSpec`'s own equality does.
 
 ### 4.5 Conformance and unification
 
@@ -304,6 +347,7 @@ InputSpec(None)            # TypeError
 1. **A side that only `A` leaves unknown does not conform.** II.1 says that a side `B` leaves undeclared accepts any `A`, and is silent on the reverse; this follows from II.1's definition of conformance.
 2. **Refinement is one named relation.** `B.refine(A)`, for an `A` that conforms to `B`, is `B` with its dimension names bound from `A` (II.1's binding) and with each dtype, support, type, or metadata that `B` leaves unset taken from `A` (II.2's completion). It replaces `bind_dims_from_spec`, which bound dimension names only.
 3. **Each relation is one dimension scope, and changes nothing.** `conforms_to`, `unify`, and `refine` take only the two specs, so a dimension name stands for one size throughout both. Code that checks several specs in one scope, such as the arguments of one call or the operands of one merge, shares a private `_DimensionSizes` across its checks, in place of the `dict` the code passes by hand.
+4. **Optional inputs are compared one way.** A kernel or function `A` conforms to `B` when `B`'s optional inputs are among `A`'s, since a caller of `B` may omit them and `A` must then supply a default. II.1 requires the two sets to be equal. Unification still requires them equal.
 
 **Decision 1: one public relation.**
 - **Recommendation.** `A.conforms_to(B)`, `unify(A, B)`, and `B.refine(A)` are the entry points, `bind_dims_from_spec` is replaced by `refine`, and `bind_dims_from_value(v)` by `refine_from_value(v)`, refinement by the spec of `v` (§ 5.6).
@@ -311,7 +355,7 @@ InputSpec(None)            # TypeError
 
 ### 4.6 How an output feeds an input
 
-**Kept from IV.2, III.3, and II.2:** an output feeds the input of the same name, and its spec must conform to the input's (IV.2, condition 6); an input that both operands take is one input, whose spec is the unification of the two (II.2's `InputSpec.__and__`, IV.2, III.3).
+**Kept from IV.2, III.3, and II.2:** an output feeds the input of the same name, and its spec must conform to the input's (IV.2, condition 6); an input that both operands take is one input, whose spec is the unification of the two (IV.2, III.3), now computed by `_merge_inputs` (§ 5.12).
 
 **New:** the check reads the output spec, so one rule serves every kind of giver: the output `c` of `x` feeds the input `c` of `y` when `x.output_spec[c]` conforms to `y.input_spec[c]`, checked by `_check_conforms` with one `_DimensionSizes` for the whole merge.
 
@@ -327,7 +371,7 @@ InputSpec(None)            # TypeError
 
    | Name | Stored in | Renamed by |
    |---|---|---|
-   | input names | the spec: `FunctionSpec.input_spec`, `ConditionalDistributionSpec.given_spec`, and a `BatchSpec`'s element's | `TermSpec.rename`, through `InputSpec.rename` |
+   | input names | the spec: `FunctionSpec.input_spec`, `ConditionalDistributionSpec.given_spec`, and a `BatchSpec`'s element's | `TermSpec.rename`, through `NamedTree.rename` on the input spec's top-level names, each optional input keeping its flag |
    | paths, and so the output names of a record-valued object | the spec: its value spec | `TermSpec.rename`, through `NamedTree.rename` |
    | the output name of any other object | the object: `_output_name` | `TrackedTerm.rename`, through `_with_output_name` |
 
@@ -805,16 +849,32 @@ class TrackedTerm(Immutable, metaclass=_TrackedTermMeta):
         """
 
     @property
-    def input_spec(self) -> InputSpec | None:
+    def input_spec(self) -> RecordSpec | None:
         """The inputs of this term, as its spec declares them: ``self.spec.input_spec``.
 
         ProbPipe terms can declare *inputs*: named values a term receives
         before it yields its value. Each kind defines what its inputs are: a
         function's are its parameters, a conditional distribution's are the
         values it is conditioned on, and a batch's are those of its elements.
-        Every other kind takes no inputs, so its input spec is ``InputSpec()``.
+        The input names are the top-level names of the input spec. Every other
+        kind takes no inputs, so its input spec is the empty ``RecordSpec()``.
         A ``None`` input spec means that the inputs are not known yet. The
         property is read-only.
+        """
+
+    @property
+    def optional_inputs(self) -> frozenset[str]:
+        """The inputs a binding may omit, as its spec declares them: ``self.spec.optional_inputs``.
+
+        An input is *optional* when this term holds a default for it. The
+        property is read-only.
+        """
+
+    @property
+    def required_inputs(self) -> tuple[str, ...] | None:
+        """The inputs a binding must supply, in order: ``self.spec.required_inputs``.
+
+        None while the inputs are not known yet. The property is read-only.
         """
 
     @property
@@ -1000,7 +1060,7 @@ if name is not None:
 inputs = instance.spec.input_spec
 if inputs is not None and name is not None:
     _check_disjoint_names(
-        inputs, (name,), owner=f"{public_class_name(type(instance))} {instance.label!r}"
+        inputs.children, (name,), owner=f"{public_class_name(type(instance))} {instance.label!r}"
     )
 ```
 
@@ -1067,33 +1127,95 @@ class TermSpec(ABC):
         return value_spec
 
     @property
-    def input_spec(self) -> InputSpec | None:
-        """The inputs of the terms this spec describes.
+    def input_spec(self) -> RecordSpec | None:
+        """The inputs of the terms this spec describes, as a record of their specs.
 
         ProbPipe terms can declare *inputs*: named values a term receives
         before it yields its value. Each kind defines what its inputs are. A
         function's inputs are its parameters, and a conditional distribution's
         are the values it is conditioned on, which its ``given_spec`` also
-        names. A batch's inputs are those of its elements. Every other kind
-        takes no inputs, so its input spec is ``InputSpec()``. A ``None`` input
-        spec means that the inputs are not known yet, as for a ``FunctionSpec``
-        declared without one. The property is read-only.
-        """
-        return InputSpec()
+        names. A batch's inputs are those of its elements.
 
-    def _with_input_spec(self, input_spec: InputSpec) -> Self:
-        """This spec with its input spec replaced, of this spec's class.
+        The input names are the top-level names of the input spec, and each
+        input receives a value that conforms to its child there; a child that
+        is a ``RecordSpec`` is one input, which receives a whole record. Every
+        other kind takes no inputs, so its input spec is the empty
+        ``RecordSpec()``. A ``None`` input spec means that the inputs are not
+        known yet, as for a ``FunctionSpec`` declared without one. The property
+        is read-only.
+
+        Examples
+        --------
+        >>> FunctionSpec({"x": (), "y": ()}).input_spec == RecordSpec(x=(), y=())
+        True
+        >>> NumericArraySpec(()).input_spec == RecordSpec()
+        True
+        >>> FunctionSpec().input_spec is None
+        True
+        """
+        from ._record_spec import RecordSpec
+
+        return RecordSpec()
+
+    @property
+    def optional_inputs(self) -> frozenset[str]:
+        """The inputs that a binding may omit, by name.
+
+        An input is *optional* when the term holds a default for it, so a
+        binding or a call may leave it out and the term uses the default. The
+        default is a value of the term, and no spec holds it; the spec records
+        only which inputs have one. A function, and a kernel built by
+        ``conditional_distribution``, read their optional inputs from the
+        parameters of their callable that have defaults. The set is empty for a
+        kind without inputs and for a spec whose inputs are not known. The
+        property is read-only.
+
+        Examples
+        --------
+        >>> FunctionSpec({"x": (), "y": ()}, optional_inputs={"y"}).optional_inputs
+        frozenset({'y'})
+        >>> NumericArraySpec(()).optional_inputs
+        frozenset()
+        """
+        return frozenset()
+
+    @property
+    def required_inputs(self) -> tuple[str, ...] | None:
+        """The inputs that a binding must supply, in the input spec's order.
+
+        These are the input names without the optional inputs. None while the
+        inputs are not known. The property is read-only.
+
+        Examples
+        --------
+        >>> FunctionSpec({"x": (), "y": ()}, optional_inputs={"y"}).required_inputs
+        ('x',)
+        >>> FunctionSpec().required_inputs is None
+        True
+        """
+        if self.input_spec is None:
+            return None
+        return tuple(name for name in self.input_spec.children if name not in self.optional_inputs)
+
+    def _with_inputs(self, input_spec: RecordSpec, optional_inputs: frozenset[str]) -> Self:
+        """This spec with its inputs replaced, of this spec's class.
+
+        The one way to rebuild a spec's inputs, so the optional inputs are
+        always carried with the input spec.
 
         Parameters
         ----------
-        input_spec : InputSpec
+        input_spec : RecordSpec
             The new input spec.
+        optional_inputs : frozenset of str
+            The new optional inputs, each a top-level name of *input_spec*.
 
         Returns
         -------
         Self
-            The new spec, whose constructor checks that its input names and its
-            top-level names are disjoint.
+            The new spec, whose constructor checks the input names, that each
+            optional input is an input, and that the input names and the
+            top-level names of the value spec are disjoint.
 
         Raises
         ------
@@ -1101,7 +1223,7 @@ class TermSpec(ABC):
             If this spec's kind takes no inputs.
         """
         raise TypeError(
-            f"cannot replace the input spec of a {type(self).__name__}, whose kind takes no inputs"
+            f"cannot replace the inputs of a {type(self).__name__}, whose kind takes no inputs"
         )
 
     def rename(self, renames: Mapping[str, str] | None = None, /, **keyword_renames: str) -> Self:
@@ -1142,9 +1264,9 @@ class TermSpec(ABC):
 
         Examples
         --------
-        >>> spec = FunctionSpec(InputSpec(loc=()), return_spec=RecordSpec(y=()))
-        >>> spec.rename(loc="mu", y="z")
-        FunctionSpec(input_spec=InputSpec(mu=NumericArraySpec(shape=())), return_spec=RecordSpec(z=NumericArraySpec(shape=())))
+        >>> spec = FunctionSpec(RecordSpec(loc=(), s=()), return_spec=RecordSpec(y=()), optional_inputs={"s"})
+        >>> spec.rename(loc="mu", s="scale", y="z")
+        FunctionSpec(input_spec=NumericRecordSpec(mu=(), scale=()), return_spec=NumericRecordSpec(z=()), optional_inputs={'scale'})
         >>> spec.rename(loc="g/mu")
         Traceback (most recent call last):
         ValueError: cannot rename the input 'loc' to the path 'g/mu'. An input is renamed to a single name, such as 'mu'
@@ -1186,10 +1308,12 @@ class TermSpec(ABC):
     ) -> Self:
         """This spec with checked input renames and path renames applied.
 
-        The inputs are renamed by ``InputSpec.rename``, and the value spec by
-        ``NamedTree.rename``, then the spec is rebuilt with ``_with_input_spec`` and
-        ``_with_value_spec``. The rebuilt spec's constructor checks that its
-        input names and its top-level names are disjoint.
+        The input spec is renamed by ``NamedTree.rename``, each key a top-level
+        name, and each optional input keeps its flag under its new name. The
+        value spec is renamed by ``NamedTree.rename``. The spec is then rebuilt
+        with ``_with_inputs`` and ``_with_value_spec``, and the rebuilt spec's
+        constructor checks that its input names and its top-level names are
+        disjoint.
 
         Parameters
         ----------
@@ -1212,10 +1336,19 @@ class TermSpec(ABC):
         """
 ```
 
-`ConditionalDistributionSpec` and `BatchSpec` override `input_spec`, which `FunctionSpec` holds as a field, and the three override `_with_input_spec`.
+Where each spec stores its inputs:
+
+| Spec | `input_spec` | `optional_inputs` | `_with_inputs` |
+|---|---|---|---|
+| `FunctionSpec` | the field `input_spec` | the field `optional_inputs` | overridden |
+| `ConditionalDistributionSpec` | the field `given_spec` | the field `optional_inputs` | overridden |
+| `BatchSpec` | its element spec's | its element spec's | the batch spec over the element spec with its inputs replaced, with the same levels |
+| every other spec | `RecordSpec()`, from the base | `frozenset()`, from the base | raises `TypeError`, from the base |
+
 `ConditionalDistributionSpec.given_spec` stays as the kernel's own name for its input spec, as `event_spec` stays beside `value_spec`.
-The base `input_spec` imports `InputSpec` inside the method, since `core/_specs.py` imports this module through `core/_record_spec.py`.
-The constructors of `FunctionSpec` and `ConditionalDistributionSpec` call `_check_disjoint_names(inputs, top_level_names, owner=...)`, where the top-level names are those of the value spec of a record-valued spec; `BatchSpec` inherits the check from its element spec.
+`required_inputs` is defined once, on the base.
+The base `input_spec` imports `RecordSpec` inside the method, since `core/_record_spec.py` imports this module.
+The constructors of `FunctionSpec` and `ConditionalDistributionSpec` read their inputs through `_as_input_spec` (§ 5.12), refuse an optional input that is not an input, and call `_check_disjoint_names(input_spec.children, top_level_names, owner=...)`, where the top-level names are those of the value spec of a record-valued spec; `BatchSpec` inherits the checks from its element spec.
 
 ### 5.6 `core/_conformance.py` (new) and `TermSpec` (changed): conformance
 
@@ -1246,7 +1379,8 @@ Each kind defines its rule, for ``A`` conforming to ``B``:
 - records: the same field names in the same order, each field of ``A``
   conforming to the field of ``B``;
 - laws: ``A``'s event spec conforms to ``B``'s;
-- kernels and functions: the same input names and the same optional inputs;
+- kernels and functions: the same input names, in any order; ``B``'s
+  optional inputs are among ``A``'s, since a caller of ``B`` may omit them;
   each input spec of ``B`` conforms to ``A``'s spec for that input, since a map
   that accepts more conforms; ``A``'s event or return spec conforms to
   ``B``'s; a side that ``B`` leaves unknown accepts any ``A``, and a side that
@@ -1257,7 +1391,8 @@ Unification follows the same rules in both directions, with three differences:
 two arrays take the narrower dtype, so ``int32`` and ``float32`` unify to
 ``int32``, and keep a support only when both set the same one; two opaque specs
 unify when their types are equal or one is unset, and likewise their metadata;
-two kernels or functions unify only when their input specs are equal.
+two kernels or functions unify only when they have the same inputs, each
+with equal specs, and the same optional inputs.
 
 Dimension names. A shape can name a dimension instead of giving its size, as
 ``NumericArraySpec(("n",))`` does. The specs that one relation compares form
@@ -1349,8 +1484,8 @@ def _unify_within(
 ) -> TermSpec:
     """The unification of two specs, in a dimension scope shared with other checks.
 
-    ``unify`` with a new ``_DimensionSizes``, and ``InputSpec.__and__`` with
-    one for all the inputs of its two operands. A failed unification binds
+    ``unify`` with a new ``_DimensionSizes``, and ``_merge_inputs`` with one
+    for all the inputs of its two operands. A failed unification binds
     nothing into *dim_sizes*.
 
     Parameters
@@ -1694,46 +1829,83 @@ class DistributionSpec(TermSpec):
 
 
 class ConditionalDistributionSpec(TermSpec):
-    """The spec of a kernel: its inputs and the spec of one draw at each input value.
+    """The spec of a kernel: its inputs, which of them are optional, and the spec of one draw.
+
+    A kernel's inputs are the values it is conditioned on. Their names are
+    the top-level names of *given_spec*, and each input receives a value that
+    conforms to its child there. An optional input is one that a binding may
+    omit, since the kernel holds a default for it; the spec records which
+    inputs are optional, and never the defaults.
 
     Parameters
     ----------
-    given_spec : InputSpec, Mapping, or RecordSpec
-        The inputs, read as ``InputSpec`` reads them.
+    given_spec : RecordSpec or Mapping
+        The inputs, by name. A mapping is converted to a ``RecordSpec``, and
+        each of its values is a ``TermSpec`` or a tuple of sizes.
     event_spec : TermSpec or tuple
         The spec of one draw. A tuple is converted to a ``NumericArraySpec`` of that shape.
+    optional_inputs : iterable of str, optional
+        The inputs that a binding may omit. Empty by default.
 
     Raises
     ------
     TypeError
-        If *given_spec* is not a source of inputs, or *event_spec* is not a
-        ``TermSpec`` or a tuple.
+        If *given_spec* is not a ``RecordSpec`` or a mapping, *event_spec* is
+        not a ``TermSpec`` or a tuple, or *optional_inputs* is a string.
+    ValueError
+        If *given_spec* has no inputs, an input name is not a Python
+        identifier, an optional input is not an input, or a name is both an
+        input and a top-level name of the event.
+
+    Examples
+    --------
+    >>> spec = ConditionalDistributionSpec({"mu": (), "sigma": ()}, (), optional_inputs={"sigma"})
+    >>> spec.required_inputs
+    ('mu',)
     """
 
-    given_spec: InputSpec
+    given_spec: RecordSpec
     event_spec: TermSpec
+    optional_inputs: frozenset[str]
 
 
 class FunctionSpec(TermSpec):
-    """The spec of a function: its inputs and the spec of what it returns.
+    """The spec of a function: its inputs, which of them are optional, and the spec of what it returns.
+
+    A function's inputs are its parameters. Their names are the top-level
+    names of *input_spec*, and each input receives a value that conforms to
+    its child there. An optional input is a parameter with a default, which a
+    call may omit; the spec records which inputs are optional, and never the
+    defaults.
 
     Parameters
     ----------
-    input_spec : InputSpec or None, optional
-        The inputs. None leaves them unknown.
+    input_spec : RecordSpec, Mapping, or None, optional
+        The inputs, by name. A mapping is converted to a ``RecordSpec``, and
+        each of its values is a ``TermSpec`` or a tuple of sizes. None leaves
+        the inputs unknown.
     return_spec : TermSpec, tuple, or None, optional
         The spec of the returned value. A tuple is converted to a
         ``NumericArraySpec`` of that shape. None leaves it unknown until the function's first call.
+    optional_inputs : iterable of str, optional
+        The inputs that a call may omit. Empty by default, and refused when
+        *input_spec* is None.
 
     Raises
     ------
     TypeError
-        If *input_spec* is not an ``InputSpec`` or None, or *return_spec* is
-        not a ``TermSpec``, a tuple, or None.
+        If *input_spec* is not a ``RecordSpec``, a mapping, or None,
+        *return_spec* is not a ``TermSpec``, a tuple, or None, or
+        *optional_inputs* is a string.
+    ValueError
+        If an input name is not a Python identifier, an optional input is not
+        an input, or a name is both an input and a top-level name of a
+        record-valued return spec.
     """
 
-    input_spec: InputSpec | None
+    input_spec: RecordSpec | None
     return_spec: TermSpec | None
+    optional_inputs: frozenset[str]
 
 
 class BatchSpec(TermSpec):
@@ -1761,44 +1933,10 @@ class BatchSpec(TermSpec):
 Each of the four overrides `value_spec` and `_with_value_spec`, and mixes in `PathIndexed` (§ 5.2).
 `BatchSpec.value_spec` is `self.element_spec.value_spec`, and `BatchSpec._with_value_spec(v)` is the batch spec over `self.element_spec._with_value_spec(v)` with the same levels, so `laws.spec["mu"]` is the batch spec over `d.spec["mu"]`.
 Their equality, hash, and repr compare and show these fields only, so no spec shows or compares a name.
+A `FunctionSpec` and a `ConditionalDistributionSpec` compare their inputs by name, in any order, and their hash agrees (§ 4.4); the repr shows the inputs in order, and shows `optional_inputs` only when it is not empty.
 
-`InputSpec.__init__` changes its default and refuses `None`:
-
-```python
-_NO_INPUTS = object()   # InputSpec() was given no source: the input spec with no inputs
-
-
-class InputSpec(Mapping[str, TermSpec]):
-    """An immutable, flat mapping of input names to term specs.
-
-    Parameters
-    ----------
-    inputs : InputSpec, Mapping, or RecordSpec, optional
-        Inputs in their source's order. A ``RecordSpec`` supplies one input per
-        top-level child, such as ``x.output_spec``; another ``InputSpec``
-        preserves its optional flags. With no argument, there are no inputs.
-    **inputs_by_name : TermSpec or tuple
-        Alternatively, the inputs by keyword.
-
-    Raises
-    ------
-    TypeError
-        If *inputs* is None: "cannot read inputs from None, which stands for a
-        spec not known yet. Write InputSpec() for no inputs". Also if the
-        source is unsupported, or positional and keyword forms are combined.
-    ValueError
-        If an input name is not a non-keyword Python identifier.
-    """
-
-    def __init__(
-        self,
-        inputs: InputSpec | Mapping[str, TermSpec | tuple] | RecordSpec = _NO_INPUTS,
-        /,
-        **inputs_by_name: TermSpec | tuple,
-    ) -> None: ...
-```
-
-`Function(input_spec=None)` keeps its meaning, "read the inputs from the signature", and never passes `None` to `InputSpec`.
+`InputSpec` is removed, with its export from `probpipe`.
+`Function(input_spec=None)` keeps its meaning, "read the inputs from the signature".
 
 ### 5.8 Constructors (changed)
 
@@ -1808,14 +1946,14 @@ The table gives each signature change; the docstring entries follow it.
 | Constructor | Parameters before | Parameters after |
 |---|---|---|
 | `Distribution.__init__` | `event_spec: OutputSpec \| TermSpec` | `event_spec: TermSpec, *, output_name: str \| None = None` |
-| `ConditionalDistribution.__init__` | `given_spec: ... \| OutputSpec, event_spec: OutputSpec \| TermSpec` | `given_spec: InputSpec \| Mapping[str, TermSpec \| tuple] \| RecordSpec, event_spec: TermSpec, *, output_name: str \| None = None` |
+| `ConditionalDistribution.__init__` | `given_spec: ... \| OutputSpec, event_spec: OutputSpec \| TermSpec` | `given_spec: RecordSpec \| Mapping[str, TermSpec \| tuple], event_spec: TermSpec, *, optional_inputs: Iterable[str] = (), output_name: str \| None = None` |
 | each TFP family, as `Normal(output_name, loc, scale, *, label=None, event_spec=None)` | `event_spec: OutputSpec \| None` | `event_spec: TermSpec \| None` |
 | `distribution(...)` | `event_spec: OutputSpec \| TermSpec, output_name: str \| None` | `event_spec: TermSpec, output_name: str \| None` |
-| `conditional_distribution(fn, ...)` | `given_spec: ... \| OutputSpec, event_spec: OutputSpec \| TermSpec \| None` | `given_spec: InputSpec \| Mapping[str, TermSpec \| tuple] \| RecordSpec \| None, event_spec: TermSpec \| None, output_name: str \| None = None` |
+| `conditional_distribution(fn, ...)` | `given_spec: ... \| OutputSpec, event_spec: OutputSpec \| TermSpec \| None` | `given_spec: RecordSpec \| Mapping[str, TermSpec \| tuple] \| None, event_spec: TermSpec \| None, output_name: str \| None = None` |
 | `EmpiricalDistribution.__init__`, `KDEDistribution.__init__` | `output_name: str \| None, event_spec: OutputSpec \| None` | `output_name: str \| None, event_spec: TermSpec \| None` |
 | `BootstrapReplicateDistribution`, `BootstrapDistribution`, `RandomFunction`, `RandomMeasure`, `glm_likelihood`, `GLMFamily.build` | `event_spec: OutputSpec \| None` | `event_spec: TermSpec \| None` |
 | `GaussianRandomFunction`, `GaussianProcess`, `LinearBasisFunction` | `output_spec: OutputSpec \| None, event_spec: OutputSpec \| None` | `return_spec: TermSpec \| None, event_spec: TermSpec \| None` |
-| `Function.__init__`, `function(...)` | `input_spec: ... \| OutputSpec, output_spec: OutputSpec \| TermSpec \| None` | `input_spec: InputSpec \| Mapping[str, TermSpec \| tuple] \| RecordSpec \| None, return_spec: TermSpec \| None, output_name: str \| None = None` |
+| `Function.__init__`, `function(...)` | `input_spec: ... \| OutputSpec, output_spec: OutputSpec \| TermSpec \| None` | `input_spec: RecordSpec \| Mapping[str, TermSpec \| tuple] \| None, return_spec: TermSpec \| None, output_name: str \| None = None` |
 | `EvaluationPoints.__init__` | `output_spec: OutputSpec \| None` | `return_spec: TermSpec \| None, output_name: str \| None = None` |
 | `NumericArray.__init__`, `Opaque.__init__` | (none) | `output_name: str \| None = None`, keyword-only |
 | `NumericArrayBatch`, `OpaqueBatch`, `FunctionBatch`, `DistributionBatch`, `ConditionalDistributionBatch` | (none) | `output_name: str \| None = None`, keyword-only |
@@ -1841,11 +1979,35 @@ event_spec : TermSpec, optional
     ``NumericArraySpec((3,), dtype=np.float32)``. By default, the family's spec.
 """
 
+# ConditionalDistribution.__init__
+"""
+given_spec : RecordSpec or Mapping
+    The kernel's inputs, by name: the top-level names of a ``RecordSpec``, or
+    the keys of a mapping, which is converted to one. Each name is a Python
+    identifier.
+optional_inputs : iterable of str, optional
+    The inputs that a binding may omit, for each of which the subclass holds a
+    default. Empty by default.
+"""
+
 # conditional_distribution
 """
+given_spec : RecordSpec, Mapping, or None, optional
+    The spec of each parameter of *fn*, by name. A mapping is converted to a
+    ``RecordSpec``. A parameter it leaves out takes its annotation, or else the
+    spec of its default's value. The parameters with a default are the
+    kernel's optional inputs.
 output_name : str, optional
     The name of the kernel's one output when its event is not a record. By
     default, the output name of the law the function returns.
+"""
+
+# Function.__init__, function
+"""
+input_spec : RecordSpec, Mapping, or None, optional
+    The spec of each parameter, by name. A mapping is converted to a
+    ``RecordSpec``. None reads the inputs from the signature. The parameters
+    with a default are the function's optional inputs.
 """
 
 # Function.__init__, function, EvaluationPoints
@@ -2051,6 +2213,115 @@ class _RenamedConditionalDistribution(ConditionalDistribution):
 
 Its code for grouped and split inputs is deleted: `_leaf_values`, the `origins` mapping of each leaf to the parent's leaf, the bindings held until the rest of a split input is bound, and, in `distributions/_conditional.py`, `_moved_inputs`, `_is_input_path`, `_check_rename_source`, and `_check_disjoint_sides`.
 
+### 5.12 `core/_inputs.py` (new): reading and merging inputs
+
+```python
+"""The inputs of a spec: reading them from a constructor's argument, and merging two specs' inputs."""
+
+
+def _as_input_spec(declared_inputs: RecordSpec | Mapping[str, TermSpec | tuple], *, owner: str) -> RecordSpec:
+    """The input spec that a constructor's argument declares, with each input name checked.
+
+    A spec's inputs are the top-level names of a ``RecordSpec``. A constructor
+    that takes inputs accepts that record, or a mapping from input name to
+    spec, which is converted to one; a tuple value is converted to a
+    ``NumericArraySpec`` of that shape. An input is a Python parameter, so
+    each input name must be a Python identifier that is not a keyword.
+
+    Parameters
+    ----------
+    declared_inputs : RecordSpec or Mapping
+        The inputs as the constructor's caller gave them.
+    owner : str
+        How a message names the spec or term being built, such as
+        ``"ConditionalDistributionSpec"``.
+
+    Returns
+    -------
+    RecordSpec
+        The input spec. A ``RecordSpec`` argument is returned unchanged.
+
+    Raises
+    ------
+    TypeError
+        If *declared_inputs* is neither a ``RecordSpec`` nor a mapping, or a
+        value of the mapping is neither a ``TermSpec`` nor a tuple.
+    ValueError
+        If an input name is not a Python identifier or is a keyword. A mapping
+        key with ``/`` is refused as such a name before the mapping is
+        converted, so it never becomes a group.
+
+    Examples
+    --------
+    >>> _as_input_spec({"mu": (), "sigma": ()}, owner="ConditionalDistributionSpec")
+    NumericRecordSpec(mu=(), sigma=())
+    >>> _as_input_spec({"g/b": ()}, owner="ConditionalDistributionSpec")
+    Traceback (most recent call last):
+    ValueError: ConditionalDistributionSpec cannot take the input 'g/b', since an input name is a Python identifier. Name one input 'g', and give it a RecordSpec as its spec
+    """
+
+
+def _merge_inputs(
+    first_inputs: RecordSpec,
+    second_inputs: RecordSpec,
+    dim_sizes: _DimensionSizes,
+    *,
+    first_optional: frozenset[str],
+    second_optional: frozenset[str],
+) -> tuple[RecordSpec, frozenset[str]]:
+    """The inputs of a merge's result, from the inputs that its two operands leave unfed.
+
+    A merge's result takes every input of its operands that no output of the
+    other feeds. The caller removes the fed inputs first, and passes the
+    rest. An input that only one operand takes keeps its spec and its flag.
+    An input that both take is one input, whose spec is the unification of
+    its two specs, and which is optional only when it is optional in both.
+    All the inputs form one dimension scope, *dim_sizes*, which the merge
+    shares with its check that each output feeds its input.
+
+    Parameters
+    ----------
+    first_inputs : RecordSpec
+        The unfed inputs of the left operand.
+    second_inputs : RecordSpec
+        The unfed inputs of the right operand.
+    dim_sizes : _DimensionSizes
+        The sizes bound so far in the merge's dimension scope.
+    first_optional : frozenset of str
+        The optional inputs among *first_inputs*.
+    second_optional : frozenset of str
+        The optional inputs among *second_inputs*.
+
+    Returns
+    -------
+    tuple of (RecordSpec, frozenset of str)
+        The result's input spec, with the inputs of *first_inputs* followed by
+        those of *second_inputs* not already present, and the result's
+        optional inputs.
+
+    Raises
+    ------
+    ValueError
+        If the two specs of a shared input do not unify, naming the input.
+
+    Examples
+    --------
+    >>> inputs, optional = _merge_inputs(
+    ...     RecordSpec(theta=("n",), x=()),
+    ...     RecordSpec(theta=(3,), y=()),
+    ...     _DimensionSizes(),
+    ...     first_optional=frozenset({"theta", "x"}),
+    ...     second_optional=frozenset(),
+    ... )
+    >>> inputs
+    NumericRecordSpec(theta=(3,), x=(), y=())
+    >>> optional
+    frozenset({'x'})
+    """
+```
+
+It replaces `InputSpec.__and__`, whose one call outside `core/_specs.py` is in `distributions/_factored.py`, and IV.2's merge computes its result's inputs with it.
+
 ## 6. Step P2 in detail: the output name out of specs
 
 This section lists every site that step P2 changes, beyond the API of § 5.
@@ -2092,7 +2363,7 @@ Four groups of readers change behaviour:
 `_law_repr` reads `x._output_name`, so `Normal('x', ...)` prints as today, and a spec's repr shows no name.
 
 **A consumer that needs a known output spec.** It refuses `None` for its own reason, with a message that names the object and says its return spec is known after its first call.
-A merge refuses it because its conformance check needs a spec, and `InputSpec` refuses it because `None` is not a source of inputs.
+A merge refuses it because its conformance check needs a spec.
 
 **Equality, fingerprints, and JAX.**
 1. A spec's equality and hash compare structure only. II.2's three rules for the name in equality become one: no spec holds a name.
@@ -2101,8 +2372,8 @@ A merge refuses it because its conformance check needs a spec, and `InputSpec` r
 4. The static data of a `NumericArray` and a `NumericArrayBatch` is `(spec, output_name)`, so a transform keeps the name, and two values that differ only in their names trace separately. A record and a batch of records have no name.
 
 **Deleted.**
-- `OutputSpec` and its export from `probpipe`.
-- In `core/_specs.py`: `_EXPOSED_SPECS`, `_EXPOSED_OF`, `_exposed_kind`, `_exposed_outputs`, `_root_path`, `_ROOT_NAMES`, `_unification`, `_renamed_exposed`, `_root_output_name`, `_has_record_outputs`, `_VALUES_WITHOUT_RECORD`, `_no_output_record`, `_type_not_known`, `_output_record`, `_unnamed_declaration`, and `_unnamed_exposed`.
+- `OutputSpec` and `InputSpec`, and their exports from `probpipe`.
+- In `core/_specs.py`: `_check_input`, `_unify_input_types`, `_EXPOSED_SPECS`, `_EXPOSED_OF`, `_exposed_kind`, `_exposed_outputs`, `_root_path`, `_ROOT_NAMES`, `_unification`, `_renamed_exposed`, `_root_output_name`, `_has_record_outputs`, `_VALUES_WITHOUT_RECORD`, `_no_output_record`, `_type_not_known`, `_output_record`, `_unnamed_declaration`, and `_unnamed_exposed`.
 - `_complete_event_spec` and `_whole_term_event` in `distributions/_distribution.py`, `_complete_output_spec` in `values/_function_base.py`, the `OutputSpec` cases of `_as_element_spec` in `core/_batch.py`, and `_form_keywords` in `distributions/_factored.py`.
 
 `_merged_output_record` stays, and merges the output specs of its operands.
@@ -2110,10 +2381,10 @@ Five path helpers read an `OutputSpec`: `_read_paths`, `_path_record`, `_has_pat
 P2 rewrites them over the value spec, and P3 deletes them.
 
 **Commits.** P2 is one PR of four commits, and the suite passes after each:
-1. **Accessors, with no change in behaviour:** `_output_name`, `output_names`, `output_spec`, `input_spec`, `_with_input_spec`, `value_spec`, `_with_value_spec`, and `_output_spec_of`, still read from the `OutputSpec` in the spec. Every reader of the tables above moves to them.
-2. **Bare specs:** the spec classes of § 5.7, the constructors of § 5.8, `Declared`, the five naming rules, equality, fingerprints, and JAX static data. A script rewrites the `.term_spec` reads.
-3. **Deletion:** `OutputSpec`, its export, and the helpers above.
-4. **Documents:** `docs/api/input_and_output_specs.md`, `docs/api/extending.md`, the notebooks that build an `OutputSpec` (user guide 01, 03, and 09, and tutorial 06), the `design/` sections of § 8, and the CHANGELOG.
+1. **Accessors, with no change in behaviour:** `_output_name`, `output_names`, `output_spec`, `input_spec`, `optional_inputs`, `required_inputs`, `_with_inputs`, `value_spec`, `_with_value_spec`, and `_output_spec_of`, still read from the `OutputSpec` and the `InputSpec` in the spec. Every reader of the tables above moves to them, and every read of `.required` and `.optional` on an input spec moves to `required_inputs` and `optional_inputs`.
+2. **Bare specs:** the spec classes of § 5.7, with their inputs as a `RecordSpec` and `optional_inputs`; `_as_input_spec` and `_merge_inputs` (§ 5.12); the constructors of § 5.8, which read the optional inputs from the defaults; `Declared`, the five naming rules, equality, fingerprints, and JAX static data. A script rewrites the `.term_spec` reads.
+3. **Deletion:** `OutputSpec`, `InputSpec`, their exports, and the helpers above.
+4. **Documents:** `docs/api/input_and_output_specs.md`, `docs/api/extending.md`, the notebooks that build an `OutputSpec` or an `InputSpec` (user guide 01, 03, and 09, and tutorial 06), the `design/` sections of § 8, and the CHANGELOG.
 
 ## 7. Tests
 
@@ -2125,11 +2396,18 @@ P2 rewrites them over the value spec, and P3 deletes them.
 6. One table test of the five naming rules of § 6, with a row for each operation it lists.
 7. Two laws that differ only in their names have equal specs and equal fingerprints, and a `jax.jit` round trip keeps the name of a `NumericArray` and of a `NumericArrayBatch`.
 8. Stating an output name on a record-valued object raises `ValueError`, from a constructor or from `rename`, and `probpipe.OutputSpec` no longer exists.
-9. A function whose return spec is not known has `output_spec` `None`; `InputSpec()` has no inputs; `InputSpec(None)` and `InputSpec(f.output_spec)` for such a function raise `TypeError`; and a merge with such a function refuses it with a message that names the function.
+9. A function whose return spec is not known has `output_spec` `None`, and a merge with such a function refuses it with a message that names the function; every kind without inputs has `input_spec == RecordSpec()` and empty `optional_inputs`.
 10. One table test of `rename` over every kind with inputs: each key classified as an input name, the output name, or a path; an input renamed to a path raises `ValueError`; a rename that makes a name both an input and an output raises `ValueError`; and a function or kernel constructed with a name on both sides raises `ValueError`, as does a function whose first call returns a record with a child named like an input.
 11. A function's input rename keeps each parameter's default, the function's `traceable` flag and its `jax.jit` result, its `bind=` values under the new names, and its controls; renaming twice gives one `_RenamedCallable` over the original callable; and two functions that differ only in input names have different fingerprints.
 12. For every kind and every rename whose keys exclude the output name, `x.rename(m).spec == x.spec.rename(m)`; `TermSpec.rename` on each spec class renames inputs and paths and refuses an input renamed to a path.
 13. A renamed kernel binds and conditions under its new input names, renames the law it returns by its event moves, and renamed again wraps the original kernel, not the first view.
+14. One table test of inputs:
+    - a `Function` and a kernel from `conditional_distribution` have as `optional_inputs` the parameters with defaults, and a merge and a binding have those of IV.2;
+    - the optional inputs survive `with_dim_sizes`, `refine`, `rename` (under the new name), and a batch's element spec;
+    - `conforms_to` holds when the declared spec's optional inputs are among the actual spec's, and fails otherwise;
+    - two specs that list the same inputs in different orders are equal and hash equal;
+    - `_as_input_spec` refuses a name that is not an identifier, a keyword, and a key with `/`, and the spec constructors refuse an optional input that is not an input;
+    - `_merge_inputs` follows its examples, and a shared input whose specs do not unify raises `ValueError`.
 
 ## 8. Edits to the other plans and to `design/`
 
@@ -2158,11 +2436,13 @@ P2 rewrites them over the value spec, and P3 deletes them.
 - II.6, where `Record({"x": 3.0, "g": d})["g/mu"]` is `d["mu"]` and `without` removes a node inside a held term;
 - III.3, where `record[path]` reads through a held term.
 
-II.2 also drops paths into a record input: an input spec's `[]` and `without` take input names only, and no input becomes required because a path cut it.
-In II.2, `InputSpec`'s signature drops `| None = None` for the sentinel `_NO_INPUTS`, and `None` is refused as a source.
+II.2 replaces `InputSpec` with a `RecordSpec` input spec and the spec's `optional_inputs` (§ 4.4). Its `InputSpec` block, the four sources, `with_optional`, the `[]` and `without` with paths into a record input, and `&` go; the rule for an input that two merged operands share stays in IV.2, which already states it.
+II.1's rule 5 compares optional inputs one way, and states that a kernel's or function's inputs compare by name.
+III.3 types `input_spec` as a `RecordSpec` or a mapping, reads a function's optional inputs from its defaults, and drops the `ValueError` for an input spec that marks optional a parameter without a default. III.9 types `given_spec` likewise, reads a kernel's optional inputs from its function's defaults in `conditional_distribution`, and adds `optional_inputs=` to `ConditionalDistribution.__init__`.
+`design/package-structure.md` describes `core/_specs.py` as the re-export of the public spec types, now that `InputSpec` and `OutputSpec` are removed, and adds `core/_inputs.py`.
 II.1's `TermSpec` block replaces `bind_dims_from_value` and `bind_dims_from_spec` with `refine_from_value` and `refine`, adds `conforms_to`, and adds the module function `unify`. The three relations move out of the symbolic-dimension protocol into their own group, since refinement also fills unset fields, and II.1's prose states that each relation is one dimension scope (§ 4.5).
 II.6 changes `in` as § 4.1 states, and adds the spec agreement rule.
-`design/glossary.md` replaces *value type* with *value spec*, the structure of a term's value, which each kind defines as § 4 states, and adds *record-valued*: a term or spec whose value spec is a `RecordSpec`. Its *input spec* entry becomes the `input_spec` of every term and spec, `InputSpec()` for a kind that takes no inputs, and still a conditional distribution's `given_spec`. II.2 and II.6 use both terms.
+`design/glossary.md` replaces *value type* with *value spec*, the structure of a term's value, which each kind defines as § 4 states, and adds *record-valued*: a term or spec whose value spec is a `RecordSpec`. Its *input spec* entry becomes the `input_spec` of every term and spec: a `RecordSpec` whose top-level names are the input names, `RecordSpec()` for a kind that takes no inputs, and still a conditional distribution's `given_spec`. Its *input* entry says that a spec records which inputs are optional in `optional_inputs`, and never their defaults. II.2 and II.6 use both terms.
 III.3 drops "a key that names both an input and an output of a function renames both", and states that a function's input names and output names are disjoint, as III.9 states for a kernel.
 III.9 drops the grouping and splitting of a kernel's inputs by path: its `rename` renames each input to one name.
 IV.2's condition 5, that no name of an operand is both an input and an output, now holds for every operand by construction, so a merge never raises it.
@@ -2173,21 +2453,22 @@ II.2's open point on "the record of the outputs of a batch" is settled: a batch'
 
 Each step is one PR.
 
-1. **P1, conformance:** § 5.6, with contravariant inputs, directional opaque types, and unknown sides by § 4.5; `is_valid` through conformance; `InputSpec.__and__` through `unify`. It fixes the departures of § 4.5, and its only renames are `bind_dims_from_spec` to `refine` and `bind_dims_from_value` to `refine_from_value`. `batch-contract.md` step B1 builds on it.
-2. **P2, names out of specs:** § 5.3 to § 5.5 and § 5.7 to § 5.9, by § 6, in its four commits.
+1. **P1, conformance:** § 5.6, with contravariant inputs, optional inputs compared one way, directional opaque types, and unknown sides by § 4.5; `is_valid` through conformance; `InputSpec.__and__` through `unify`. It fixes the departures of § 4.5, and its only renames are `bind_dims_from_spec` to `refine` and `bind_dims_from_value` to `refine_from_value`. `batch-contract.md` step B1 builds on it.
+2. **P2, names out of specs, and inputs as records:** § 5.3 to § 5.5, § 5.7 to § 5.9, and § 5.12, by § 6, in its four commits.
 3. **P3, one path interface:** § 5.1 and § 5.2 for `Record`, `RecordSpec`, `RecordBatch`, `Distribution`, and the spec classes; `without` on laws; the helpers of Appendix A deleted.
-4. **P4, paths and renames on every kind:** § 5.2 for `ConditionalDistribution` and `Function`; § 4.7's renaming, with `TermSpec.rename` and its helpers (§ 5.5), `TrackedTerm.rename` and each kind's `_with_renamed_spec` (§ 5.4), `_check_disjoint_names` (§ 5.3), `_RenamedCallable` (§ 5.10), and the reduced `_RenamedConditionalDistribution` (§ 5.11). Every other `rename` method (on `Distribution`, `ConditionalDistribution`, `RecordBatch`, and the spec classes) is deleted, except `NamedTree.rename` and `InputSpec.rename`, which the two call.
+4. **P4, paths and renames on every kind:** § 5.2 for `ConditionalDistribution` and `Function`; § 4.7's renaming, with `TermSpec.rename` and its helpers (§ 5.5), `TrackedTerm.rename` and each kind's `_with_renamed_spec` (§ 5.4), `_check_disjoint_names` (§ 5.3), `_RenamedCallable` (§ 5.10), and the reduced `_RenamedConditionalDistribution` (§ 5.11). Every other `rename` method (on `Distribution`, `ConditionalDistribution`, `RecordBatch`, and the spec classes) is deleted, except `NamedTree.rename`, which the two call.
 5. **P5, outputs and feeding:** `outputs`, and merge's check through § 4.6.
 
 **What users see.**
-- **Breaking:** `OutputSpec` is removed; `event_spec`, `element_spec`, and `return_spec` (today's `FunctionSpec.output_spec`) are bare specs; an object's output names are read with `output_names`, and the stored name is private; `x["x"]` on a law over an array named `x` raises `TypeError`; a function whose inputs accept less than declared no longer conforms; `bind_dims_from_spec` becomes `refine`, and `bind_dims_from_value` becomes `refine_from_value`, which also fills a dtype, support, type, or metadata the spec leaves unset; `InputSpec(None)` raises `TypeError`, and `InputSpec()` is the input spec with no inputs; a function with a name that is both an input and an output raises at construction; a kernel's inputs can no longer be grouped or split by `rename`, and an input renamed to a path raises.
-- **Added:** renaming a function's inputs; paths on record-valued kernels and functions, and on batches of record-valued laws, kernels, and functions; `without` on laws and on those batches; `input_spec` on every term and spec, `output_names`, `outputs`, `conforms_to`, `unify`, `refine`, and `output_name=` on `NumericArray` and `Opaque`.
-- **Fixed:** the output name leaves spec equality and fingerprints.
+- **Breaking:** `OutputSpec` is removed; `event_spec`, `element_spec`, and `return_spec` (today's `FunctionSpec.output_spec`) are bare specs; an object's output names are read with `output_names`, and the stored name is private; `x["x"]` on a law over an array named `x` raises `TypeError`; a function whose inputs accept less than declared no longer conforms; `bind_dims_from_spec` becomes `refine`, and `bind_dims_from_value` becomes `refine_from_value`, which also fills a dtype, support, type, or metadata the spec leaves unset; `InputSpec` and `with_optional` are removed, and an input spec is a `RecordSpec` beside the spec's `optional_inputs`; a function or kernel built from a callable takes its optional inputs from the callable's defaults only; a function with a name that is both an input and an output raises at construction; a kernel's inputs can no longer be grouped or split by `rename`, and an input renamed to a path raises.
+- **Added:** renaming a function's inputs; paths on record-valued kernels and functions, and on batches of record-valued laws, kernels, and functions; `without` on laws and on those batches; `input_spec`, `optional_inputs`, and `required_inputs` on every term and spec, `output_names`, `outputs`, `conforms_to`, `unify`, `refine`, and `output_name=` on `NumericArray` and `Opaque`.
+- **Fixed:** the output name leaves spec equality and fingerprints; `with_dim_sizes` on a `FunctionSpec` keeps its optional inputs.
 
-## 10. Questions for the maintainer
+## 10. Questions for the maintainer and reviewers
 
 1. **Conformance.** Recommended: the public `conforms_to`, `unify`, and `refine`, with II.1's rules (§ 4.5).
 2. **Names.** Recommended: `value_spec`, `return_spec`, `output_names`, `outputs`, and `output_spec`, with the constructor keyword `output_name=` (§ 5.9).
+3. **Input order, for reviewers.** Does input order count when two specs are compared? Recommended for now: inputs compared by name, in any order, as II.2 states (§ 4.4).
 
 ## Appendix A. Path helpers that the path interface replaces
 
