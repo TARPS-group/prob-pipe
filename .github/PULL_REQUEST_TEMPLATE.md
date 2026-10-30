@@ -2,6 +2,15 @@
 
 <!-- One short paragraph describing what this PR does and why. -->
 
+## Examples
+
+<!--
+A short runnable example of each change of behavior, with its real output:
+the same call before and after for a changed behavior, and a call that uses a
+new feature. Write N/A when the PR has no behavior to run (CONTRIBUTING.md
+§ Opening the PR).
+-->
+
 ## Linked issue(s)
 
 <!--
@@ -16,7 +25,7 @@ Use one of:
 <!--
 For each abstraction this PR adds or changes, say whether its contract is
 unambiguous, and record each decision that resolved an ambiguity
-(CONTRACTS.md directives 1 and 3). Write "None" when no contract changes.
+(CONTRIBUTING.md § Changing the code, rule 2). Write "None" when no contract changes.
 -->
 
 ## Test plan
@@ -52,10 +61,10 @@ Tick what applies; leave blank if not relevant.
 - [ ] Linked to an issue above — or N/A for a small standalone fix (see CONTRIBUTING.md)
 - [ ] `ruff check` and `ruff format --check` pass (CONTRIBUTING.md § Linting & pre-commit)
 
-The contract items follow the directives of CONTRACTS.md:
+The contract items follow CONTRIBUTING.md § Changing the code and STYLE_GUIDE.md:
 
-- [ ] Directive 1: the contract of every changed abstraction was clear before coding, and the contract assessment records each ambiguity resolved
-- [ ] Directive 2: new and changed contracts are documented in full in their docstrings (types, shapes, orderings, raises, invariants), and each docstring opens with the API
-- [ ] Directive 3: the code obeys each documented contract, tests assert it (shapes, orderings, and error cases), and names follow `design/glossary.md` § Canonical names
-- [ ] Directive 4: a contract found wrong, missing, or unclear in `design/` or a docstring is fixed or raised with the maintainer
-- [ ] Directive 5: docstrings describe the design's target contract and terms, and any temporary coexistence is labeled as an interim implementation detail
+- [ ] The design decides: docstrings and names follow the design's target contract and vocabulary, and each conflict, gap, public name, or amendment is raised with the maintainer
+- [ ] The contract of every changed abstraction was settled before coding, and the contract assessment records each decision
+- [ ] A contract found wrong, missing, or unclear in `design/` or a docstring is fixed or raised with the maintainer, and interim code is labeled as an interim implementation detail
+- [ ] Docstrings state each new and changed contract in full and open with the API (STYLE_GUIDE.md §3.4)
+- [ ] Tests assert each new and changed contract, its shapes, orderings, and error cases included (STYLE_GUIDE.md §8.7), and names follow STYLE_GUIDE.md §1.12

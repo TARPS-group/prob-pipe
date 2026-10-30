@@ -837,8 +837,8 @@ class Batch[E](TrackedTerm, ABC):
 
         By **path**, ``batch["x"]`` addresses the node at the path ``x`` of every
         element, and a list or a tuple of paths, as ``batch["a", "g/c"]``, the
-        elements cut down to those nodes. A tuple is a list of paths; a nested
-        path is written with ``/``. A batch whose elements are records
+        elements cut down to those nodes. A tuple is read as a list of paths; a
+        nested path is written with ``/``. A batch whose elements are records
         answers; a batch whose elements are arrays or opaque values has no
         paths.
 
@@ -846,7 +846,8 @@ class Batch[E](TrackedTerm, ABC):
         ----------
         paths_or_positions : int, slice, str, list, or tuple
             An integer, a slice, or a tuple of them addresses the batch axes; a
-            string is one path, and a list or a tuple of strings a list of paths.
+            string is read as one path, and a list or a tuple of strings as a list
+            of paths.
 
         Returns
         -------

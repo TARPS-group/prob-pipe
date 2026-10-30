@@ -15,7 +15,7 @@ issues and consistency with ProbPipe conventions.
 
 **What it checks:**
 - ProbPipe philosophy and convention adherence (read from `AGENTS.md`,
-  `CONTRACTS.md`, `STYLE_GUIDE.md`, `CONTRIBUTING.md`, and `design/` at review
+  `STYLE_GUIDE.md`, `CONTRIBUTING.md`, and `design/` at review
   time, so it stays current as conventions evolve)
 - Documentation completeness and staleness — including whether the PR should
   have updated a rule document or `design/`
@@ -65,7 +65,7 @@ refactor, or to audit specific test files before a release.
   (analytical formulas, scipy, numerical approximations) rather than
   self-referential checks; flags inappropriate tolerances
 - **Style and conventions** — checks against `STYLE_GUIDE.md` §8, the
-  contract tests of `CONTRACTS.md` directive 3, and existing suite patterns
+  contract tests of `STYLE_GUIDE.md` §8.7, and existing suite patterns
 
 **Usage:**
 ```
@@ -126,7 +126,8 @@ Runs the pre-PR procedure on the current branch and drafts the PR body.
 - Checks the branch, the title, and the commits against `CONTRIBUTING.md`, with
   `scripts/ci/pr_hygiene.py`
 - Runs the verification steps of `AGENTS.md` § Verify
-- Audits the changed contracts and docstrings against `CONTRACTS.md`
+- Audits the changed contracts and docstrings against `CONTRIBUTING.md`
+  § Changing the code and `STYLE_GUIDE.md` §3.4
 - Drafts the body from `.github/PULL_REQUEST_TEMPLATE.md`, with the contract
   assessment and the test plan filled in, and writes it to a file
 

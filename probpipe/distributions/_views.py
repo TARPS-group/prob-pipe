@@ -1231,7 +1231,7 @@ class CoupledMarginal(Distribution):
     def __getitem__(self, paths: PathsLike, /) -> Distribution:
         """This coupled marginal itself, or the law at a path or a list of paths of the coupled marginal.
 
-        A tuple is a list of paths; a nested path is written with ``/``.
+        A tuple is read as a list of paths; a nested path is written with ``/``.
         A path of a coupled marginal over one path starts with its output's name, so
         ``d["a"]["a/b/c"]`` reads the node that ``d["a/b/c"]`` reads. A list of
         paths of the coupled marginal gives the law whose event keeps each node at its path
