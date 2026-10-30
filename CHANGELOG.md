@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed (breaking)
 
+- **A product built with `&` carries provenance, so it takes no record of
+  your own.** Before, `(a & b).with_provenance(p)` attached `p`. Now it raises
+  `RuntimeError`, since the merge records `&` and provenance is set once. To
+  attach a record of your own to a product, build it with
+  `FactoredDistribution((a, b))` from `probpipe.distributions`, whose result
+  carries none.
+
 - **`Function.check` reports the call's output spec.** `CallReport.result` is
   the output spec whose `term_spec` is the spec of the term the call returns.
   Before, it was the function's output spec, which describes one evaluation of
@@ -2151,6 +2158,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`print(x.provenance)` prints the lineage of `x`.** Each line is one step,
+  from the loaded data or another root down to `x`, with the call that made it,
+  its route and method, and whether it is exact or approximate. A step that two
+  later steps use is listed once, and both refer to its number. A field or an
+  element read from a container shows as the container indexed by its path,
+  as `4['beta']`. Operands remain visible when their labels match the operation's
+  name, and substituting parent references preserves quoted string arguments.
+  The steps that a route runs inside a call, such as the inference target and
+  the sampler's run inside `condition_on`, fold into that call's line, which
+  names the route and the method. A step that a later step also uses stays a
+  line, and the record, `to_dict()`, and `provenance_ancestors` keep every step.
+  A managed call records the positions of its route's results among its parents
+  under the metadata key `route_results`. The repr stays the short form.
+
+  ```text
+  >>> print(answer.provenance)
+  1. load_data('data.csv', '72327ac7…')  route body, exact
+  2. prepare_inputs(1)                   route body, exact
+  3. model = build_model(2)              route body, exact
+  4. posterior = condition_on(3, 2)      method nuts, approximate
+  5. mean(4['beta'])                     route closed_form, exact
+  ```
+
 - **Bare calls can share a default random stream.**
   `workflow_run.set_default(seed=...)` starts the stream, and
   `workflow_run.clear_default()` removes it. Explicit scopes and replay use
@@ -3372,6 +3402,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   together: ValueError: r must be positive`, and `error.failures` still lists
   each evaluation point.
 
+- **An AI assistant designs a ProbPipe pipeline with you.** The design
+  assistant interviews a scientist about their question, data, and existing
+  models, then proposes, validates on realistic simulated data, and fits a
+  pipeline, recording each decision in a design document. Any agent that can
+  run shell commands follows it through the prompt in
+  `docs/get_started/design_assistant.md`. In Claude Code it is the skill
+  `/design-pipeline`. Its instructions are in `.claude/skills/design-pipeline/`.
+
 - **`blackjax_nuts` takes `target_accept_prob` and `max_tree_depth`.** It
   passes the target acceptance rate of the step-size adaptation to BlackJAX's
   window adaptation as `target_acceptance_rate`, and the maximum depth of the
@@ -3401,6 +3439,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ```
 
 ### Changed
+
+- **Tutorials 1 to 4 are revised and shown on the site again.** They follow one
+  analysis of the moose counts:
+  1. a first look at ProbPipe: a population model, a statistical model built
+     with `&`, its fit, and predictions from the fit;
+  2. checks of the modeling assumptions: prior and posterior predictions,
+     predictive checks, and provenance;
+  3. the model revised with a yearly shock to the growth, fit again, and
+     checked again;
+  4. forecasts of the counts with uncertainty, the probability of a low count,
+     and provenance.
+  Tutorials 5 to 7 stay out of the site's navigation while they are revised,
+  and the design assistant reads tutorials 1 to 4 again.
+
+- **The documentation installs ProbPipe from `main`.** The install commands,
+  the Colab cells of the tutorials and user guide, their data URLs, and the
+  design assistant's prompt name the `main` branch.
 
 - **Faster minibatches without replacement.** Sampling retains distinct indices
   from batches of random candidates. Additional candidates supplement an incomplete batch.
@@ -4383,6 +4438,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a worker needed by its callbacks; ordinary Function bodies retain their
   selected-executor behavior.
 
+- **The contributor rules are stated once each, and `CONTRACTS.md` is
+  removed.** `CONTRIBUTING.md` § Changing the code states how a change follows
+  `design/`, when and how to ask the maintainer, and how a change settles and
+  fixes contracts. `STYLE_GUIDE.md` gains the naming rules of §1.12, module
+  order and reuse (§2.4 and §2.5), what a docstring states (§3.4), and tests
+  that assert a contract (§8.7). `CONTRIBUTING.md` § Opening the PR asks each
+  PR body to show its changes of behavior as runnable examples with their
+  output, to record its contract decisions, and to be reviewed as a draft
+  before review is requested. The PR template gains an Examples section, which
+  the advisory PR hygiene check expects in every body, and its checklist cites
+  these sections.
+
 ### Removed (breaking)
 
 - **`NumericArray.value`, `Opaque.value`, and `NumericArrayBatch.values` are
@@ -4428,6 +4495,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   names the classes being removed.
 
 ### Fixed
+
+- A law passed where a kernel is required is rejected before sampling, both in
+  `check` and in a call. `predictive_check` preserves sweeps over batches of kernels.
+
+- MCMC warnings summarize each original parameter's failing coordinates and worst value.
+  Diagnostic tables size the parameter column to fit long names.
+
+- **Default workflow streams continue across terminal IPython cells.** Ordinary
+  cells and cells with top-level `await` continue the configured stream.
+  Setting or clearing the default in an `await` cell applies to later cells.
+  Kernel shells running in an application thread continue their stream too.
+
+- **Copied contexts keep default-scope changes local.** Setting or
+  clearing a default in a copied context leaves later cells on the notebook's
+  stream. A background thread's first setting leaves the main kernel free to
+  configure its own default. Wrapping a shell's `run_cell_async` method preserves
+  cross-cell continuation. An ipykernel subshell's completion preserves the
+  main cell's ownership handoff.
+
+- **A law or a kernel built with `&` records its lineage.** Before, `(a &
+  b).provenance` was `None`, so a result computed from a merge, such as a
+  quantile of a posterior predictive `likelihood.rename(y="y_pred") &
+  posterior`, lost the lineage of the posterior and stopped short of
+  `condition_on`. Now the merge records the operation `&` with its two
+  operands as parents, left first, and `print(x.provenance)` shows it as `1 &
+  4`. A chain such as `a & b & c` prints as one line, and so does
+  `lik & (a & b)`. A law that a constructor builds, `FactoredDistribution(...)`
+  included, still records none.
+
+  ```text
+  >>> print(median.provenance)
+  1. likelihood = rename(likelihood)
+  2. likelihood & (prior_mu & prior_sigma)
+  3. likelihood·prior_mu·prior_sigma = condition_on(2, given)  route inference_methods, method blackjax_nuts, approximate
+  4. posterior = with_label(3)
+  5. 1 & 4
+  6. quantile(5['y_pred'], q, given)                   route monte_carlo, approximate
+  ```
 
 - **Default workflow streams continue across notebook cells.** IPython cells
   with top-level `await` and kernels that change tasks between cells keep the

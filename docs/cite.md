@@ -1,5 +1,3 @@
-> **AI-generated.** An AI assistant drafted this page, and no maintainer has reviewed it yet. Please report errors on the issue tracker.
-
 # Citing ProbPipe
 
 If you use ProbPipe in your research, we would appreciate a citation.
@@ -16,9 +14,9 @@ to pin a specific version (each release also gets its own version DOI).
 @software{probpipe,
   author  = {Huggins, Jonathan and Roberts, Andrew and Zhu, Jiaqiang and
              Erozer, Can and Lim, Yongho},
-  title   = {{ProbPipe}: Probabilistic pipelines with automated uncertainty quantification},
+  title   = {{ProbPipe}: A probabilistic workflow language for {Python}},
   year    = {2026},
-  version = {0.1.0},
+  version = {0.2.0.dev0},
   doi     = {10.5281/zenodo.20683559},
   url     = {https://github.com/TARPS-group/prob-pipe}
 }
@@ -50,3 +48,5 @@ references.
 
 As ProbPipe-specific methods are published, their references will be listed
 here.
+
+> **Human-validated** by Jonathan Huggins on 2026-10-25.

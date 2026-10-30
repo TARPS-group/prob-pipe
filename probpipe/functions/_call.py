@@ -347,16 +347,42 @@ def _consumes_kernel(expected: Any) -> bool:
     ``ConditionalDistribution`` class or a conditional capability, after
     :func:`_normalization._arms` resolves the arm's type aliases.
     """
-    for arm in _normalization._arms(expected):
-        if arm in _KERNEL_HINT_PROTOCOLS:
-            return True
-        named = _normalization._hint_class(arm)
-        try:
-            if isinstance(named, type) and issubclass(named, ConditionalDistribution):
-                return True
-        except TypeError:
-            continue
-    return False
+    return any(_names_kernel(arm) for arm in _normalization._arms(expected))
+
+
+def _consumes_only_kernels(expected: Any) -> bool:
+    """Whether every arm of an annotation names a kernel, so its parameter admits no law.
+
+    ``None`` is not an arm, so ``ConditionalDistribution | None`` admits no
+    law either. A union with an arm that names a law class or a value type
+    admits a law, whole or lifted.
+    """
+    arms = _normalization._arms(expected)
+    return bool(arms) and all(_names_kernel(arm) for arm in arms)
+
+
+def _law_kind(value: Any) -> str | None:
+    """``"a law"`` or ``"a batch of laws"`` when *value* is one, for a refusal's message; ``None`` otherwise."""
+    if isinstance(value, Distribution) and not isinstance(value, Batch):
+        return "a law"
+    if (
+        isinstance(value, Batch)
+        and len(value.batch_shape) > 0
+        and isinstance(value.element_spec.term_spec, DistributionSpec)
+    ):
+        return "a batch of laws"
+    return None
+
+
+def _names_kernel(arm: Any) -> bool:
+    """Whether one resolved arm of an annotation names a ``ConditionalDistribution`` class or a conditional capability."""
+    if arm in _KERNEL_HINT_PROTOCOLS:
+        return True
+    named = _normalization._hint_class(arm)
+    try:
+        return isinstance(named, type) and issubclass(named, ConditionalDistribution)
+    except TypeError:
+        return False
 
 
 def _expects_value(expected: Any) -> bool:
@@ -435,9 +461,9 @@ def _raw_form_named(value: Any, hint: Any) -> Any:
 def arrived_kind(value: Any) -> type[TermSpec]:
     """The kind *value* is, named by its spec class, by the kind-directed wrap of V.4.
 
-    A tracked term is the kind of its spec; a raw mapping is a record, a numeric
-    host an array, and a callable a function; any other value, a list, a tuple,
-    or a set among them, is opaque.
+    A tracked term is the kind of its spec. A raw mapping arrives as a record, a
+    numeric host as an array, and a callable as a function; any other value, a
+    list, a tuple, or a set among them, arrives as an opaque value.
     """
     if isinstance(value, TrackedTerm):
         spec = getattr(value, "spec", None)
@@ -591,11 +617,13 @@ def admit_arguments(
     argument whose elements or draws are of such a kind (VI.0). Any other
     argument is admitted against its parameter's own annotation, so an
     argument that a variadic parameter annotated ``Any`` collects is admitted
-    whatever its kind. A conditional distribution at a parameter that expects a
-    value is refused, since a kernel has no marginal law to lift over. Where an
-    *input_spec* declares an input, the argument's kind must be the input's: a
-    value's own kind, the event kind of a law the input lifts, or the element
-    kind of a batch it sweeps (V.4).
+    whatever its kind. A law, or a batch of laws, at a parameter whose every arm
+    names a kernel is refused, since a lift or a sweep would pass the body draws
+    or laws where it expects a kernel. A
+    conditional distribution at a value parameter is refused, since a kernel has
+    no marginal law to lift over. Where an *input_spec* declares an input, the
+    argument's kind must be the input's: a value's own kind, the event kind of a
+    law the input lifts, or the element kind of a batch it sweeps (V.4).
 
     Parameters
     ----------
@@ -633,10 +661,16 @@ def admit_arguments(
         if role is not None:
             _admit_by_role(info, ref, value, role, function_name=function_name, lifts=lifts)
             continue
-        if isinstance(value, ConditionalDistribution) and _expects_value(
-            info.hints.get(ref.parameter_name)
-        ):
-            owner = f"{function_name}: " if function_name else ""
+        expected = info.hints.get(ref.parameter_name)
+        owner = f"{function_name}: " if function_name else ""
+        law_kind = _law_kind(value)
+        if law_kind is not None and _consumes_only_kernels(expected):
+            raise ApplicabilityError(
+                f"{owner}parameter {ref.label!r} expects a ConditionalDistribution, but got "
+                f"{type_name(value)} {value.label!r}, which is {law_kind}. Pass a "
+                "ConditionalDistribution instead"
+            )
+        if isinstance(value, ConditionalDistribution) and _expects_value(expected):
             raise ApplicabilityError(
                 f"{owner}parameter {ref.label!r} expects a value, but got {type_name(value)} "
                 f"{value.label!r}, which has no marginal to broadcast over. Condition "

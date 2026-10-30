@@ -1,7 +1,7 @@
 cff-version: 1.2.0
 message: "If you use ProbPipe in your research, please cite it using the metadata below."
 title: "ProbPipe"
-abstract: "A Python framework for building scalable probabilistic pipelines with automated uncertainty quantification."
+abstract: "A probabilistic workflow language (PWL) for Python, which connects the tools you already use into one coherent workflow, from data preparation through prediction and decision-making."
 type: software
 authors:
   - given-names: Jonathan
@@ -27,7 +27,7 @@ authors:
 repository-code: "https://github.com/TARPS-group/prob-pipe"
 url: "https://tarps-group.github.io/prob-pipe/"
 license: Apache-2.0
-version: "0.1.0"
-date-released: "2026-06-13"
+version: "0.2.0.dev0"
+date-released: "2026-10-25"
 # Zenodo concept DOI (all versions):
 doi: "10.5281/zenodo.20683559"

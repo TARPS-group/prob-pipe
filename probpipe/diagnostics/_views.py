@@ -352,7 +352,7 @@ class DiagnosticsView(DataTreeView):
                 s = str(v)
             return s.ljust(width)
 
-        col_w = [14, 10, 12, 12, 12]
+        col_w = [max(14, max(map(len, params)) + 2), 10, 12, 12, 12]
 
         header = (
             "Parameter".ljust(col_w[0])

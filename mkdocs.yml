@@ -1,23 +1,25 @@
 site_name: ProbPipe
-site_description: Probabilistic pipelines with automated uncertainty quantification
+site_description: A probabilistic workflow language (PWL) for Python
 site_url: https://tarps-group.github.io/prob-pipe
 repo_url: https://github.com/TARPS-group/prob-pipe
 repo_name: TARPS-group/prob-pipe
 
 theme:
   name: material
+  logo: assets/logo/probpipe-mark-dark.svg
+  favicon: assets/logo/favicon.png
   palette:
     - media: "(prefers-color-scheme: light)"
       scheme: default
-      primary: indigo
-      accent: indigo
+      primary: custom
+      accent: custom
       toggle:
         icon: material/brightness-7
         name: Switch to dark mode
     - media: "(prefers-color-scheme: dark)"
       scheme: slate
-      primary: indigo
-      accent: indigo
+      primary: custom
+      accent: custom
       toggle:
         icon: material/brightness-4
         name: Switch to light mode
@@ -75,21 +77,34 @@ markdown_extensions:
       # mkdocstrings and are excluded by this depth limit.
       toc_depth: 3
 
+extra_css:
+  - stylesheets/extra.css
+
 extra_javascript:
   - https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js
+
+# Tutorials 5 to 7 are left out of the nav while they are revised. Their pages
+# are still built, so the links of the user guide resolve.
+not_in_nav: |
+  tutorials/05_updating.ipynb
+  tutorials/06_simulating.ipynb
+  tutorials/07_posterior.ipynb
+
+# The logo's README is for readers of the repository on GitHub.
+exclude_docs: |
+  assets/logo/README.md
 
 nav:
   - Home: index.md
   - Get started:
     - Installation: get_started/installation.md
     - Quickstart: get_started/quickstart.ipynb
+    - Design assistant: get_started/design_assistant.md
   - Tutorials:
-    - "1. A model of the moose counts": tutorials/01_first_analysis.ipynb
-    - "2. Fitting and checking the model": tutorials/02_fitting.ipynb
-    - "3. Revising and cross-checking the model": tutorials/03_revising.ipynb
+    - "1. A first look at ProbPipe": tutorials/01_first_analysis.ipynb
+    - "2. Do my modeling assumptions make sense?": tutorials/02_model_checking.ipynb
+    - "3. Revising a model": tutorials/03_modifying_model.ipynb
     - "4. Forecasting with uncertainty": tutorials/04_forecasting.ipynb
-    - "5. Updating forecasts as counts arrive": tutorials/05_updating.ipynb
-    - "6. Fitting a model that can only be simulated": tutorials/06_simulating.ipynb
   - User guide:
     - user_guide/index.md
     - Terms: user_guide/01_terms.ipynb

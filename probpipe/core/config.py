@@ -6,8 +6,8 @@
   counts of a call;
 - ``config.notation``, a ``NotationConfig``: how many nested levels a label or
   a notation shows;
-- ``config.provenance``, a ``ProvenanceConfig``: how much lineage history a
-  provenance record keeps, a ``ProvenanceMode``;
+- ``config.provenance``, a ``ProvenanceConfig``: the data kept in
+  provenance records, a ``ProvenanceMode``;
 - ``config.prefect``, a ``PrefectConfig``: how a ``Function`` dispatches its
   work, a ``WorkflowKind``, and the Prefect task runner.
 
@@ -406,24 +406,24 @@ class PrefectConfig(_Section):
 
 
 class ProvenanceMode(Enum):
-    """Controls how much history is retained in provenance chains.
+    """Choose the data retained by new provenance records.
+
+    A top-level call fixes its mode when it starts, and the outermost
+    ``workflow_run`` fixes the mode for its block when entered. Changing the
+    mode while such a call or block is open raises ``RuntimeError``. Existing
+    records retain their original contents.
 
     Members
     -------
     FULL
-        Store live references to parent Distribution / Record /
-        RecordBatch objects.  The entire ancestry chain stays in memory
-        as long as the final result is alive.  Good for debugging and
-        small test workflows where full graph traversal is useful.
+        Store parent and input descriptors and retain references to their objects.
     LIGHTWEIGHT
-        Store only lightweight :class:`~probpipe.core.provenance.ParentInfo`
-        descriptors — type name, label, and an optional
-        fingerprint plus its strength classification. Parent objects are free
-        to be garbage-collected once a workflow step completes. This is the
-        default and scales to larger workflows.
+        Store :class:`~probpipe.core.provenance.ParentInfo` descriptors with
+        links to existing provenance. The descriptors contain the object's type
+        and label and an optional fingerprint with its strength classification.
+        This is the default mode.
     OFF
-        Attach no provenance at all.  Minimises overhead when lineage
-        tracking is not needed.
+        Create no provenance records.
     """
 
     FULL = "full"
@@ -473,32 +473,18 @@ def _checked_provenance_mode(value: Any, source: str) -> ProvenanceMode:
 
 
 class ProvenanceConfig(_Section):
-    """Global provenance tracking settings.
+    """Configure the data retained by new provenance records.
 
-    Controls how much lineage history ``Function`` retains when
-    assembling provenance for each result.  Set once at application startup::
+    Set ``config.provenance.mode`` to a ``ProvenanceMode`` member::
 
         import probpipe
         from probpipe import ProvenanceMode
 
-        probpipe.config.provenance.mode = ProvenanceMode.FULL  # for debugging
+        probpipe.config.provenance.mode = ProvenanceMode.FULL
 
-    The initial mode can also be set via the ``PROBPIPE_PROVENANCE_MODE``
-    environment variable (``full``, ``lightweight``, or ``off``,
-    case-insensitive).
-
-    The mode is fixed for a workflow run. The outermost ``workflow_run`` takes
-    the mode in effect when it is entered, and a call outside every
-    ``workflow_run`` takes it when the call opens. Inside the run, a ``using``
-    block, an assignment, or a ``reset`` that would set another mode raises
-    ``RuntimeError``, naming the run's mode; one that sets the run's own mode
-    is accepted::
-
-        with probpipe.workflow_run(seed=0):
-            with probpipe.config.provenance.using(mode=ProvenanceMode.OFF):  # raises
-                ...
-
-    Set the mode before the run opens instead.
+    ``PROBPIPE_PROVENANCE_MODE`` supplies the initial mode. Its values are
+    ``full``, ``lightweight``, and ``off``, case-insensitive.
+    :class:`ProvenanceMode` states when each call's mode is fixed.
     """
 
     _name = "provenance"
@@ -907,7 +893,7 @@ class Config:
     session's values as they were when the outermost call opened, except
     those of ``prefect``, so a session assignment made while the call runs
     reaches none of that work. Inside a workflow run, a block or an
-    assignment cannot change the provenance mode, as :class:`ProvenanceConfig`
+    assignment cannot change the provenance mode, as :class:`ProvenanceMode`
     states. Assigning a setting inside a block sets
     the session's value, which applies once the block exits, and
     :meth:`reset` inside a block restores the session's values while the block

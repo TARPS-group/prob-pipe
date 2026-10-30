@@ -184,18 +184,33 @@ class TestMcmcHelpers:
                 raise TypeError("not numeric")
 
         rhat_messages = _rhat_warnings(
-            {"missing": NotComputed("single chain"), "bad": _BadFloat(), "alpha": 1.2},
+            {
+                "missing": NotComputed("single chain"),
+                "bad": _BadFloat(),
+                "alpha": np.array([1.0, 1.2, 1.3]),
+                "gamma": 1.5,
+            },
             threshold=1.01,
         )
         assert any("alpha" in msg for msg in rhat_messages)
+        assert "2 coordinates, worst 1.3000" in rhat_messages[0]
+        assert rhat_messages[1] == (
+            "R-hat > 1.01 for 'gamma' (1.5000) -- chains may not have converged."
+        )
 
         ess_messages = _ess_warnings(
-            {"missing": NotComputed("no bulk"), "bad": _BadFloat(), "alpha": 100.0},
-            {"missing": NotComputed("no tail"), "bad": _BadFloat(), "beta": 120.0},
+            {"missing": NotComputed("no bulk"), "bad": _BadFloat(), "alpha": np.array([100, 500])},
+            {
+                "missing": NotComputed("no tail"),
+                "bad": _BadFloat(),
+                "beta": np.array([[120, 500], [110, 600]]),
+            },
             threshold=400,
         )
         assert any("bulk" in msg and "alpha" in msg for msg in ess_messages)
         assert any("tail" in msg and "beta" in msg for msg in ess_messages)
+        assert "1 coordinate, worst 100" in ess_messages[0]
+        assert "2 coordinates, worst 110" in ess_messages[1]
 
     def test_emit_payload_warnings_handles_missing_and_none_warning_fields(self):
         class _NoWarnings:
@@ -362,6 +377,55 @@ class TestAddMcse:
 
 
 class TestAddMcmcDiagnostics:
+    def test_grouping_uses_original_names_and_counts_only_array_coordinates(self):
+        rng = np.random.default_rng(648)
+        draws = rng.normal(size=(2, 30, 6)) * 0.1
+        draws[0] -= 4
+        draws[1] += 4
+        posterior = posterior_of(
+            list(draws),
+            event_spec=RecordSpec(
+                **{
+                    "theta[0]": NumericArraySpec(()),
+                    "theta[1]": NumericArraySpec(()),
+                    "beta": NumericArraySpec((2, 2)),
+                }
+            ),
+        )
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            add_mcmc_diagnostics(posterior)
+        assert len(caught) == 9
+        for name in ("theta[0]", "theta[1]", "beta"):
+            messages = [str(w.message) for w in caught if f"for '{name}'" in str(w.message)]
+            assert len(messages) == 3
+            if name == "beta":
+                assert all("(4 coordinates, worst " in message for message in messages)
+            else:
+                assert not any("coordinate" in message for message in messages)
+
+    def test_warnings_group_coordinates_by_parameter(self):
+        draws = _vector_draws()
+        draws["beta"][0] -= 4
+        draws["beta"][1] += 4
+        posterior = _posterior_of_draws(draws)
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            add_mcmc_diagnostics(posterior)
+
+        view = posterior.diagnostics
+        assert len(caught) == 3
+        for warning, values, worst, precision in zip(
+            caught, (view.rhat, view.ess_bulk, view.ess_tail), (max, min, min), (4, 0, 0)
+        ):
+            message = str(warning.message)
+            assert "for 'beta'" in message
+            assert "2 coordinates" in message
+            assert f"worst {worst(values.values()):.{precision}f}" in message
+        assert view.warnings == [str(w.message) for w in caught]
+        assert view.summary_table().count("⚠") == 3
+
     def test_writes_all_three_fields(self, posterior):
         add_mcmc_diagnostics(posterior)
         assert _mcmc_has_field(posterior, "rhat")

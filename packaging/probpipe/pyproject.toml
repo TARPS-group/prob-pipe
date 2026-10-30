@@ -10,7 +10,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "probpipe"
 version = "0.2.0.dev0"   # kept in lockstep with probpipe-core (the == pin below)
-description = "Probabilistic data-processing pipelines, with the PyMC, nutpie, pyabc, and BayesFlow inference backends included"
+description = "A probabilistic workflow language (PWL) for Python, with the PyMC, nutpie, pyabc, and BayesFlow inference backends included"
 readme = { file = "README.md", content-type = "text/markdown" }
 requires-python = ">=3.12"
 license = "Apache-2.0"
