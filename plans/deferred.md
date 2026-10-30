@@ -93,6 +93,14 @@ A plan written on 2026-10-27, after the workshop's code freeze, in `plans/deferr
 |---|---|
 | One contract for every batch: every element conforms to one element spec in one dimension scope, so a `FunctionBatch` refuses functions of different specs as a `DistributionBatch` refuses laws of different event specs; the element spec inferred as the common spec of the elements, independent of their order; one storage interface and `Batch.stack` in place of the `isinstance` checks of fourteen modules; and `output`, `rename`, `without`, `&`, and equality by value on every batch by one lifted-operation rule, which takes over the batch parts of S4b, G5, and the deferred `&` and `without` entries above (steps B1 to B6) | `plans/deferred/batch-contract.md` |
 
+### Paths, inputs, and outputs
+
+A plan written on 2026-10-28, in `plans/deferred/` and not yet approved; it lists its open questions, which are reviewed before any of it is implemented. It revisits the concepts of `declarations-and-addressing.md` against the maintainer's conceptual model, replaces its unmerged steps S4b and G1a to G5, and its § 7 lists the edits the other plans need.
+
+| Work | Source |
+|---|---|
+| One contract for paths, outputs, and conformance: specs hold structure only, and an object stores its output name, so `OutputSpec` is removed and an output spec is a `RecordSpec`; outputs by two cases, a record value's top-level names or one stated name; a record's paths ending at its fields, and any other object's paths read from its value spec when that is a record; one path interface, `PathIndexed`, for every kind, with `without` derived from selection; public `conforms_to`, `unify`, and `refine` with contravariant inputs, and a `DimensionScope`; the dozen path helpers of `distributions/_views.py` deleted (steps P1 to P5) | `plans/deferred/paths-inputs-and-outputs.md` |
+
 ## Open issues the push changes
 
 Each row says what the push does for an open issue before the workshop, and what the issue keeps for after it.
