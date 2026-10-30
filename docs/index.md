@@ -1,6 +1,14 @@
-# ProbPipe
+<img alt="ProbPipe logo" src="assets/logo/probpipe-lockup.svg#only-light" width="360">
+<img alt="ProbPipe logo" src="assets/logo/probpipe-lockup-dark.svg#only-dark" width="360">
+
+# Connect the Tools You Already Use into a Unified, Reliable Workflow
 
 --8<-- "README.md:intro"
+
+<picture>
+  <source media="(max-width: 600px)" srcset="assets/probpipe-workflow-language-narrow.svg">
+  <img alt="The tools you already use, such as Stan, PyMC, BlackJAX, NumPy, pandas, and ArviZ, joined together by ProbPipe, which provides provenance tracking, random key management, model format conversion, uncertainty propagation, and swappable execution backends and inference algorithms" src="assets/probpipe-workflow-language.svg">
+</picture>
 
 ## What you can do
 
@@ -27,8 +35,9 @@ Six ideas make this work:
 
 - [Installation](get_started/installation.md) gives the install commands, and the [quickstart](get_started/quickstart.ipynb) works through the example above in ten minutes.
 - The [design assistant](get_started/design_assistant.md) is a set of instructions for an AI coding agent, which designs and builds a ProbPipe pipeline for your own problem and data with you.
+- The tutorials follow one analysis of a moose population, from a first model through model checks and a revised model to forecasts with uncertainty. They start with [Tutorial 1: A first look at ProbPipe](tutorials/01_first_analysis.ipynb).
 - The [user guide](user_guide/index.md) explains one feature at a time on small examples, such as building a joint model, choosing an inference method, or reading a result's provenance.
 - The [API reference](api/index.md) documents every public name, grouped by topic.
 - [Cite](cite.md) gives the citation, and [Help](help.md) says where to ask questions.
 
-> **Human-validated** by Jonathan Huggins on 2026-10-25.
+> **Human-validated** by Jonathan Huggins on 2026-10-26.

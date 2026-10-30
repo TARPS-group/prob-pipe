@@ -2928,7 +2928,7 @@ Each row names the step that writes it. E1 writes the design text the execution 
 
 ## 12. Implementation guidelines
 
-This design guides the implementation, and each PR is judged on two things: whether it delivers the behaviour, and the quality of its code and its description. These guidelines add to `CONTRACTS.md` and `STYLE_GUIDE.md`.
+This design guides the implementation, and each PR is judged on two things: whether it delivers the behaviour, and the quality of its code and its description. These guidelines add to `CONTRIBUTING.md` § Changing the code and `STYLE_GUIDE.md`.
 
 ### The code
 
@@ -2937,7 +2937,7 @@ This design guides the implementation, and each PR is judged on two things: whet
 3. **Docstrings for users.** A public API's docstring is written for the person who calls it: what it does, its arguments, what it returns, and what it raises, with an example where one helps. It carries no design reasoning, no references to design documents or issues, no technical terms the user does not need, and no filler.
 4. **Comments that earn their place.** An inline comment must add something the code does not already say, such as a reason that is not obvious, an invariant, or a constraint JAX imposes.
 5. **One implementation per decision.** No duplicated helpers or logic. Before writing a helper, search for one that already does the job, and reviewers check for duplicates. This design replaces fourteen copies of one decision with `evaluate_at_points`, and no new code may bring back its own copy.
-6. **Tests assert the contract,** as `CONTRACTS.md` requires: shapes, orderings, and error cases, beyond the happy path. Section 14 lists the tests this design needs.
+6. **Tests assert the contract,** as `STYLE_GUIDE.md` §8.7 requires: shapes, orderings, and error cases, beyond the happy path. Section 14 lists the tests this design needs.
 7. **Plenty of tests and demonstrations, with every PR.** They are part of the work, not a later step, so the behaviour is checked as it is built. Each PR adds the tests of section 14 that cover its part and shows the behaviour it adds working:
     - a short runnable demonstration in its description, with its output;
     - for a user-facing feature, an example in the docstring or the user guide, following `CONTRIBUTING.md` § Documentation;

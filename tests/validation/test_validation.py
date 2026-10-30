@@ -7,6 +7,7 @@ import pytest
 from scipy import integrate, stats
 
 from probpipe import (
+    ApplicabilityError,
     EmpiricalDistribution,
     Normal,
     NumericArraySpec,
@@ -19,6 +20,7 @@ from probpipe import (
     workflow_run,
 )
 from probpipe.core._numeric_record import NumericRecord
+from probpipe.distributions import ConditionalDistributionBatch
 from probpipe.validation import predictive_check as pc_direct
 from tests._posterior import posterior_of
 
@@ -73,6 +75,14 @@ def observed_data():
 
 class TestPredictiveCheck:
     """The result of one check and the record it appends to the law's annotations."""
+
+    def test_a_batch_of_kernels_is_swept(self, prior, likelihood):
+        kernels = ConditionalDistributionBatch([likelihood, likelihood], "model")
+        assert predictive_check.check(kernels, prior, sample_mean).lifted == ("kernel",)
+        with workflow_run(seed=0):
+            result = predictive_check(kernels, prior, sample_mean, num_replications=5)
+        assert result.batch_shape == (2,)
+        assert all(row["replicated_statistics"].num_atoms == 5 for row in result)
 
     def test_prior_check_returns_replicated_statistics(self, prior, likelihood):
         with workflow_run(seed=0):
@@ -572,6 +582,21 @@ class TestOptionalInputs:
 
 
 class TestErrors:
+    def test_a_model_in_place_of_the_kernel_raises_before_sampling(
+        self, prior, likelihood, monkeypatch
+    ):
+        model = likelihood & prior
+        monkeypatch.setattr(
+            type(model), "_sample", lambda *args, **kwargs: pytest.fail("kernel was sampled")
+        )
+        for call in (predictive_check.check, predictive_check):
+            with pytest.raises(
+                ApplicabilityError,
+                match=r"parameter 'kernel' expects a ConditionalDistribution, but got FactoredDistribution "
+                r"'[^']*', which is a law",
+            ):
+                call(model, prior, sample_mean)
+
     def test_a_law_that_misses_an_input_raises_naming_it(self, prior, observed_data):
         kernel = conditional_distribution(
             lambda mu, sigma: Normal("y", mu * jnp.ones(N), sigma),

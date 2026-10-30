@@ -266,7 +266,7 @@ jobs:
                   TEST_TARGETS="$TEST_TARGETS tests/docs" ;;
                 scripts/*|.github/workflows/*)
                   TEST_TARGETS="$TEST_TARGETS tests/ci" ;;
-                probpipe/*|AGENTS.md|CLAUDE.md|CONTRIBUTING.md|CONTRACTS.md|STYLE_GUIDE.md|CHANGELOG.md|.github/PULL_REQUEST_TEMPLATE.md|.claude/*)
+                probpipe/*|AGENTS.md|CLAUDE.md|CONTRIBUTING.md|STYLE_GUIDE.md|CHANGELOG.md|.github/PULL_REQUEST_TEMPLATE.md|.claude/*)
                   TEST_TARGETS="$TEST_TARGETS tests/docs" ;;
                 packaging/*)
                   TEST_TARGETS="$TEST_TARGETS tests/test_version.py" ;;

@@ -1,4 +1,9 @@
-# ProbPipe
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/logo/probpipe-lockup-dark.svg">
+  <img alt="ProbPipe logo" src="docs/assets/logo/probpipe-lockup.svg" width="360">
+</picture>
+
+# Connect the Tools You Already Use into a Unified, Reliable Workflow
 
 [![CI](https://github.com/TARPS-group/prob-pipe/actions/workflows/ci.yml/badge.svg)](https://github.com/TARPS-group/prob-pipe/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/TARPS-group/prob-pipe/branch/main/graph/badge.svg)](https://codecov.io/gh/TARPS-group/prob-pipe)
@@ -6,13 +11,22 @@
 [![DOI](https://img.shields.io/badge/DOI-10.5281%2Fzenodo.20683559-blue)](https://doi.org/10.5281/zenodo.20683559)
 
 <!-- --8<-- [start:intro] -->
-ProbPipe is a Python framework that enables you to connect the tools you already use into a single, coherent probabilistic workflow, from data preparation through prediction and decision-making.
-ProbPipe makes workflows maintainable and reliable by keeping the mathematics separate from the computational implementation.
-You express the workflow in mathematical terms: distributions, conditional distributions, and functions, combined by operations such as conditioning, expectation, and quantiles.
-Each mathematical object declares what it can do, such as drawing samples or evaluating a density, and each operation uses those capabilities to choose how to compute its result.
-You can specify a different algorithm when you want to, and your own Python functions, simulators, and PyMC, Stan, or TFP models work without a rewrite.
-Every result records how it was computed, and random number seeds are managed automatically, so workflows are traceable and reproducible.
+ProbPipe is a **probabilistic workflow language** (PWL) designed for building traceable, reproducible, scalable, and flexible pipelines for
+data analysis, forecasting, and prediction.
+
+ProbPipe makes it easy to describe a *statistical* workflow in terms of standard mathematical operations
+while still using the tools you're familiar with (PyMC, JAX, pandas, xarray, ...).
+But when you use ProbPipe, it handles all of the *computational* workflow aspects such as random key management, provenance tracking, and execution backends,
+which, when done right, lead to reliable, high-quality pipelines.
+And, because it's based on mathematical operations, ProbPipe also provides a uniform interface to operations like conditioning, sampling, and evaluation, no matter
+what package is being used to implement the operation (Stan, NumPyro, BlackJAX, ...).
+This leads to simpler, easier to read, and more maintainable code.
 <!-- --8<-- [end:intro] -->
+
+<picture>
+  <source media="(max-width: 600px)" srcset="docs/assets/probpipe-workflow-language-narrow.svg">
+  <img alt="The tools you already use, such as Stan, PyMC, BlackJAX, NumPy, pandas, and ArviZ, joined together by ProbPipe, which provides provenance tracking, random key management, model format conversion, uncertainty propagation, and swappable execution backends and inference algorithms" src="docs/assets/probpipe-workflow-language.svg">
+</picture>
 
 ## What you can do
 
@@ -26,6 +40,9 @@ ProbPipe streamlines and automates those tasks, so you can:
 - **Push uncertainty through any Python function.** Write a forecast or a decision rule in plain Python as a function of known inputs, such as one value of each parameter, and decorate it with `@function` to make it a ProbPipe-native function. Called on a posterior, or on any other distribution of its inputs, the function returns the distribution of its output, which ProbPipe computes by evaluating the function at draws from that distribution.
 - **Get exact answers when feasible.** ProbPipe computes a result exactly when a formula or an exact algorithm applies, such as the update to a discrete distribution, and approximately otherwise.
 - **Know how each result was computed.** Every result records how it was computed and whether that computation is exact. Moreover, uniform random seed control helps improve reproducibility.
+
+At the same time, ProbPipe manages random number seeds, provides end-to-end provenance tracking, batched
+and parallel evaluation, and automatic conversion between data and distribution representations.
 <!-- --8<-- [end:capabilities] -->
 
 ## A short example
@@ -66,21 +83,24 @@ model = likelihood & prior
 with workflow_run(seed=0):
     posterior = condition_on(model, {"damage": damage})
 
-print("posterior mean of beta:", mean(posterior["beta"]).raw)
+print("posterior mean of beta:", mean(posterior["beta"]).raw, "\n")
 
 # Every result records how it was computed.
 print("provenance of the prior's mean:")
-print(mean(prior).provenance)
+print(mean(prior).provenance, "\n")
 print("provenance of the posterior:")
 print(posterior.provenance)
 ```
 
 ```text
 posterior mean of beta: [11.66378    -0.18358812]
+
 provenance of the prior's mean:
 1. mean(prior, given)  route closed_form, exact
+
 provenance of the posterior:
-1. condition_on(likelihood·prior, given)  route inference_methods, method blackjax_nuts, approximate
+1. likelihood & prior
+2. condition_on(1, given)  route inference_methods, method blackjax_nuts, approximate
 ```
 
 The prior and the likelihood are both ProbPipe objects: a distribution of the coefficients, and a conditional distribution of the data given the coefficients (constructed with `glm_likelihood`).
@@ -140,7 +160,7 @@ with workflow_run(seed=2):
     damage_prob = challenger_damage_probability(posterior["beta"])
 
 print("P(damage at 31°F), posterior mean:", round(float(mean(damage_prob)), 3))
-print("P(damage at 31°F), 90% interval:", quantile(damage_prob, jnp.array([0.05, 0.95])).raw)
+print("P(damage at 31°F), 90% interval:", quantile(damage_prob, jnp.array([0.05, 0.95])).raw, "\n")
 
 # The forecast records each step from the posterior to it.
 print("provenance of the forecast:")
@@ -150,13 +170,18 @@ print(damage_prob.provenance)
 ```text
 P(damage at 31°F), posterior mean: 0.974
 P(damage at 31°F), 90% interval: [0.86161655 0.999984  ]
+
 provenance of the forecast:
-1. likelihood·prior = condition_on(likelihood·prior, given)  route inference_methods, method blackjax_nuts, approximate
-2. broadcast(challenger_damage_probability, 1['beta'])  route sampling_lift, approximate
+1. likelihood & prior
+2. likelihood·prior = condition_on(1, given)         route inference_methods, method blackjax_nuts, approximate
+3. broadcast(challenger_damage_probability, 2['beta'])  route sampling_lift, approximate
 ```
 
 We wrote `challenger_damage_probability` for one pair of coefficients, and ProbPipe automatically lifted it to operate on the posterior distribution: it evaluated the function at draws from the posterior distribution, and returned the distribution of the results.
-Its provenance lists both steps: the fit, which gives approximate draws, and the function evaluated at those draws (`sampling_lift`), so the forecast is approximate too.
+Its provenance lists each step:
+1. the merge with `&` that builds the model;
+2. the fit, which gives approximate draws;
+3. the function evaluated at those draws (`sampling_lift`), so the forecast is approximate too.
 <!-- --8<-- [end:quick-example] -->
 
 ## Installation
@@ -173,7 +198,8 @@ The [installation page](https://tarps-group.github.io/prob-pipe/get_started/inst
 
 - [The quickstart](https://tarps-group.github.io/prob-pipe/get_started/quickstart/) works through this example in more detail, including demonstrating how to use built-in diagnostics and perform a predictive check.
 - [The design assistant](https://tarps-group.github.io/prob-pipe/get_started/design_assistant/) is a set of instructions for an AI coding agent, which designs and builds a ProbPipe pipeline for your own problem and data with you.
+- [The tutorials](https://tarps-group.github.io/prob-pipe/tutorials/01_first_analysis/) work through a statistical analysis of a moose population, from a first model through model checks and a revised model to forecasts with uncertainty.
 - [The API reference](https://tarps-group.github.io/prob-pipe/api/) provides complete documentation of ProbPipe capabilities.
 - [How to cite ProbPipe](https://tarps-group.github.io/prob-pipe/cite/), [getting help](https://tarps-group.github.io/prob-pipe/help/), and [contributing](CONTRIBUTING.md).
 
-> **Human-validated** by Jonathan Huggins on 2026-10-25.
+> **Human-validated** by Jonathan Huggins on 2026-10-26.

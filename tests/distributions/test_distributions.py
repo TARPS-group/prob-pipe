@@ -138,10 +138,14 @@ class TestMultivariateNormal:
         np.testing.assert_allclose(log_prob(gaussian, s), scipy_mvn.logpdf(s_np), rtol=1e-5)
         np.testing.assert_allclose(prob(gaussian, s), scipy_mvn.pdf(s_np), rtol=1e-5)
 
-    def test_mean_and_cov(self, gaussian, loc, cov_matrix, key):
+    @pytest.mark.parametrize("seed", range(4))
+    def test_mean_and_cov(self, gaussian, loc, cov_matrix, seed):
         """Sample mean and cov from 50k draws must match analytical values."""
 
-        draws = np.asarray(sample(gaussian, sample_shape=(50_000,)))
+        with workflow_run(seed=seed):
+            draws = np.asarray(sample(gaussian, sample_shape=(50_000,)))
+        # Seeds 0-3: max absolute mean errors 0.0011-0.0121,
+        # and covariance errors 0.0107-0.0232.
         np.testing.assert_allclose(draws.mean(0), np.asarray(loc), atol=0.02)
         np.testing.assert_allclose(
             np.cov(draws, rowvar=False),

@@ -12,7 +12,9 @@ The flag scan reads the prose against ``STYLE_GUIDE.md`` §10:
 1. a word of the vocabulary of rule 6, or an intensifier of rule 7;
 2. an appositive comma after a code span, as in "`raw()`, the one access point";
 3. a parenthetical of five or more words;
-4. a comma list of four or more items.
+4. a comma list of four or more items;
+5. an input form said to be what it stands for, as in "a tuple is a list of paths",
+   which rule 14 writes as "a tuple is read as a list of paths".
 
 Each line the script prints is a candidate, which a reader confirms or
 dismisses. The scan skips fenced code blocks and code spans, and the vocabulary
@@ -54,6 +56,12 @@ _VOCABULARY = re.compile(
 _INTENSIFIER = re.compile(
     r"\b(?:precisely|deliberately|genuinely|of course|exactly(?!\s+(?:(?:one|two|three|four|zero"
     r"|once|twice|when|if|the|those|its|as)\b|\d)))\b",
+    re.I,
+)
+#: An input form, such as a tuple or ``None``, followed by "is a", "is an", "is the", or "is one".
+_FALSE_IDENTITY = re.compile(
+    r"\b(?:(?:an?|the) (?:bare |raw |plain )?`*(?:tuple|list|mapping|dict|str|string|int|integer"
+    r"|callable|sequence)`*(?: of `*\w+`*)?|`*None`*) is (?:an?|the|one)\b",
     re.I,
 )
 _QUOTED = re.compile(r"\"[^\"]*\"|“[^”]*”")
@@ -161,6 +169,8 @@ def flags(path: Path) -> Iterator[Candidate]:
         for pattern, kind in ((_VOCABULARY, "vocabulary"), (_INTENSIFIER, "intensifier")):
             for match in pattern.finditer(used):
                 yield Candidate(name, number, kind, match.group(0))
+        for match in _FALSE_IDENTITY.finditer(_QUOTED.sub("QUOTE", unit)):
+            yield Candidate(name, number, "false identity", match.group(0))
         for match in _PARENTHETICAL.finditer(prose):
             if sum(1 for word in match.group(1).split() if re.search(r"\w", word)) >= 5:
                 yield Candidate(name, number, "parenthetical", f"({match.group(1)})")

@@ -5,14 +5,14 @@ It owns the everyday commands and the verification steps, and every other rule i
 
 ## Project
 
-ProbPipe is a Python framework for probabilistic pipelines with automated uncertainty quantification.
+ProbPipe is a probabilistic workflow language (PWL) for Python, which connects the tools a user already has into one coherent workflow, from data preparation through prediction and decision-making.
 The design reference in `design/` describes the target state, and the documents below describe the code as it stands.
 
 ## Read first
 
 | Task | Document that owns its rules |
 |---|---|
-| Any change to `probpipe/` | `CONTRACTS.md`: the contract directives every PR follows |
+| Any change to `probpipe/` | `CONTRIBUTING.md` § Changing the code: how a change follows the design and settles its contracts |
 | A step of the contracts push of October 2026 | `plans/README.md`: its directives, steps, and handoffs |
 | A coding convention, such as naming, imports, or test layout | `STYLE_GUIDE.md` |
 | The contract of an abstraction or an operation | its section of `design/`, listed in `design/README.md` |
@@ -27,7 +27,7 @@ The design reference in `design/` describes the target state, and the documents 
 | A release to PyPI | `CONTRIBUTING.md` § Releasing |
 | The branch, the PR title and body, the CHANGELOG entry, and labels | `CONTRIBUTING.md` § PR Workflow and `.github/PULL_REQUEST_TEMPLATE.md` |
 
-Where `design/` disagrees with the code or with a contributor document, `CONTRACTS.md` directive 5 decides.
+Where `design/` disagrees with the code or with a contributor document, `CONTRIBUTING.md` § Changing the code, rule 1, decides.
 
 ## Commands
 

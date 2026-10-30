@@ -1112,8 +1112,8 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
         gives the node whole under the path's last name. A list or a tuple of
         paths gives the view over the record that keeps each node at its own
         path, in this law's order, so ``grouped["a", "g/c"]`` draws records
-        ``{a, g: {c}}``. A tuple is a list of paths; a nested path is written
-        with ``/``.
+        ``{a, g: {c}}``. A tuple is read as a list of paths; a nested path is
+        written with ``/``.
 
         Parameters
         ----------
@@ -1194,6 +1194,11 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
         operands' factors. The joint is a product that no one gave a label, so
         its label joins the operands' labels with ``·``, as ``lik·prior``, and
         its notation joins its factors' notations, as ``lik(y | mu)·prior(mu)``.
+        Its provenance records the operation ``&`` with this law and *other*
+        as its parents, in that order and as written rather than flattened, so
+        ``print(joint.provenance)`` includes the lineage of both operands. It
+        records none where ``Provenance.create`` records none, as under the
+        provenance mode ``off``.
 
         Parameters
         ----------

@@ -1,23 +1,25 @@
 site_name: ProbPipe
-site_description: Probabilistic pipelines with automated uncertainty quantification
+site_description: A probabilistic workflow language (PWL) for Python
 site_url: https://tarps-group.github.io/prob-pipe
 repo_url: https://github.com/TARPS-group/prob-pipe
 repo_name: TARPS-group/prob-pipe
 
 theme:
   name: material
+  logo: assets/logo/probpipe-mark-dark.svg
+  favicon: assets/logo/favicon.png
   palette:
     - media: "(prefers-color-scheme: light)"
       scheme: default
-      primary: indigo
-      accent: indigo
+      primary: custom
+      accent: custom
       toggle:
         icon: material/brightness-7
         name: Switch to dark mode
     - media: "(prefers-color-scheme: dark)"
       scheme: slate
-      primary: indigo
-      accent: indigo
+      primary: custom
+      accent: custom
       toggle:
         icon: material/brightness-4
         name: Switch to light mode
@@ -81,10 +83,16 @@ extra_css:
 extra_javascript:
   - https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js
 
-# The tutorials are left out of the nav while they are revised. Their pages
+# Tutorials 5 to 7 are left out of the nav while they are revised. Their pages
 # are still built, so the links of the user guide resolve.
 not_in_nav: |
-  tutorials/
+  tutorials/05_updating.ipynb
+  tutorials/06_simulating.ipynb
+  tutorials/07_posterior.ipynb
+
+# The logo's README is for readers of the repository on GitHub.
+exclude_docs: |
+  assets/logo/README.md
 
 nav:
   - Home: index.md
@@ -92,6 +100,11 @@ nav:
     - Installation: get_started/installation.md
     - Quickstart: get_started/quickstart.ipynb
     - Design assistant: get_started/design_assistant.md
+  - Tutorials:
+    - "1. A first look at ProbPipe": tutorials/01_first_analysis.ipynb
+    - "2. Do my modeling assumptions make sense?": tutorials/02_model_checking.ipynb
+    - "3. Revising a model": tutorials/03_modifying_model.ipynb
+    - "4. Forecasting with uncertainty": tutorials/04_forecasting.ipynb
   - User guide:
     - user_guide/index.md
     - Terms: user_guide/01_terms.ipynb

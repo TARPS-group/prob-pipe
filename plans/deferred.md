@@ -51,10 +51,27 @@ From `execution-layer.md` §13, "After the workshop":
 | Whether V.8's and #554's "random event" is renamed, for example to "random draw" | Q16 |
 | Supplied derivatives (`vjp`, `jacobian`, `jvp`) after #522, and the `jacobian` operation with `grad`. Their docstrings, V.13, and the user guide must state clearly that a backward pass run after its call closed (an eager `grad` or a kept `vjp`) uses the default context, with an example (decision M18) | §6.9, Q11; § 6.16, "Lifecycle", registration rule 7 |
 | The opt-in executors `futures` and `prefect` | §6.8, Q9 |
-| The rest of the compiled layer: compiled lifting if it did not join the core, the mixture sampler, the persistent cache, public `count_compilations` | §6.10 |
+| The rest of the compiled layer: compiled lifting if it did not join the core, the mixture sampler, the persistent cache, public `count_compilations`, which `plans/deferred/execution-introspection.md` replaces with `execution_log()` (its Q3) | §6.10 |
 | pyabc and BayesFlow on sets of evaluation points and executors; see jhuggins's lighter pyabc route below | §6.12 |
 | Tests on a GPU or TPU | §8 |
 | The remaining design text, and a User Guide notebook on opaque code, executors, failures, and the memo | §11 |
+
+A plan written on 2026-10-25, after the code freeze, is in `plans/deferred/`, not yet approved. It lets a user see how a call will run and how it ran, and it lists its open questions in its Appendix D, which are reviewed before any of it is implemented.
+
+| Work | Source |
+|---|---|
+| Reports of how a call runs: `check` describes each function a call will evaluate (its traceability, whether it is called back from a compiled JAX program, its executor and how it was chosen, whether it is vectorized or compiled, and the probe result it read) and each capability of a distribution the selected route runs; `ProbeResult` is public; `execution_status()` on a `Function`, and on a `Distribution` or `ConditionalDistribution` per capability; provenance records the runs of JAX programs; `execution_log()` in `probpipe.diagnostics` | `plans/deferred/execution-introspection.md` |
+| Three bugs the plan found against rules the design already states: an operation's `check` reports no embedded function (#679), an operation's provenance leaves out its evaluations (#680), and a rejected executor's reason prints JAX's raw error text (#681) | `plans/deferred/execution-introspection.md`, Appendix A |
+
+### Numeric terms
+
+A plan written on 2026-10-27, after the workshop's code freeze, in `plans/deferred/` and not yet approved; it lists its open questions, which are reviewed before any of it is implemented. The vector-interface plan below builds on it, and its § 6 lists the edits that plan needs.
+
+| Work | Source |
+|---|---|
+| One definition of "numeric" for every kind: a numeric value is an array or a record of arrays, and a law, kernel, function, or batch is numeric when its events, inputs, and outputs hold numeric values; `TermSpec.is_numeric` in place of ten private predicates; one `VectorLayout` that every vector conversion uses; `to_vector()` on every numeric kind, returning a term of the same kind, with one `from_vector(spec, vec)`; `NumericFunction`, `NumericConditionalDistribution` meaning both sides numeric, and six markers removed; and `free_dims`, `with_dim_sizes`, and `with_dim_names` on `Function` (steps N1 to N5) | `plans/deferred/numeric-contract.md` |
+| Arithmetic on dimension names, so a vector of a `("n",)` array and a `(2,)` array has the symbolic size `n + 2` | `plans/deferred/numeric-contract.md` § 4.5 |
+| How a symbolic shape crosses a JAX trace, and how a constructor that evaluates a Python function abstractly, as `conditional_distribution` does, accepts an input of symbolic shape or an opaque input | `plans/deferred/numeric-contract.md` § 4.5, § 5.5 |
 
 ### The inference interface and vectors
 
@@ -66,7 +83,24 @@ Two plans written during step E6 (#618) and deferred by the maintainer on 2026-1
 | Every built-in inference method's adapter onto that interface, with `make_posterior(..., coordinates=)`, `initial_vectors`, one key split per run, a start per chain, `factors()`'s order check, and checks that draw and compile nothing (step P2). It changes seeded draws once, a silent change. It rewrites the runners E4 makes module-level, so it reads E4's merged runners first | `plans/deferred/inference-interface.md` |
 | Whether `sampler(d)` (#554 § 7) ships with the vector interface or with #554 | `plans/deferred/vector-interface.md` § 4.5 |
 | No "array pytree" view of a law for BlackJAX: BlackJAX ravels a pytree position for its mass matrix and covariances anyway, a benchmark found no consistent speed difference (fixed-work parity within 10%), ProbPipe's own records fail as BlackJAX positions, and a `dict` position reorders the vector. A per-leaf "parts" view for TFP or BayesFlow, derived from the same order, waits until a backend needs it | `plans/deferred/vector-interface.md` § 6 |
-| A public reading of a target's traceability for inference methods written outside ProbPipe, with the public execution claims of E3a | #618; decided 2026-10-21 |
+| A public reading of a target's traceability for inference methods written outside ProbPipe, with the public execution claims of E3a; `plans/deferred/execution-introspection.md` § 4.4 proposes it as `execution_status()` on a law, with a traceability per capability | #618; decided 2026-10-21 |
+
+### Batches
+
+A plan written on 2026-10-27, after the workshop's code freeze, in `plans/deferred/` and not yet approved; it lists its open questions, which are reviewed before any of it is implemented.
+
+| Work | Source |
+|---|---|
+| One contract for every batch: every element conforms to one element spec in one dimension scope, so a `FunctionBatch` refuses functions of different specs as a `DistributionBatch` refuses laws of different event specs; the element spec inferred as the common spec of the elements, independent of their order; one storage interface and `Batch.stack` in place of the `isinstance` checks of fourteen modules; and `output`, `rename`, `without`, `&`, and equality by value on every batch by one lifted-operation rule, which takes over the batch parts of S4b, G5, and the deferred `&` and `without` entries above (steps B1 to B6) | `plans/deferred/batch-contract.md` |
+
+### Annotations
+
+A plan written on 2026-10-28, in `plans/deferred/` and not yet approved; it lists its open questions, which are reviewed before any of it is implemented.
+
+| Work | Source |
+|---|---|
+| One rule for when an annotation follows a term: each operation declares its result's relation to its source (same, renamed, part, or new), each entry declares its propagation (term, run, or by path), and one function carries the entries, so a marginal of an MCMC posterior keeps its draws' ArviZ data and the run's sampler statistics; annotations on every term, batches included, written through one method `annotate` (steps A1 to A5) | `plans/deferred/annotations.md` |
+| An inference result's ArviZ `posterior` group derived from its atoms rather than stored, so the draws are stored once | `plans/deferred/annotations.md` § 6.1, decision 2 |
 
 ## Open issues the push changes
 

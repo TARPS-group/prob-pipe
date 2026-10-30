@@ -9,7 +9,7 @@ This page also documents the orchestration modes, and the settings `config.prefe
 ## Workflow scopes
 
 [Set a default](#probpipe.workflow_run--workflow-run-set-default) once to continue a random stream
-across bare calls in a script or notebook. Setting it again restarts the stream.
+across bare calls in a script or IPython session. Setting it again restarts the stream.
 [Clear the default](#probpipe.workflow_run--workflow-run-clear-default) to restore independent anonymous
 scopes for bare calls.
 
@@ -28,22 +28,48 @@ print("Default stream draws:", first, second, third)
 print("Independent scope draw:", separate)
 ```
 
-The explicit scope leaves the default stream's next position unchanged.
-Notebook cells share the configured stream, including cells with top-level
-`await`. Each bare call fixes its own provenance mode, while an explicit scope
-fixes the mode for its whole block.
-
 ::: probpipe.workflow_run
     options:
       show_attribute_values: false
       show_root_heading: false
+      show_source: false
+      heading_level: 3
+
+### `workflow_run(seed=None)` {#probpipe.workflow_run--workflow-run-call}
+
+::: probpipe.functions._context._WorkflowRun.__call__
+    options:
+      show_root_heading: false
+      show_signature: false
+      show_root_toc_entry: false
+      show_source: false
+      heading_level: 3
+
+### `workflow_run.set_default(*, seed=None)` {#probpipe.workflow_run--workflow-run-set-default}
+
+::: probpipe.functions._context._WorkflowRun.set_default
+    options:
+      show_root_heading: false
+      show_signature: false
+      show_root_toc_entry: false
+      show_source: false
+      heading_level: 3
+
+### `workflow_run.clear_default()` {#probpipe.workflow_run--workflow-run-clear-default}
+
+::: probpipe.functions._context._WorkflowRun.clear_default
+    options:
+      show_root_heading: false
+      show_signature: false
+      show_root_toc_entry: false
+      show_source: false
       heading_level: 3
 
 ::: probpipe.UnmanagedConcurrentWorkflowEntryError
 
 ## Async tasks and threads
 
-A notebook's top-level `await` continues in that cell's execution task.
+An IPython cell's top-level `await` continues in that cell's execution task.
 `asyncio.create_task`, `asyncio.run`, and `asyncio.to_thread` can instead copy
 settings into another task or thread. Bare calls there cannot use an inherited
 default stream: they raise `UnmanagedConcurrentWorkflowEntryError`.

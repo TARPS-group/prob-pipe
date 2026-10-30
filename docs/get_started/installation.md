@@ -134,5 +134,6 @@ standard deviation of the draws: 1.0
 ## Next steps
 
 - The [quickstart](quickstart.ipynb) fits a first model, checks it, and forecasts with it in about ten minutes.
+- The [first tutorial](../tutorials/01_first_analysis.ipynb) begins an analysis of a moose population that the tutorials follow from a first model to forecasts with uncertainty.
 
 > **Human-validated** by Jonathan Huggins on 2026-10-25.

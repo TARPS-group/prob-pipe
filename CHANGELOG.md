@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed (breaking)
 
+- **A product built with `&` carries provenance, so it takes no record of
+  your own.** Before, `(a & b).with_provenance(p)` attached `p`. Now it raises
+  `RuntimeError`, since the merge records `&` and provenance is set once. To
+  attach a record of your own to a product, build it with
+  `FactoredDistribution((a, b))` from `probpipe.distributions`, whose result
+  carries none.
 - **Record conformance and unification require declaration order.** Before,
   `RecordSpec(x=(), y=())` admitted an existing record or record spec ordered
   `{y, x}`. Now it refuses that order, including inside nested records and at
@@ -3415,6 +3421,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Tutorials 1 to 4 are revised and shown on the site again.** They follow one
+  analysis of the moose counts:
+  1. a first look at ProbPipe: a population model, a statistical model built
+     with `&`, its fit, and predictions from the fit;
+  2. checks of the modeling assumptions: prior and posterior predictions,
+     predictive checks, and provenance;
+  3. the model revised with a yearly shock to the growth, fit again, and
+     checked again;
+  4. forecasts of the counts with uncertainty, the probability of a low count,
+     and provenance.
+  Tutorials 5 to 7 stay out of the site's navigation while they are revised,
+  and the design assistant reads tutorials 1 to 4 again.
+
 - **The documentation installs ProbPipe from `main`.** The install commands,
   the Colab cells of the tutorials and user guide, their data URLs, and the
   design assistant's prompt name the `main` branch.
@@ -4400,6 +4419,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a worker needed by its callbacks; ordinary Function bodies retain their
   selected-executor behavior.
 
+- **The contributor rules are stated once each, and `CONTRACTS.md` is
+  removed.** `CONTRIBUTING.md` § Changing the code states how a change follows
+  `design/`, when and how to ask the maintainer, and how a change settles and
+  fixes contracts. `STYLE_GUIDE.md` gains the naming rules of §1.12, module
+  order and reuse (§2.4 and §2.5), what a docstring states (§3.4), and tests
+  that assert a contract (§8.7). `CONTRIBUTING.md` § Opening the PR asks each
+  PR body to show its changes of behavior as runnable examples with their
+  output, to record its contract decisions, and to be reviewed as a draft
+  before review is requested. The PR template gains an Examples section, which
+  the advisory PR hygiene check expects in every body, and its checklist cites
+  these sections.
+
 ### Removed (breaking)
 
 - **`NumericArray.value`, `Opaque.value`, and `NumericArrayBatch.values` are
@@ -4445,6 +4476,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   names the classes being removed.
 
 ### Fixed
+
+- A law passed where a kernel is required is rejected before sampling, both in
+  `check` and in a call. `predictive_check` preserves sweeps over batches of kernels.
+
+- MCMC warnings summarize each original parameter's failing coordinates and worst value.
+  Diagnostic tables size the parameter column to fit long names.
+
+- **Default workflow streams continue across terminal IPython cells.** Ordinary
+  cells and cells with top-level `await` continue the configured stream.
+  Setting or clearing the default in an `await` cell applies to later cells.
+  Kernel shells running in an application thread continue their stream too.
+
+- **Copied contexts keep default-scope changes local.** Setting or
+  clearing a default in a copied context leaves later cells on the notebook's
+  stream. A background thread's first setting leaves the main kernel free to
+  configure its own default. Wrapping a shell's `run_cell_async` method preserves
+  cross-cell continuation. An ipykernel subshell's completion preserves the
+  main cell's ownership handoff.
+
+- **A law or a kernel built with `&` records its lineage.** Before, `(a &
+  b).provenance` was `None`, so a result computed from a merge, such as a
+  quantile of a posterior predictive `likelihood.rename(y="y_pred") &
+  posterior`, lost the lineage of the posterior and stopped short of
+  `condition_on`. Now the merge records the operation `&` with its two
+  operands as parents, left first, and `print(x.provenance)` shows it as `1 &
+  4`. A chain such as `a & b & c` prints as one line, and so does
+  `lik & (a & b)`. A law that a constructor builds, `FactoredDistribution(...)`
+  included, still records none.
+
+  ```text
+  >>> print(median.provenance)
+  1. likelihood = rename(likelihood)
+  2. likelihood & (prior_mu & prior_sigma)
+  3. likelihood·prior_mu·prior_sigma = condition_on(2, given)  route inference_methods, method blackjax_nuts, approximate
+  4. posterior = with_label(3)
+  5. 1 & 4
+  6. quantile(5['y_pred'], q, given)                   route monte_carlo, approximate
+  ```
 
 - **Default workflow streams continue across notebook cells.** IPython cells
   with top-level `await` and kernels that change tasks between cells keep the

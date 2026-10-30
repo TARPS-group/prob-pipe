@@ -30,9 +30,10 @@ must be grounded in what these documents say — do not rely on your own prior
 knowledge of ProbPipe conventions, as they may have changed.
 
 - `AGENTS.md` — the map from each task to the document that owns its rules
-- `CONTRACTS.md` — the contract directives every PR follows
 - `STYLE_GUIDE.md` — naming, imports, types, protocols, testing, module layout
-- `CONTRIBUTING.md` — the PR workflow, test quality, documentation, and CI
+- `CONTRIBUTING.md` — how a change follows the design and settles its
+  contracts (§ Changing the code), the PR workflow, test quality,
+  documentation, and CI
 - `design/README.md`, `design/glossary.md`, and the design section of each
   abstraction the PR changes, which `design/package-structure.md` § The tree
   lists beside each module
@@ -75,8 +76,8 @@ that section as it stands at the base ref.
 
 - **Design** — each changed abstraction follows its design section, and the
   principles of `design/01-design-principles.md`. Classify a disagreement as
-  `CONTRACTS.md` directive 5 does: the design decides.
-- **Contracts** — the directives of `CONTRACTS.md`.
+  `CONTRIBUTING.md` § Changing the code, rule 1, does: the design decides.
+- **Contracts** — the rules of `CONTRIBUTING.md` § Changing the code.
 - **Naming** — `STYLE_GUIDE.md` §1, naming accuracy included, and
   `design/glossary.md` § Canonical names.
 - **Imports** — `STYLE_GUIDE.md` §4.
@@ -85,13 +86,15 @@ that section as it stands at the base ref.
   types) and class attributes should be annotated.
 - **Subpackage dependency graph** — `STYLE_GUIDE.md` §6.
 - **Registry patterns** — design II.7 and `docs/api/extending.md`.
-- **Docstrings** — `CONTRACTS.md` directive 2 and `STYLE_GUIDE.md` §3.
+- **Docstrings** — `STYLE_GUIDE.md` §3, what a docstring states
+  (`STYLE_GUIDE.md` §3.4) included.
+- **Module layout and reuse** — `STYLE_GUIDE.md` §2.4 and §2.5.
 - **`__all__` exports** — `STYLE_GUIDE.md` §9.1.
 
 ### 2.2 Documentation
 
 - Are new or modified public classes, functions, and modules documented as
-  `CONTRACTS.md` directive 2 requires?
+  `STYLE_GUIDE.md` §3.4 requires?
 - Are existing docstrings still accurate after the changes, or have they become
   stale (e.g., parameter added but not documented, behavior changed but docstring
   not updated)?
@@ -101,7 +104,7 @@ that section as it stands at the base ref.
 - **Convention docs consistency** — Does the PR change how things are done (new
   abstractions, new patterns, renamed or removed APIs, new module layout)? If
   so, are the documents that state the convention updated: `STYLE_GUIDE.md`,
-  `CONTRIBUTING.md`, `CONTRACTS.md`, `AGENTS.md`, or `design/`? Flag any case
+  `CONTRIBUTING.md`, `AGENTS.md`, or `design/`? Flag any case
   where a PR changes how things are done but leaves a document describing the
   old way.
 
@@ -112,7 +115,7 @@ that section as it stands at the base ref.
   error paths)?
 - Have any existing tests become stale — testing behavior that no longer matches
   the implementation?
-- Do the tests assert each contract, as `CONTRACTS.md` directive 3 requires?
+- Do the tests assert each contract, as `STYLE_GUIDE.md` §8.7 requires?
 - Do the tests follow `STYLE_GUIDE.md` §8 and `CONTRIBUTING.md` § Test quality?
   A loose tolerance, a shape-only assertion on inference output where a
   statistical check is feasible, and a dispatch change without an equivalence
@@ -184,8 +187,10 @@ documentation:
 - Does the title/description match the **final** diff? Flag drift in either
   direction: features described but not present, changes present but
   undescribed.
+- Does the body show each change of behavior in a runnable example with its
+  output, as `CONTRIBUTING.md` § Opening the PR requires?
 - Does the contract assessment cover each abstraction the PR changes, as
-  `CONTRACTS.md` directive 3 requires?
+  `CONTRIBUTING.md` § Opening the PR requires?
 - Did scratch artifacts leak into the diff — `*_plan.md` files, references to
   local plan directories, leftover debug scripts?
 - When the PR pins a version (CI action, tool), is the pin consistent with the

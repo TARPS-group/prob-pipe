@@ -879,8 +879,9 @@ class ConditionalDistribution(TrackedTerm, Annotated, ABC, metaclass=_Conditiona
 
         This kernel may condition on what *other* produces. The result is a
         ``FactoredDistribution`` when *other* meets every input, and a
-        ``FactoredConditionalDistribution`` over the unmet inputs otherwise;
-        see :meth:`Distribution.__and__`.
+        ``FactoredConditionalDistribution`` over the unmet inputs otherwise.
+        Its provenance records the step ``&`` with this kernel and *other* as
+        its parents, in that order; see :meth:`Distribution.__and__`.
         """
         return _merge_operands(self, other)
 
