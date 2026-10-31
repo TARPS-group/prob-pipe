@@ -1229,7 +1229,7 @@ class _GivenCandidate:
             return Feasibility(False, "the operand has no given values")
         if isinstance(subject.given, StandIn):
             return Feasibility(None, pending=("conditional delegation needs the given values",))
-        from ._condition import _BIND_INPUTS, condition_on
+        from ._condition import _BIND_INPUTS, _mapped_binding, condition_on
 
         binding = BoundCall(
             condition_on,
@@ -1239,8 +1239,12 @@ class _GivenCandidate:
         report = _BIND_INPUTS.check(binding)
         if report.feasible is not True:
             return report
-        exact = _BIND_INPUTS.exact(binding)
-        if (self._exact_only or call.controls["exact_only"]) and not exact:
+        exact = (
+            None
+            if _mapped_binding(subject.kernel, subject.given) is not None
+            else _BIND_INPUTS.exact(binding)
+        )
+        if (self._exact_only or call.controls["exact_only"]) and exact is False:
             return Feasibility(
                 False,
                 "binding the inputs runs approximate conditioning "
@@ -1275,7 +1279,7 @@ class _GivenCandidate:
         return PointReport(
             True,
             "delegation is available; the conditioned law's operation capabilities and fidelity are checked at execution",
-            exact=None if exact else False,
+            exact=False if exact is False else None,
         )
 
     def run(self, call: BoundCall, result: OutputSpec | None, report: Feasibility) -> Any:
@@ -2061,6 +2065,8 @@ class Operation(Function):
         if self._input_layout is not None:
             operand_values = dict(self._input_layout(operand_values))
         call = BoundCall(self, MappingProxyType(operand_values), controls)
+        if argument_values.get("given") is not None:
+            call._memo["given supplied"] = True
         result_declaration, deferred = self._plan(call)
         if self._given_subject is not None and argument_values.get("given") is not None:
             deferred += (
