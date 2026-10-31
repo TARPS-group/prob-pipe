@@ -491,3 +491,125 @@ def test_renamed_kernel_binds_nested_inputs_without_evaluating_early():
     law = condition_on.using(exact_only=True)(partial, {"group/offset": 3.0})
     assert len(calls) == 1
     np.testing.assert_allclose(mean(law), 6.0, rtol=1e-6)
+
+
+@pytest.mark.parametrize("shape", [(), (2,), (2, 3)])
+@pytest.mark.parametrize("finite", [None, False, True])
+def test_conditional_sampling_under_jax_transforms(shape, finite):
+    k = conditional_distribution(
+        lambda theta, x: Normal("y", theta + x, 1.0),
+        given_spec={"theta": REAL, "x": REAL},
+    )
+    if finite is None:
+        k = condition_on(k, {"theta": 0.0})
+        q = pushforward(k, Function(lambda y: y + 1.0, output_spec=OutputSpec(out=REAL)))
+    else:
+        mixing = (
+            EmpiricalDistribution(jnp.array([-1.0, 2.0]), output_name="theta")
+            if finite
+            else Normal("theta", 0.0, 1.0)
+        )
+        q = mixture(k, mixing)
+    key = jax.random.key(3)
+
+    def draw(x):
+        return q._conditional_sample({"x": x}, key, shape)
+
+    xs = jnp.arange(3.0)
+    expected = jnp.stack([draw(x) for x in xs])
+    for transformed in (jax.vmap(draw), jax.jit(jax.vmap(draw)), jax.vmap(jax.jit(draw))):
+        actual = transformed(xs)
+        assert isinstance(actual, jax.Array)
+        np.testing.assert_allclose(actual, expected, atol=1e-6)
+
+
+@pytest.mark.parametrize("wrapper", ["plain", "rename", "joint"])
+def test_source_binding_receives_method_options(wrapper):
+    from probpipe.distributions._capabilities import SupportsApproximateConditioning
+
+    seen = []
+
+    class WithOptions(ConditionalDistribution, SupportsApproximateConditioning):
+        def __init__(self):
+            super().__init__({"x": REAL}, OutputSpec(y=REAL))
+
+        def _condition_on(self, given, /, **options):
+            seen.append(options)
+            return EmpiricalDistribution(jnp.array([given["x"]]), output_name="y")
+
+    q = pushforward(WithOptions(), Function(lambda y: y + 1.0, output_spec=OutputSpec(out=REAL)))
+    name = "x"
+    if wrapper == "rename":
+        q = q.rename(x="input")
+        name = "input"
+    elif wrapper == "joint":
+        q = q & Normal("x", 0.0, 1.0)
+    condition_on.using(method_options={"budget": 7})(q, {name: 2.0})
+    assert seen and all(options == {"budget": 7} for options in seen)
+
+
+@pytest.mark.parametrize("record", [False, True])
+def test_vector_and_record_sampling_under_vmap(record):
+    from probpipe import NumericArraySpec
+
+    k = conditional_distribution(lambda x: Normal("y", x, 1.0), given_spec={"x": REAL})
+    vector = NumericArraySpec((2,), jnp.float32)
+    f = Function(
+        lambda y: {"a": jnp.stack([y, y + 1.0])} if record else jnp.stack([y, y + 1.0]),
+        output_spec=OutputSpec(RecordSpec(a=vector)) if record else OutputSpec(out=vector),
+    )
+    q = pushforward(k, f)
+
+    def draw(x):
+        return q._conditional_sample({"x": x}, jax.random.key(9), (2, 3))
+
+    xs = jnp.arange(3.0)
+    actual = jax.jit(jax.vmap(draw))(xs)
+    expected = jax.tree.map(lambda *leaves: jnp.stack(leaves), *(draw(x) for x in xs))
+    for value, reference in zip(jax.tree.leaves(actual), jax.tree.leaves(expected), strict=True):
+        np.testing.assert_allclose(value, reference, atol=1e-6)
+
+
+def test_finite_kernel_construction_defers_approximate_binding():
+    from probpipe.distributions._capabilities import SupportsApproximateConditioning
+
+    from ._laws import Kernel
+
+    calls = []
+
+    class Approximate(Kernel, SupportsApproximateConditioning):
+        def _condition_on(self, given, /, **options):
+            calls.append(given)
+            return super()._condition_on(given, **options)
+
+    k = Approximate("y", ("theta", "x"))
+    mixing = EmpiricalDistribution(jnp.array([0.0, 1.0]), output_name="theta")
+    q = mixture.using(exact_only=True)(k, mixing)
+    assert calls == []
+    with pytest.raises(ResolutionError):
+        condition_on(q, {"x": 1.0})
+    assert calls == []
+
+
+def test_partial_binding_options_belong_to_the_source_call():
+    from probpipe.distributions._capabilities import SupportsApproximateConditioning
+
+    seen = []
+
+    class WithOptions(ConditionalDistribution, SupportsApproximateConditioning):
+        def __init__(self, inputs=("x", "z")):
+            super().__init__({name: REAL for name in inputs}, OutputSpec(y=REAL))
+
+        def _condition_on(self, given, /, **options):
+            seen.append(options)
+            remaining = tuple(name for name in self.given_spec if name not in given)
+            if remaining:
+                return WithOptions(remaining)
+            return EmpiricalDistribution(jnp.array([1.0]), output_name="y")
+
+    q = pushforward(WithOptions(), Function(lambda y: y + 1.0, output_spec=OutputSpec(out=REAL)))
+    partial = condition_on.using(method_options={"budget": 7})(q, {"x": 2.0})
+    assert seen and all(options == {"budget": 7} for options in seen)
+    seen.clear()
+    condition_on.using(method_options={"budget": 11})(partial, {"z": 3.0})
+    assert seen and all(options == {"budget": 11} for options in seen)

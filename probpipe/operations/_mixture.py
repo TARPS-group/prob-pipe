@@ -28,6 +28,7 @@ def _kernel_output_projection(K: ConditionalDistribution) -> Function:
 
 
 @operation(
+    # A law keeps K.event_spec; with unfed inputs, the returned kernel declares its spec.
     result=lambda K, mixing: (
         None
         if any(name not in mixing.event_spec.outputs for name in K.given_spec.required)

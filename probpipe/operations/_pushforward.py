@@ -343,9 +343,11 @@ def _output_label(f: Any, *, subject: str) -> str:
 
 
 @operation(
+    # The returned law or kernel declares the output event.
     result=lambda: None,
     roles={"d": (DistributionSpec, ConditionalDistributionSpec), "f": (FunctionSpec,)},
     applicability_checks=_integrand_applicability_checks("pushforward"),
+    # Pushforward takes the map's output label (V.10).
     label=lambda f: _output_label(f, subject="pushforward"),
 )
 def pushforward(d: Distribution, f: Any, fixed_args: Mapping[str, Any] | None = None):
@@ -593,7 +595,10 @@ def _mapped_sample(self: Any, given: Any, key: Any, sample_shape: tuple[int, ...
             else draws
         )
     result = self._sample_map(points)
-    return _drawn_form(_raw_record(result), self.event_spec.term_spec, sample_shape)
+    result = _raw_record(result)
+    if isinstance(result, Batch):
+        result = result.raw
+    return _drawn_form(result, self.event_spec.term_spec, sample_shape)
 
 
 class _PushforwardKernel(ConditionalDistribution):
@@ -678,9 +683,11 @@ class _PushforwardKernel(ConditionalDistribution):
             },
         )
 
-    def _bound_source(self, given: Any, controls: Any) -> Any:
+    def _bound_source(self, given: Any, controls: Any, method_options: Any = None) -> Any:
         """Bind the source through the existing conditioning operation."""
-        return condition_on.using(exact_only=controls.get("exact_only", False))(self._source, given)
+        return condition_on.using(
+            exact_only=controls.get("exact_only", False), method_options=method_options
+        )(self._source, given)
 
     def _finish(self, source: Any, controls: Any, *, check: bool = False) -> Any:
         """Push the bound source forward, retaining a kernel for partial inputs."""
@@ -691,14 +698,16 @@ class _PushforwardKernel(ConditionalDistribution):
             else operation(source, self._map, self._fixed)
         )
 
-    def _binding_report(self, given: Any, controls: Any, memo: dict) -> Feasibility:
+    def _binding_report(
+        self, given: Any, controls: Any, memo: dict, *, method_options: Any = None
+    ) -> Feasibility:
         """Report binding without running a kernel during a check."""
         if not given:
             # A renamed boundary can hold an incomplete input without evaluating its parent.
             return PointReport(True, exact=True)
-        report = condition_on.using(exact_only=controls.get("exact_only", False)).check(
-            self._source, given
-        )
+        report = condition_on.using(
+            exact_only=controls.get("exact_only", False), method_options=method_options
+        ).check(self._source, given)
         if report.feasible is False or (report.feasible is None and checking()):
             return Feasibility(report.feasible, report.description, pending=report.pending)
         if checking():
@@ -710,7 +719,7 @@ class _PushforwardKernel(ConditionalDistribution):
             return PointReport(True, exact=False)
         if "mapped source" not in memo:
             try:
-                memo["mapped source"] = self._bound_source(given, controls)
+                memo["mapped source"] = self._bound_source(given, controls, method_options)
             except ResolutionError as error:
                 return Feasibility(False, str(error))
         report = self._finish(memo["mapped source"], controls, check=True)
@@ -721,7 +730,9 @@ class _PushforwardKernel(ConditionalDistribution):
             pending=report.pending,
         )
 
-    def _bind_with_controls(self, given: Any, controls: Any, *, prepared: Any = None) -> Any:
+    def _bind_with_controls(
+        self, given: Any, controls: Any, *, prepared: Any = None, method_options: Any = None
+    ) -> Any:
         """Bind and materialize under the controls selected by condition_on."""
         controls = {
             **self._controls,
@@ -729,7 +740,11 @@ class _PushforwardKernel(ConditionalDistribution):
             "exact_only": self._controls.get("exact_only", False)
             or controls.get("exact_only", False),
         }
-        source = prepared if prepared is not None else self._bound_source(given, controls)
+        source = (
+            prepared
+            if prepared is not None
+            else self._bound_source(given, controls, method_options)
+        )
         if _remaining_given_spec(self.given_spec, tuple(given)).required:
             controls = self._controls
         return self._finish(source, controls)
@@ -739,10 +754,11 @@ class _PushforwardKernel(ConditionalDistribution):
         controls = options.pop("_binding_controls", {})
         prepared = options.pop("_binding_prepared", None)
         # Conditioning selects its own route; the saved method selects the pushforward.
-        controls = {key: value for key, value in controls.items() if key in ("exact_only",)}
-        if options:
-            controls["method_options"] = options
-        return self._bind_with_controls(given, controls, prepared=prepared)
+        method_options = {**controls.get("method_options", {}), **options}
+        controls = {key: value for key, value in controls.items() if key == "exact_only"}
+        return self._bind_with_controls(
+            given, controls, prepared=prepared, method_options=method_options
+        )
 
 
 pushforward.register_route(_EvaluationRules())

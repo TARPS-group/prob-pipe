@@ -2139,11 +2139,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- `mixture` retains unfed inputs as a kernel, with direct conditional sampling
-  and finite mixture construction after binding. `pushforward` accepts kernels
-  and infers their mapped event spec when possible. Complete binding computes
-  the ordinary pushforward, including its eager empirical approximation.
-
 - **Monte Carlo marginals.** `marginal(d, paths)` estimates a standalone
   marginal from joint samples when no exact marginal is available. Set the
   count with `marginal.using(num_samples=4096)(d, paths)`. The empirical result
@@ -3436,7 +3431,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the kernel's inputs and preserves its output event structure. Empirical
   mixing laws produce a `MixtureDistribution` with the original weights.
   Other sampling laws produce an empirical approximation through the joint's
-  output projection. The mixing law must supply all required kernel inputs.
+  output projection. Inputs left unfed remain inputs of a kernel supporting
+  conditional sampling and composition with `&`. Complete binding retains the
+  finite mixture route when applicable. `pushforward` also accepts kernels,
+  infers the mapped event spec when possible, and computes the ordinary
+  pushforward eagerly when its last required input is bound.
 
 ### Changed
 

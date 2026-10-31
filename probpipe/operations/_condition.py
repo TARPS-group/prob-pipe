@@ -1536,6 +1536,7 @@ class _NormalizingRoute(_RegistryRoute):
                     "exact_only": exact_only or target._controls.get("exact_only", False),
                 },
                 call._memo,
+                method_options=call.controls.get("method_options", {}),
             )
         binding_exact = None
         factor_bindings = None
@@ -1573,6 +1574,7 @@ class _NormalizingRoute(_RegistryRoute):
                                 or target._controls.get("exact_only", False),
                             },
                             call._memo.setdefault(("factor binding", id(factor)), {}),
+                            method_options=call.controls.get("method_options", {}),
                         )
                     )
                 elif bound:
@@ -1586,7 +1588,10 @@ class _NormalizingRoute(_RegistryRoute):
                     if report.feasible is not True:
                         return report
                 binding_exact = all(report.exact is True for report in reports)
-                call._memo["factor binding controls"] = {"exact_only": exact_only}
+                call._memo["factor binding controls"] = {
+                    "exact_only": exact_only,
+                    "method_options": call.controls.get("method_options", {}),
+                }
                 if self._stage is _BIND_INPUTS:
                     call._memo["mapped factor bindings"] = mapped_factors
         exact = self._stage.exact(call) if binding_exact is None else binding_exact
@@ -1702,7 +1707,10 @@ class _NormalizingRoute(_RegistryRoute):
             return _at_given(
                 kernel,
                 call.operands["given"],
-                _binding_controls={"exact_only": exact_only},
+                _binding_controls={
+                    "exact_only": exact_only,
+                    "method_options": call.controls.get("method_options", {}),
+                },
                 _binding_prepared=call._memo.get("mapped source"),
             )
         conditional = self._stage.compute(call)

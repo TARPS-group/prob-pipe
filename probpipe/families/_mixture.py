@@ -542,6 +542,7 @@ class _FiniteMixture(_DelegatingRoute):
         # Merging checks output overlap and input/output spec compatibility.
         joint = K & mixing
         if isinstance(joint, ConditionalDistribution):
+            # Construction preserves the kernel; binding later checks the component routes.
             return PointReport(True, exact=True)
         reports = []
         for index in range(mixing.num_atoms):
@@ -607,14 +608,16 @@ class _FiniteMixtureKernel(_PushforwardKernel):
         self._kernel = K
         self._mixing = mixing
 
-    def _bound_source(self, given: Any, controls: Any) -> Any:
+    def _bound_source(self, given: Any, controls: Any, method_options: Any = None) -> Any:
         """Bind only the remaining kernel inputs, retaining the mixing law."""
         if (
             not _remaining_given_spec(self._kernel.given_spec, tuple(given)).required
             and self._kernel.given_spec.optional & self._mixing.event_spec.outputs.keys()
         ):
             return _hold_inputs(self._kernel, given)
-        return condition_on.using(exact_only=controls.get("exact_only", False))(self._kernel, given)
+        return condition_on.using(
+            exact_only=controls.get("exact_only", False), method_options=method_options
+        )(self._kernel, given)
 
     def _finish(self, source: Any, controls: Any, *, check: bool = False) -> Any:
         """Enumerate the mixing atoms after the remaining inputs have been bound."""
