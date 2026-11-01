@@ -1052,6 +1052,14 @@ def _sole_field_projection(method: str) -> Callable[..., Any]:
     return projected
 
 
+def _sole_field_sample(self: _SoleField, key: PRNGKey, sample_shape: tuple[int, ...] = ()) -> Any:
+    """The one field's draws in the raw form declared by its event."""
+    from ._views import _drawn_form
+
+    draws = _children(_raw_record(self._law._sample(key, sample_shape)))[self._output_name]
+    return _drawn_form(draws, cast(TermSpec, self.event_spec.term_spec), sample_shape)
+
+
 def _sole_field_density(method: str) -> Callable[..., Any]:
     """The density *method* of a :class:`_SoleField`, the law's at the record of the value."""
 
@@ -1119,7 +1127,7 @@ def _sole_field_marginal_capabilities(
 #: Each capability a :class:`_SoleField` takes from its record law, with its methods.
 _SOLE_FIELD_CAPABILITIES: dict[type, Mapping[str, Callable[..., Any]]] = {
     SupportsSampling: {
-        "_sample": _sole_field_projection("_sample"),
+        "_sample": _sole_field_sample,
         "_sample_guard": _sole_field_guard("_sample"),
     },
     SupportsLogProb: {
