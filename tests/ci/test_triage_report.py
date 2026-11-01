@@ -63,6 +63,9 @@ class TestMissing:
         issue = _issue(1, "type:bug", "severity:S1", "priority:P0", "area:core", milestone="0.2.1")
         assert report.missing(issue) == []
 
+    def test_a_p1_epic_needs_no_milestone(self):
+        assert report.missing(_issue(1, "type:epic", "priority:P1", "area:core")) == []
+
 
 class TestViolations:
     def test_two_type_labels_are_a_violation(self):
@@ -72,6 +75,10 @@ class TestViolations:
     def test_a_p3_with_a_milestone_is_a_violation(self):
         issue = _issue(1, "type:feature", "priority:P3", "area:core", milestone="0.3.0")
         assert report.violations(issue) == ["a P3 issue with a milestone"]
+
+    def test_an_epic_with_a_milestone_is_a_violation(self):
+        issue = _issue(1, "type:epic", "priority:P1", "area:core", milestone="0.3.0")
+        assert report.violations(issue) == ["an epic with a milestone"]
 
     def test_a_severity_on_a_feature_is_a_violation(self):
         issue = _issue(1, "type:feature", "severity:S2", "priority:P2", "area:core")

@@ -33,6 +33,7 @@ AREA_PREFIX = "area:"
 
 TYPE_BUG = "type:bug"
 TYPE_TRACKING = "type:tracking"
+TYPE_EPIC = "type:epic"
 TYPE_QUESTION = "type:question"
 #: The types that carry no priority.
 UNPRIORITIZED_TYPES = frozenset({TYPE_TRACKING, TYPE_QUESTION})
@@ -92,7 +93,7 @@ def missing(issue: dict[str, Any]) -> list[str]:
         gaps.append("a bug without a severity")
     if _needs_priority(labels) and not _with_prefix(labels, PRIORITY_PREFIX):
         gaps.append("no priority")
-    if labels & {PRIORITY_P0, PRIORITY_P1} and not issue["milestone"]:
+    if labels & {PRIORITY_P0, PRIORITY_P1} and TYPE_EPIC not in labels and not issue["milestone"]:
         gaps.append("a P0 or P1 issue without a milestone")
     if not _with_prefix(labels, AREA_PREFIX):
         gaps.append("no `area:` label")
@@ -110,6 +111,8 @@ def violations(issue: dict[str, Any]) -> list[str]:
         found.append("a severity on an issue that is not a bug")
     if PRIORITY_P3 in labels and issue["milestone"]:
         found.append("a P3 issue with a milestone")
+    if TYPE_EPIC in labels and issue["milestone"]:
+        found.append("an epic with a milestone")
     return found
 
 

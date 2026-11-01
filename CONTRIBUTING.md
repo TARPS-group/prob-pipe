@@ -186,6 +186,8 @@ An issue carries labels on four axes:
    - `type:feature`: new behavior;
    - `type:docs`: new or better documentation where nothing shipped is wrong;
    - `type:maintenance`: refactors, tests, CI, packaging, and dependencies;
+   - `type:epic`: a bounded body of work whose children are its sub-issues, as
+     [Initiatives and epics](#initiatives-and-epics) describes;
    - `type:tracking`: an issue that lists other work;
    - `type:question`: a request for help, which is closed once answered.
 2. **Severity**, on a bug only: `severity:S1` to `severity:S4`, which
@@ -198,6 +200,8 @@ The flags `kind:breaking-change` and `kind:deprecation` and the `status:*`
 labels apply to issues as they apply to PRs. Two status labels serve triage:
 `status:needs-triage` marks an issue that awaits triage, and
 `status:needs-repro` marks a bug that no maintainer has reproduced yet.
+`status:idea` marks an idea with no plan or owner, which keeps `priority:P3`
+and no milestone.
 
 Two flags invite contributors. `good first issue` marks an issue that a
 newcomer can finish in a few hours. Its change stays within one module, the
@@ -208,6 +212,25 @@ take on, usually a P3 issue.
 
 Within one priority, work goes in the order bug, feature, docs, maintenance.
 Within one type, it goes by severity and then by age.
+
+### Initiatives and epics
+
+Work is organized in two levels above the issues:
+
+1. **An initiative** is a strategic outcome that spans several releases, such
+   as Foundations or Usability. It is the field "Initiative" of the
+   repository's GitHub Project, set on each epic.
+2. **An epic** is a bounded body of work, such as caching or the contract of
+   `using`, labeled `type:epic`. It links its plan, if one exists, and its
+   children are its sub-issues. An epic has a priority that ranks it against
+   the other epics, and no milestone.
+
+Each child of an epic is triaged on its own, with its own type, severity,
+priority, and milestone. Its default priority is its epic's, and the rules of
+[Severity](#severity) and [Priority](#priority) can raise it, as for a silent
+bug in a P2 epic. An issue closes when its work is done, or when every piece
+of its remaining work has a destination in another issue. An issue that is
+abandoned closes as "not planned".
 
 ### Severity
 
