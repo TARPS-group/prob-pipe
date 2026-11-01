@@ -17,6 +17,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from .. import _messages
+from ..core._dispatch import Feasibility
 from ..core._expression import Applied
 from ..core._object_batch import _collection_expression
 from ..core._record_spec import RecordSpec
@@ -41,12 +42,15 @@ from ..distributions._distribution import (
     _constructor_label,
     _record_default_expression,
 )
-from ..distributions._factored import _raw_leaves
+from ..distributions._empirical import EmpiricalDistribution
+from ..distributions._factored import _outputs_of, _raw_leaves
+from ..functions._resolution import PointReport
 from ..linalg import DenseLinOp, LinOp
-from ..operations import _moments
+from ..operations import _mixture, _moments
+from ..operations._condition import condition_on
+from ..operations._operation import BoundCall, RouteSource, _DelegatingRoute
 
 if TYPE_CHECKING:
-    from ..core._dispatch import Feasibility
     from ..custom_types import Array, ArrayLike, PRNGKey
 
 __all__ = ["MixtureDistribution"]
@@ -513,3 +517,46 @@ class MixtureDistribution(Distribution):
 
 # The Monte Carlo mean of a law over laws is the finite mixture of its draws.
 _moments._install_mixture(MixtureDistribution)
+
+
+class _FiniteMixture(_DelegatingRoute):
+    """A finite mixture of the laws obtained by binding each mixing atom to the kernel."""
+
+    source = RouteSource.STRUCTURAL
+
+    def __init__(self) -> None:
+        super().__init__("finite")
+
+    def probe(
+        self, call: BoundCall, result: OutputSpec | None, *, method: str | None, exact_only: bool
+    ) -> Feasibility:
+        """The mixing law is empirical, and each atom admits conditioning the kernel."""
+        K, mixing = call.operands["K"], call.operands["mixing"]
+        if not isinstance(mixing, EmpiricalDistribution):
+            return Feasibility(False, "mixing is not an EmpiricalDistribution")
+        # Merging checks output overlap and input/output spec compatibility.
+        _ = K & mixing
+        reports = []
+        for index in range(mixing.num_atoms):
+            values = _outputs_of(mixing.event_spec, mixing._atoms_at(index))
+            given = {name: values[name] for name in K.given_spec if name in values}
+            report = condition_on.using(exact_only=exact_only).check(K, given)
+            if report.feasible is not True:
+                return Feasibility(report.feasible, report.description, pending=report.pending)
+            reports.append(report)
+        return PointReport(True, exact=all(report.exact is True for report in reports))
+
+    def run(
+        self, call: BoundCall, result: OutputSpec | None, *, method: str | None, exact_only: bool
+    ) -> Any:
+        """Bind the atoms once and retain their weights in the finite mixture."""
+        K, mixing = call.operands["K"], call.operands["mixing"]
+        components = []
+        for index in range(mixing.num_atoms):
+            values = _outputs_of(mixing.event_spec, mixing._atoms_at(index))
+            given = {name: values[name] for name in K.given_spec if name in values}
+            components.append(condition_on.using(exact_only=exact_only)(K, given))
+        return MixtureDistribution(components, mixing.weights, label=K.label)
+
+
+_mixture.mixture.register_route(_FiniteMixture())
