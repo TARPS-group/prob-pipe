@@ -8,13 +8,15 @@ the detached building-block factor of a joint that produces the named output.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
-from ..core._dispatch import Feasibility
+from ..core._batch import BatchSpec, _flat_batch_spec
 from ..core._expression import Expression
+from ..core._record_batch import _batch_over
 from ..core._shapes import PathsLike
+from ..core._spec_base import TermSpec
 from ..core._specs import OutputSpec
-from ..distributions._capabilities import SupportsMarginals, _capability_guard
+from ..distributions._capabilities import SupportsMarginals, SupportsSampling, _capability_guard
 from ..distributions._conditional import ConditionalDistributionSpec
 from ..distributions._distribution import (
     Distribution,
@@ -22,10 +24,28 @@ from ..distributions._distribution import (
     _detached_term,
     _read_event_paths,
 )
-from ..distributions._factored import SupportsFactors
-from ..distributions._views import _marginal_expression_at, _view_declaration
+from ..distributions._empirical import EmpiricalDistribution
+from ..distributions._factored import FactoredDistribution, SupportsFactors, _raw_record
+from ..distributions._views import (
+    CoupledMarginal,
+    _drawn_form,
+    _is_within,
+    _law_of_group,
+    _leaf_paths,
+    _marginal_expression_at,
+    _projector,
+    _view_declaration,
+)
+from ..functions import _descendants
 from ..functions._call import ApplicabilityError
-from ._operation import BoundCall, _install_expression_rule, operation
+from ..functions._result import SAMPLE_LEVEL
+from ._operation import (
+    BoundCall,
+    _can_sample,
+    _install_expression_rule,
+    _monte_carlo_draws,
+    operation,
+)
 
 __all__ = ["factor", "marginal"]
 
@@ -120,12 +140,33 @@ def _marginal_expression(d: Any, paths: Any) -> Expression:
 def marginal(d: Distribution, paths: PathsLike):
     """The standalone marginal of *d* at *paths*, a standalone law with no reference back to *d*.
 
-    ``marginal(d, paths)`` is the law of the view ``d[paths]``, detached: one
+    At event paths, ``marginal(d, paths)`` is the detached law of ``d[paths]``: one
     path gives the node there whole under the path's last name, and a list or
     a tuple of paths a law over the record that keeps each node at its own
     path, in *d*'s order, so ``marginal(grouped, ["a", "g/c"])`` draws records
     ``{a, g: {c}}``. A lift draws the marginal independently of *d* and of
     the laws *d* is built from (V.5).
+
+    The law's exact marginal capability and whole-event structural route
+    precede the ``monte_carlo`` route. That route draws ``num_samples`` joint
+    samples once and returns their projected
+    empirical law. Its atoms have uniform weights and remain fixed when the
+    result is sampled again. Set the count with
+    ``marginal.using(num_samples=4096)(d, paths)``. The call records its
+    approximation and sample count in provenance.
+
+    A selection covering the whole event retains the law independently.
+    For a scalar law with root output ``y``, ``marginal(d, "y")`` retains its
+    scalar event, while ``marginal(d, ["y"])`` wraps it in a record under ``y``.
+
+    With ``given=``, selection follows the conditional order in VI.0: native
+    exact routes, exact conditioning followed by an exact marginal, then
+    approximate routes and unrestricted conditional delegation. A check reports
+    exact delegation unresolved when it needs the bound law. An explicit
+    ``method="monte_carlo"`` selects sampling directly.
+
+    The atoms' leading level is ``sample``. For a batch-valued event,
+    underscores are appended until that name differs from the event's levels.
 
     Parameters
     ----------
@@ -185,19 +226,50 @@ def _detached_marginal(call: BoundCall, result: OutputSpec | None) -> Distributi
     return _detached_term(call.operands["d"]._marginal(_call_paths(call)))
 
 
-def _can_sample(call: BoundCall, result: OutputSpec | None) -> Any:
-    """The empirical marginal of projected draws is not implemented, so no call selects the route.
-
-    The route is to apply when the law samples, so that projected draws form
-    an empirical marginal; until its execution exists, ``check`` and the call
-    both report it infeasible.
-    """
-    return Feasibility(False, "the empirical marginal of projected draws is not implemented yet")
-
-
-def _empirical_marginal(call: BoundCall, result: OutputSpec | None) -> Any:
+def _empirical_marginal(call: BoundCall, result: OutputSpec | None) -> EmpiricalDistribution:
     """The empirical law of draws projected onto the field, declaring the node's event."""
-    raise NotImplementedError("the empirical marginal of projected draws is not implemented yet")
+    law = call.operands["d"]
+    count = call.controls["num_samples"]
+    draws = _monte_carlo_draws(call, "marginal")
+    event_spec = cast(DistributionSpec, cast(OutputSpec, result).term_spec).event_spec
+    event_term_spec = cast(TermSpec, event_spec.term_spec)
+    projected = _projector(law.event_spec, _call_paths(call))(draws)
+    raw_atoms = _drawn_form(_raw_record(projected), event_term_spec, (count,))
+    level = SAMPLE_LEVEL
+    if isinstance(event_term_spec, BatchSpec):
+        while level in _flat_batch_spec(event_term_spec).level_names:
+            level += "_"
+    atoms = _batch_over(raw_atoms, BatchSpec(event_spec, {level: count}), law.label)
+    return EmpiricalDistribution(atoms, event_spec=event_spec, label=law.label)
+
+
+def _covers_event(call: BoundCall, result: OutputSpec | None) -> bool:
+    """Every leaf of the law's event is selected."""
+    from ._given import _GivenLaw
+
+    law = call.operands["d"]
+    if isinstance(law, _GivenLaw):
+        return False
+    paths = _call_paths(call)
+    selected = (paths,) if isinstance(paths, str) else paths
+    return all(
+        any(_is_within(leaf, path) for path in selected) for leaf in _leaf_paths(law.event_spec)
+    )
+
+
+def _whole_event_marginal(call: BoundCall, result: OutputSpec | None) -> Distribution:
+    """The law, detached and presented in the selected event form."""
+    law: Distribution = _detached_term(call.operands["d"])
+    event = cast(DistributionSpec, cast(OutputSpec, result).term_spec).event_spec
+    coupled = isinstance(law, CoupledMarginal) or (
+        isinstance(law, SupportsSampling)
+        and _descendants.capture_stochastic_consumer(law).root is not law
+    )
+    if event == law.event_spec and not coupled:
+        return law
+    record = FactoredDistribution([law], label=law.label)
+    paths = _call_paths(call)
+    return _detached_term(_law_of_group(record, paths) if isinstance(paths, str) else record)
 
 
 marginal.capability_route(
@@ -208,6 +280,9 @@ marginal.capability_route(
     check=_can_marginalize_path,
     execute=_detached_marginal,
     exact=True,
+)
+marginal.structural_route(
+    "whole_event", check=_covers_event, execute=_whole_event_marginal, exact=True
 )
 marginal.fallback_route("monte_carlo", check=_can_sample, execute=_empirical_marginal, exact=False)
 

@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed (breaking)
 
+- **Exact conditional operations.** With `given=`, an exact operation exposed
+  by exact conditioning precedes approximate routes, including sampling through
+  a registry. Conditional delegation reuses the bound law within the call and
+  records the resulting operation's fidelity.
+
 - **A product built with `&` carries provenance, so it takes no record of
   your own.** Before, `(a & b).with_provenance(p)` attached `p`. Now it raises
   `RuntimeError`, since the merge records `&` and provenance is set once. To
@@ -2138,6 +2143,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `method_options={"init": jnp.array([0.4, 0.55, 1.5])}`.
 
 ### Added
+
+- **Monte Carlo marginals.** `marginal(d, paths)` estimates a standalone
+  marginal from joint samples when no exact marginal is available. Set the
+  count with `marginal.using(num_samples=4096)(d, paths)`. The empirical result
+  keeps the selected fields' structure and dependence, and provenance records
+  the approximation and sample count. A marginal covering the whole event retains
+  the law exactly, including a scalar law selected by its root output name.
 
 - **`print(x.provenance)` prints the lineage of `x`.** Each line is one step,
   from the loaded data or another root down to `x`, with the call that made it,

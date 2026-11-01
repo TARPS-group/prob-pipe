@@ -101,9 +101,7 @@ from ..distributions._capabilities import (
     SupportsExpectation,
     SupportsMean,
     SupportsQuantile,
-    SupportsSampling,
     SupportsVariance,
-    _capability_guard,
 )
 from ..distributions._distribution import Distribution, DistributionSpec
 from ..distributions._empirical import EmpiricalDistribution
@@ -118,10 +116,10 @@ from ._operation import (
     RouteSource,
     _assembled,
     _call_label,
+    _can_sample,
     _DelegatingRoute,
     _install_expression_rule,
-    _subject_name,
-    _workflow_draws,
+    _monte_carlo_draws,
     operation,
 )
 from ._pushforward import (
@@ -372,18 +370,6 @@ def _event_typed_variance(d: DistributionSpec) -> bool:
 # ---------------------------------------------------------------------------
 
 
-def _can_sample(call: BoundCall, result: OutputSpec | None) -> Feasibility:
-    """The law samples, and the moment is assumed to exist.
-
-    Sampling alone does not establish that a moment exists, so the estimate
-    assumes the moment is finite.
-    """
-    d = call.operands["d"]
-    if not isinstance(d, SupportsSampling):
-        return Feasibility(False, f"{_subject_name(d)} does not sample")
-    return _capability_guard(d, "_sample")
-
-
 def _can_average(call: BoundCall, result: OutputSpec | None) -> Feasibility:
     """The law samples numeric draws, which average coordinatewise, or laws, which average to a mixture.
 
@@ -417,22 +403,6 @@ def _can_average_squares(call: BoundCall, result: OutputSpec | None) -> Feasibil
             f"cannot take the variance of draws of a non-numeric event; got {type(event).__name__}",
         )
     return _can_sample(call, result)
-
-
-def _monte_carlo_draws(call: BoundCall, operation_kind: str) -> Any:
-    """``num_samples`` workflow-owned draws of the law, the draw axis leading.
-
-    The count is noted as a ``num_samples`` the call used, so the call's provenance records it.
-    """
-    count = call.controls["num_samples"]
-    draws = _workflow_draws(
-        call.operands["d"],
-        (count,),
-        operation_kind=operation_kind,
-        execution_mode="monte_carlo",
-    )
-    _note_num_samples_used(count)
-    return draws
 
 
 #: The label, the output, and the level of the empirical law of a fallback's draws.
