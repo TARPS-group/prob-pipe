@@ -4499,6 +4499,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Operations with `given=` use the actual fidelity of input binding and
+  normalization when selecting a route and reporting the result.
+  A mapped kernel that requires Monte Carlo binding permits the operation's
+  sampling route to use its own budget. Exact finite mappings retain their
+  fidelity under an explicit `method`.
+
 - A law passed where a kernel is required is rejected before sampling, both in
   `check` and in a call. `predictive_check` preserves sweeps over batches of kernels.
 

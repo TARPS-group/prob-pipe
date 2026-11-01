@@ -1508,11 +1508,16 @@ class _NormalizingRoute(_RegistryRoute):
     ) -> Feasibility:
         """The exact stage's report, then the normalization's, under the controls.
 
-        A probe runs no method. A check computes the exact stage's result only
+        The probe selects the route's normalization method for execution.
+        A check computes the exact stage's result only
         to read the target of the normalization, and only when the stage is
         exact, so it reports the route unresolved where the declarations do not
         state whether the result is normalized, or the target is the law an
         approximate kernel yields.
+
+        Input binding retains the law computed by a runtime probe in the
+        call's memo. Normalization reads that law's capabilities, and later
+        candidates and execution reuse it.
         """
         report = self._stage.check(call)
         if report.feasible is not True:
@@ -1601,9 +1606,18 @@ class _NormalizingRoute(_RegistryRoute):
                 "binding the inputs runs approximate conditioning "
                 "(SupportsApproximateConditioning), which exact_only excludes",
             )
-        conditional = None
+        conditional = call._memo.get("bound law") if self._stage is _BIND_INPUTS else None
         normalized = self._stage.normalized(call)
-        if normalized is None:
+        if (
+            self._stage is _BIND_INPUTS
+            and not checking()
+            and not isinstance(kernel, _PerValueNormalization)
+        ):
+            if conditional is None:
+                conditional = self._stage.compute(call)
+                call._memo["bound law"] = conditional
+            normalized = not _needs_normalization(conditional)
+        elif normalized is None:
             if checking():
                 return Feasibility(
                     None,
@@ -1622,9 +1636,8 @@ class _NormalizingRoute(_RegistryRoute):
                     f"does not apply; drop method",
                     actionable=True,
                 )
-            d = call.operands["d"]
-            if isinstance(d, _PerValueNormalization) and not self._stage.yields_kernel(call):
-                return self._evaluation_report(call, d, exact)
+            if isinstance(kernel, _PerValueNormalization) and not self._stage.yields_kernel(call):
+                return self._evaluation_report(call, kernel, exact)
             return PointReport(True, exact=exact)
         normalization = self._normalization(call, method, exact_only)
         if self._stage.yields_kernel(call):
@@ -1640,6 +1653,8 @@ class _NormalizingRoute(_RegistryRoute):
                     ),
                 )
             conditional = self._stage.compute(call)
+            if self._stage is _BIND_INPUTS:
+                call._memo["bound law"] = conditional
         info = normalization.report(conditional)
         if info.feasible is not True or exact or not isinstance(info, MethodInfo):
             return info
@@ -1713,8 +1728,14 @@ class _NormalizingRoute(_RegistryRoute):
                 },
                 _binding_prepared=call._memo.get("mapped source"),
             )
-        conditional = self._stage.compute(call)
-        normalized = self._stage.normalized(call)
+        conditional = call._memo.get("bound law") if self._stage is _BIND_INPUTS else None
+        if conditional is None:
+            conditional = self._stage.compute(call)
+        normalized = (
+            not _needs_normalization(conditional)
+            if self._stage is _BIND_INPUTS
+            else self._stage.normalized(call)
+        )
         if normalized is None:
             normalized = not _needs_normalization(conditional)
         if normalized:
@@ -1933,7 +1954,7 @@ def _exact_stage_result(call: BoundCall, result: OutputSpec | None) -> Any:
     raise AssertionError("the exact stage ran with no stage that applies")
 
 
-condition_on.register_route(
+_bind_inputs_route = condition_on.register_route(
     _NormalizingRoute(
         "bind_inputs",
         source=RouteSource.STRUCTURAL,

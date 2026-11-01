@@ -11,9 +11,11 @@ from probpipe import (
     Normal,
     RecordBatch,
     RecordSpec,
+    Weights,
     condition_on,
     conditional_distribution,
     log_prob,
+    marginal,
     mean,
     mixture,
     pushforward,
@@ -613,3 +615,142 @@ def test_partial_binding_options_belong_to_the_source_call():
     seen.clear()
     condition_on.using(method_options={"budget": 11})(partial, {"z": 3.0})
     assert seen and all(options == {"budget": 11} for options in seen)
+
+
+@pytest.mark.parametrize("operation", [marginal, mean, variance])
+@pytest.mark.parametrize("method", [None, "monte_carlo"])
+def test_given_approximation_uses_the_selected_sampling_budget(operation, method):
+    calls = []
+
+    def simulator(y):
+        calls.append(float(y))
+        return jnp.float32(2 * float(y))
+
+    k = conditional_distribution(lambda x: Normal("y", x, 1.0), given_spec={"x": REAL})
+    q = pushforward.using(max_evaluations=7)(
+        k,
+        Function(simulator, traceable=False, output_spec=OutputSpec(w=REAL), executor="sequential"),
+    )
+    args = ("w",) if operation is marginal else ()
+    configured = operation.using(num_samples=13, method=method)
+    configured.check(q, *args, given={"x": 1.0})
+    assert calls == []
+    with workflow_run(seed=1):
+        result = configured(q, *args, given={"x": 1.0})
+    assert len(calls) == 13
+    assert result.provenance.metadata["exact"] is False
+    assert result.provenance.metadata["route"] == "monte_carlo"
+    assert result.provenance.metadata["num_samples"] == 13
+    if operation is marginal:
+        assert result.num_atoms == 13
+        np.testing.assert_allclose(result.atoms, 2 * np.asarray(calls), rtol=1e-6)
+    else:
+        expected = (
+            np.mean(2 * np.asarray(calls)) if operation is mean else np.var(2 * np.asarray(calls))
+        )
+        np.testing.assert_allclose(result, expected, rtol=1e-5)
+
+
+@pytest.mark.parametrize("finite", [False, True])
+@pytest.mark.parametrize("boundary", ["plain", "rename", "joint", "nested"])
+def test_given_marginal_binding_fidelity_through_composition(finite, boundary):
+    weights = Weights(n=2, weights=jnp.array([0.25, 0.75]))
+    k = conditional_distribution(
+        lambda x: (
+            EmpiricalDistribution(jnp.array([x, x + 2.0]), weights, output_name="y")
+            if finite
+            else Normal("y", x, 1.0)
+        ),
+        given_spec={"x": REAL},
+    )
+    f = Function(lambda y: y + 1.0, output_spec=OutputSpec(w=REAL))
+    q = pushforward.using(max_evaluations=7)(k, f)
+    given = {"x": 1.0}
+    if boundary == "rename":
+        q = q.rename(x="input")
+        given = {"input": 1.0}
+    elif boundary == "joint":
+        q = q & Normal("independent", 0.0, 1.0)
+    elif boundary == "nested":
+        q = pushforward(q, f)
+    with workflow_run(seed=2):
+        result = marginal.using(num_samples=13)(q, "w", given=given)
+    assert result.provenance.metadata["exact"] is finite
+    assert result.num_atoms == (2 if finite else 13)
+    if finite:
+        np.testing.assert_array_equal(
+            result.atoms, [3.0, 5.0] if boundary == "nested" else [2.0, 4.0]
+        )
+        np.testing.assert_allclose(result.weights, [0.25, 0.75])
+
+
+@pytest.mark.parametrize("method", [None, "whole_event", "exact"])
+@pytest.mark.parametrize("exact_only", [False, True])
+def test_given_exact_pushforward_retains_actual_fidelity(method, exact_only):
+    weights = Weights(n=2, weights=jnp.array([0.25, 0.75]))
+    k = conditional_distribution(
+        lambda x: EmpiricalDistribution(jnp.array([x, x + 2.0]), weights, output_name="y"),
+        given_spec={"x": REAL},
+    )
+    q = pushforward(k, Function(lambda y: 2 * y, output_spec=OutputSpec(w=REAL)))
+    result = marginal.using(method=method, exact_only=exact_only)(q, "w", given={"x": 1.0})
+    assert result.provenance.metadata["exact"] is True
+    np.testing.assert_array_equal(result.atoms, [2.0, 6.0])
+    np.testing.assert_allclose(result.weights, [0.25, 0.75])
+
+
+@pytest.mark.parametrize("finite", [False, True])
+@pytest.mark.parametrize("operation", [marginal, mean, variance])
+def test_given_mixture_retains_finite_route_or_samples_directly(finite, operation):
+    k = conditional_distribution(
+        lambda theta, x: Normal("y", theta + x, 1.0),
+        given_spec={"theta": REAL, "x": REAL},
+    )
+    mixing = (
+        EmpiricalDistribution(jnp.array([-1.0, 3.0]), jnp.array([0.25, 0.75]), output_name="theta")
+        if finite
+        else Normal("theta", 0.0, 1.0)
+    )
+    q = mixture.using(max_evaluations=7)(k, mixing)
+    args = ("y",) if operation is marginal else ()
+    with workflow_run(seed=3):
+        result = operation.using(num_samples=13)(q, *args, given={"x": 1.0})
+    assert result.provenance.metadata["exact"] is finite
+    assert result.provenance.metadata["route"] == ("conditional" if finite else "monte_carlo")
+    if finite:
+        if operation is marginal:
+            assert isinstance(result, MixtureDistribution)
+            np.testing.assert_allclose(mean(result), 3.0, atol=1e-6)
+            np.testing.assert_allclose(variance(result), 4.0, atol=1e-6)
+        else:
+            np.testing.assert_allclose(result, 3.0 if operation is mean else 4.0, atol=1e-6)
+    else:
+        assert result.provenance.metadata["num_samples"] == 13
+        if operation is marginal:
+            assert result.num_atoms == 13
+        else:
+            assert np.isfinite(result)
+
+
+@pytest.mark.parametrize("provenance", [False, True])
+def test_given_exact_only_never_evaluates_an_approximate_map(provenance):
+    from probpipe import ProvenanceMode, config
+
+    calls = []
+
+    def simulator(y):
+        calls.append(float(y))
+        return jnp.float32(y)
+
+    config.provenance.mode = ProvenanceMode.FULL if provenance else ProvenanceMode.OFF
+    k = conditional_distribution(lambda x: Normal("y", x, 1.0), given_spec={"x": REAL})
+    q = pushforward.using(max_evaluations=7)(
+        k, Function(simulator, traceable=False, output_spec=OutputSpec(w=REAL))
+    )
+    with pytest.raises(ResolutionError):
+        marginal.using(exact_only=True)(q, "w", given={"x": 1.0})
+    assert calls == []
+    with workflow_run(seed=4):
+        result = marginal.using(num_samples=13)(q, "w", given={"x": 1.0})
+    assert result.num_atoms == 13
+    assert len(calls) == 13

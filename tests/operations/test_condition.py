@@ -18,6 +18,7 @@ from probpipe import (
     Record,
     RecordSpec,
     conditional_distribution,
+    marginal,
     workflow_run,
 )
 from probpipe.core._dispatch import Feasibility, ResolutionError, UnaryDispatchRegistry
@@ -1442,3 +1443,35 @@ class TestEndToEnd:
             and ancestor.parent.provenance is not None
         }
         assert {"blackjax_nuts", "condition_on"} <= operations
+
+
+@pytest.mark.parametrize("exact", [False, True])
+@pytest.mark.parametrize("declared", [False, True])
+def test_given_delegation_reuses_the_law_and_reports_normalization(
+    suite_methods, monkeypatch, exact, declared
+):
+    class Binding(ConditionalDistribution):
+        def __init__(self):
+            super().__init__({"x": REAL}, OutputSpec(y=REAL))
+            self.calls = []
+
+        def _condition_on(self, given, /, **kwargs):
+            self.calls.append(given)
+            return Unnormalized("y")
+
+    class Declared(Binding, SupportsConditionalUnnormalizedLogProb):
+        def _conditional_unnormalized_log_prob(self, given, value):
+            raise AssertionError("the binding route must use the bound law")
+
+    method = suite_methods[0 if exact else 1]
+    _normalize_with(monkeypatch, method)
+    kernel = Declared() if declared else Binding()
+    configured = marginal.using(method_options={"budget": 5})
+    assert configured.check(kernel, "y", given={"x": 1.0}).feasible is None
+    assert kernel.calls == method.targets == []
+    result = configured(kernel, "y", given={"x": 1.0})
+    np.testing.assert_allclose(sample(result), 0.5 if exact else 9.0, rtol=0, atol=0)
+    assert result.provenance.metadata["route"] == "conditional"
+    assert result.provenance.metadata["exact"] is exact
+    assert len(kernel.calls) == len(method.targets) == 1
+    assert method.options == [{"budget": 5}]

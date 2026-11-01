@@ -1202,6 +1202,10 @@ class _GivenCandidate:
     approximate candidates and resolves the bound law during execution.
     A check never applies the kernel and reports this choice unresolved.
     A declaration-only given leaves input binding unresolved too.
+
+    Both candidates share the binding call and its prepared results. The
+    binding route reports the fidelity of binding and normalization together;
+    a completed law remains available if its exact operation is unavailable.
     """
 
     label = route_name = "conditional"
@@ -1213,28 +1217,24 @@ class _GivenCandidate:
         self._exact_only = exact_only
         self.label = "conditional (exact)" if exact_only else "conditional"
 
-    def _bound_law(self, call: BoundCall) -> tuple[Any, bool]:
-        """Bind once in this call, retaining the law and the binding's fidelity."""
+    def _bound_law(self, call: BoundCall) -> tuple[Any, bool | None]:
+        """Run the prepared binding route once, retaining its law and fidelity."""
         from ..distributions._views import _carrying
-        from ._condition import _BIND_INPUTS, _conditioned_expression, condition_on
+        from ._condition import _conditioned_expression
 
         if "conditional" not in call._memo:
-            subject_name = cast(str, cast(Operation, call.operation)._given_subject)
-            subject = call.operands[subject_name]
-            binding = BoundCall(
-                condition_on,
-                MappingProxyType({"d": subject.kernel, "given": subject.given}),
-                call.controls,
-            )
+            binding = call._memo["conditional binding"]
+            candidate, report = call._memo["conditional route"]
             law = _carrying(
-                _BIND_INPUTS.compute(binding),
-                _conditioned_expression(subject.kernel, subject.given),
+                candidate.run(binding, None, report),
+                _conditioned_expression(binding.operands["d"], binding.operands["given"]),
             )
-            call._memo["conditional"] = (law, _BIND_INPUTS.exact(binding))
+            call._memo["conditional"] = (law, candidate.exactness(report))
         return call._memo["conditional"]
 
     def probe(self, call: BoundCall, result: OutputSpec | None) -> Feasibility:
         """Check binding, and resolve exact delegation only outside a check."""
+        from ._condition import _BIND_INPUTS, _bind_inputs_route, _mapped_binding, condition_on
         from ._given import _GivenLaw
 
         subject_name = cast(str, cast(Operation, call.operation)._given_subject)
@@ -1243,68 +1243,56 @@ class _GivenCandidate:
             return Feasibility(False, "the operand has no given values")
         if isinstance(subject.given, StandIn):
             return Feasibility(None, pending=("conditional delegation needs the given values",))
-        from ._condition import _BIND_INPUTS, _mapped_binding, condition_on
-
-        binding = BoundCall(
-            condition_on,
-            MappingProxyType({"d": subject.kernel, "given": subject.given}),
-            call.controls,
-        )
-        report = _BIND_INPUTS.check(binding)
-        if report.feasible is not True:
-            return report
-        exact = (
-            None
-            if _mapped_binding(subject.kernel, subject.given) is not None
-            else _BIND_INPUTS.exact(binding)
-        )
-        if (self._exact_only or call.controls["exact_only"]) and exact is False:
-            return Feasibility(
-                False,
-                "binding the inputs runs approximate conditioning "
-                "(SupportsApproximateConditioning), which exact_only excludes",
+        if "conditional binding" not in call._memo:
+            call._memo["conditional binding"] = BoundCall(
+                condition_on,
+                MappingProxyType({"d": subject.kernel, "given": subject.given}),
+                {**call.controls, "method": None},
             )
-        if self._exact_only:
-            if checking():
+        binding = call._memo["conditional binding"]
+        if checking():
+            report = _BIND_INPUTS.check(binding)
+            if report.feasible is not True:
+                return report
+            exact = (
+                None
+                if _mapped_binding(subject.kernel, subject.given, include_factors=True) is not None
+                else _BIND_INPUTS.exact(binding)
+            )
+            if (self._exact_only or call.controls["exact_only"]) and exact is False:
                 return Feasibility(
-                    None, pending=("the exact conditional route needs the kernel's bound law",)
+                    False,
+                    "binding the inputs runs approximate conditioning "
+                    "(SupportsApproximateConditioning), which exact_only excludes",
                 )
-            from ._condition import _needs_normalization
-
+            if not self._exact_only:
+                return PointReport(True, exact=False if exact is False else None)
+            return Feasibility(
+                None, pending=("the conditional route needs the kernel's bound law",)
+            )
+        if "conditional" not in call._memo:
+            candidate = _Candidate(_bind_inputs_route, True if self._exact_only else None, 0)
+            report = candidate.probe(binding, None)
+            if report.feasible is not True:
+                return report
+            call._memo["conditional route"] = (candidate, report)
+        if self._exact_only:
             law, binding_exact = self._bound_law(call)
-            if _needs_normalization(law):
-                normalize = condition_on.using(
-                    exact_only=True, method_options=call.controls["method_options"]
-                )
-                normalization = normalize.check(law, {})
-                if normalization.feasible is not True:
-                    return normalization
-                law = normalize(law, {})
-                call._memo["conditional"] = (law, binding_exact)
             operands = {**call.operands, subject_name: law}
             bound = values_to_bound_arguments(call.operation.signature, operands)
             operation = call.operation.using(**{**call.controls, "exact_only": True})
             report = operation.check(*bound.args, **bound.kwargs)
             if report.feasible is not True:
                 return report
-            return PointReport(True, exact=True)
+            return PointReport(True, exact=binding_exact)
         return PointReport(
             True,
             "delegation is available; the conditioned law's operation capabilities and fidelity are checked at execution",
-            exact=False if exact is False else None,
         )
 
     def run(self, call: BoundCall, result: OutputSpec | None, report: Feasibility) -> Any:
         """Condition at execution, then run the original operation under its controls."""
-        from ._condition import _needs_normalization, condition_on
-
         law, binding_exact = self._bound_law(call)
-        if _needs_normalization(law):
-            law = condition_on.using(
-                exact_only=call.controls["exact_only"],
-                method_options=call.controls["method_options"],
-            )(law, {})
-            binding_exact = binding_exact and law.provenance.metadata["exact"]
         subject_name = cast(str, cast(Operation, call.operation)._given_subject)
         values = {**call.operands, subject_name: law}
         bound = values_to_bound_arguments(call.operation.signature, values)
@@ -1313,7 +1301,7 @@ class _GivenCandidate:
         )
         result = call.operation.using(**controls)(*bound.args, **bound.kwargs)
         if self._exact_only:
-            exact = True
+            exact = binding_exact
         else:
             provenance = getattr(result, "provenance", None)
             operation_exact = None if provenance is None else provenance.metadata.get("exact")
