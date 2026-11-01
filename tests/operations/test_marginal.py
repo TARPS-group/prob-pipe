@@ -83,6 +83,8 @@ class _BatchSampler(Distribution, SupportsSampling):
         values = jax.random.normal(
             key, (*sample_shape, *((2,) * len(self.levels))), dtype=jnp.float32
         )
+        if not sample_shape:
+            return {"trajectory": NumericArrayBatch(values, self.levels, label="trajectory")}
         batches = np.empty(sample_shape, dtype=object)
         for index in np.ndindex(sample_shape):
             batches[index] = NumericArrayBatch(values[index], self.levels, label="trajectory")
@@ -202,6 +204,105 @@ class TestMarginal:
         assert marginal(Marginalizing("law"), "a").label == "law"
 
 
+class TestWholeEventMarginal:
+    @pytest.mark.parametrize("exact_only", [False, True])
+    def test_a_plain_law_is_its_whole_event_marginal(self, exact_only):
+        law = Normal("y", 2.0, 3.0).with_label("prior")
+        result = marginal.using(exact_only=exact_only)(law, "y")
+        assert isinstance(result, Normal)
+        assert result is not law
+        assert result.loc == 2.0 and result.scale == 3.0
+        assert result.label == "prior"
+        assert result.event_spec == law.event_spec
+        assert result.provenance.metadata["exact"] is True
+        assert _descendants.capture_stochastic_consumer(result).root is result
+
+    @pytest.mark.parametrize("paths", [["y"], ("y",)])
+    def test_a_list_keeps_the_output_in_a_record(self, paths):
+        result = marginal(Normal("y", 2.0, 3.0), paths)
+        assert result.event_spec == OutputSpec(RecordSpec(y=REAL))
+        assert result.provenance.metadata["exact"] is True
+        np.testing.assert_allclose(result._mean()["y"], 2.0, rtol=0, atol=0)
+        np.testing.assert_allclose(result._variance()["y"], 9.0, rtol=0, atol=0)
+
+    @pytest.mark.parametrize("paths", [["tag", "g", "a"], ["a", "g/a", "tag"]])
+    def test_all_fields_keep_a_sampling_only_law_exact(self, paths):
+        law = _JointSampler()
+        result = marginal(law, paths)
+        assert result.event_spec == law.event_spec
+        assert result.provenance.metadata["exact"] is True
+        assert law.sample_shapes == []
+
+    @pytest.mark.parametrize("paths", ["all", ["all"], ["all/a", "all/g", "all/tag"]])
+    def test_whole_event_selection_preserves_regrouped_paths(self, paths):
+        original = _JointSampler()
+        law = original.rename({"a": "all/a", "g": "all/g", "tag": "all/tag"})
+        configured = marginal.using(exact_only=True)
+        result = configured(law, paths)
+        assert result.event_spec == configured.check(law, paths).result.term_spec.event_spec
+        assert result.label == law.label
+        assert result.provenance.metadata["exact"] is True
+        assert _descendants.capture_stochastic_consumer(result).root is result
+        assert original.sample_shapes == []
+        with workflow_run(seed=0):
+            draws = sample(result, sample_shape=(4,))
+        values = draws.raw if isinstance(paths, str) else draws.raw["all"]
+        np.testing.assert_array_equal(values["g"]["a"], 2 * values["a"])
+        np.testing.assert_array_equal(values["tag"], np.full(4, "tag", dtype=object))
+
+    @pytest.mark.parametrize("sample_shape", [(), (3,)])
+    def test_a_whole_batch_valued_field_samples_in_the_declared_form(self, sample_shape):
+        law = marginal(_BatchSampler(), "trajectory")
+        assert law.provenance.metadata["exact"] is True
+        with workflow_run(seed=0):
+            draws = sample(law, sample_shape=sample_shape)
+        assert draws.batch_shape == (*sample_shape, 2)
+        assert draws.level_names == (("sample", "time") if sample_shape else ("time",))
+        assert np.all(np.isfinite(draws.raw))
+
+    def test_a_complete_view_becomes_an_independent_law(self):
+        parent = _JointSampler()
+        view = parent["a"]
+        result = marginal(view, "a")
+        assert result.provenance.metadata["exact"] is True
+        assert _descendants.capture_stochastic_consumer(result).root is result
+        assert parent.sample_shapes == []
+        with workflow_run(seed=41):
+            difference = _difference(lambda x, y: x - y)(view, result)
+        assert np.any(np.asarray(difference.atoms) != 0)
+
+    @pytest.mark.parametrize("exact_only", [False, True])
+    def test_a_normal_kernel_has_an_exact_whole_event_marginal(self, exact_only):
+        kernel = _SamplingKernel(Normal("a", 2.0, 3.0))
+        result = marginal.using(exact_only=exact_only)(kernel, "a", given={"mu": 2.0})
+        assert isinstance(result, Normal)
+        assert result.loc == 2.0 and result.scale == 3.0
+        assert result.provenance.metadata["exact"] is True
+        assert _fixed_paths(result) == ("mu",)
+        assert len(kernel.bindings) == 1
+        assert kernel.sample_shapes == []
+
+    def test_failed_exact_delegation_reuses_the_bound_law(self):
+        class BindOnly(ConditionalDistribution):
+            def __init__(self):
+                super().__init__({"mu": REAL}, _JointSampler().event_spec, label="kernel")
+                self.bindings = []
+                self.law = _JointSampler()
+
+            def _condition_on(self, given, /, **options):
+                self.bindings.append(given)
+                return self.law
+
+        kernel = BindOnly()
+        with workflow_run(seed=0):
+            result = marginal.using(num_samples=7)(kernel, "a", given={"mu": 2.0})
+        assert result.num_atoms == 7
+        assert result.provenance.metadata["exact"] is False
+        assert result.provenance.metadata["num_samples"] == 7
+        assert len(kernel.bindings) == 1
+        assert kernel.law.sample_shapes == [(7,)]
+
+
 class TestMonteCarloMarginal:
     @pytest.mark.parametrize("count", [1, 13])
     @pytest.mark.parametrize("paths", ["a", "g/a", "g", ["g"], ["g/a", "a"], "tag", ["tag"]])
@@ -307,7 +408,7 @@ class TestMonteCarloMarginal:
     ):
         law = _BatchSampler(levels)
         with workflow_run(seed=9):
-            result = marginal.using(num_samples=7)(law, "trajectory")
+            result = marginal.using(method="monte_carlo", num_samples=7)(law, "trajectory")
         assert result.event_spec == OutputSpec(trajectory=BatchSpec(REAL, dict.fromkeys(levels, 2)))
         assert result.num_atoms == 7
         assert result.atoms.level_names == (atom_level, *levels)
