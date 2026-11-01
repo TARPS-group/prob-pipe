@@ -725,3 +725,34 @@ class TestCapabilitySubclass:
     def test_a_rename_keeps_the_subclass(self):
         host = _Host("h", [SupportsVariance])
         assert type(host.with_label("g")) is type(host)
+
+
+def test_conditional_guard_signature_is_read_at_class_creation(monkeypatch):
+    from probpipe.distributions._capabilities import _conditional_capability_guard
+
+    real = NumericArraySpec((), float)
+
+    class Guarded(ConditionalDistribution):
+        def __init__(self):
+            super().__init__({"x": real}, OutputSpec(y=real))
+
+        def _condition_on(self, given, /, **options):
+            return Normal("y", given["x"], 1.0)
+
+        def _conditional_sample(self, given, key, sample_shape=()):
+            return self._condition_on(given)._sample(key, sample_shape)
+
+        def _conditional_sample_guard(self, given):
+            return given["x"] >= 0
+
+    kernel = Guarded()
+    signature = inspect.signature
+
+    def tracked_signature(obj, *args, **kwargs):
+        assert getattr(obj, "__func__", obj) is not Guarded._conditional_sample_guard
+        return signature(obj, *args, **kwargs)
+
+    monkeypatch.setattr(inspect, "signature", tracked_signature)
+    for x in (1.0, -1.0, 2.0):
+        report = _conditional_capability_guard(kernel, "_conditional_sample", {"x": x})
+        assert report.feasible is (x >= 0)

@@ -7,29 +7,15 @@ reconstructed kernel output of the merged joint ``K & mixing``.
 
 from __future__ import annotations
 
-from typing import Any
-
 from ..core._specs import OutputSpec
-from ..distributions._conditional import ConditionalDistribution, ConditionalDistributionSpec
+from ..distributions._conditional import ConditionalDistribution
 from ..distributions._distribution import Distribution, DistributionSpec
 from ..distributions._factored import _event_of
-from ..functions._call import ApplicabilityError
 from ..values import Function
 from ._operation import operation
 from ._pushforward import pushforward
 
 __all__ = ["mixture"]
-
-
-def _mixture_result(K: ConditionalDistributionSpec, mixing: DistributionSpec) -> OutputSpec:
-    """A law under the kernel's event spec, unchanged."""
-    missing = [name for name in K.given_spec.required if name not in mixing.event_spec.outputs]
-    if missing:
-        raise ApplicabilityError(
-            f"mixture: mixing does not supply required inputs {missing}. "
-            "Bind them with condition_on before calling mixture."
-        )
-    return OutputSpec(DistributionSpec(K.event_spec))
 
 
 def _kernel_output_projection(K: ConditionalDistribution) -> Function:
@@ -41,12 +27,17 @@ def _kernel_output_projection(K: ConditionalDistribution) -> Function:
     )
 
 
-def _mixture_check(K: ConditionalDistribution, mixing: Distribution) -> Any:
-    """The merged joint can be pushed forward onto the kernel's outputs."""
-    return pushforward.check(K & mixing, _kernel_output_projection(K))
-
-
-@operation(result=_mixture_result, derived_route_check=_mixture_check)
+@operation(
+    # A law keeps K.event_spec; with unfed inputs, the returned kernel declares its spec.
+    result=lambda K, mixing: (
+        None
+        if any(name not in mixing.event_spec.outputs for name in K.given_spec.required)
+        else OutputSpec(DistributionSpec(K.event_spec))
+    ),
+    derived_route_check=lambda K, mixing: pushforward.check(
+        K & mixing, _kernel_output_projection(K)
+    ),
+)
 def mixture(K: ConditionalDistribution, mixing: Distribution):
     """The mixture of the kernel *K* under the mixing distribution *mixing*.
 
@@ -60,8 +51,9 @@ def mixture(K: ConditionalDistribution, mixing: Distribution):
     The finite route builds one component law per atom, so its cost grows
     with the number of atoms.
 
-    Interim implementation detail: mixing must supply every required input.
-    Returning a kernel over the remaining inputs is not implemented yet.
+    Inputs that mixing leaves unfed remain inputs of the returned kernel.
+    Binding its last required input computes the mixture eagerly. Conditional
+    sampling draws from the merged joint and projects its outputs directly.
 
     Parameters
     ----------
@@ -72,14 +64,12 @@ def mixture(K: ConditionalDistribution, mixing: Distribution):
 
     Returns
     -------
-    Distribution
-        The standalone law of the kernel's output, with the kernel's event
+    Distribution or ConditionalDistribution
+        The standalone law or kernel of the kernel's output, with the kernel's event
         spec.
 
     Raises
     ------
-    ApplicabilityError
-        If mixing leaves a required kernel input unfed.
     ValueError
         If the factors' outputs overlap or matched input and output specs
         do not unify, as in a merge.

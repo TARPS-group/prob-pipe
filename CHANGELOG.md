@@ -3435,7 +3435,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the kernel's inputs and preserves its output event structure. Empirical
   mixing laws produce a `MixtureDistribution` with the original weights.
   Other sampling laws produce an empirical approximation through the joint's
-  output projection. The mixing law must supply all required kernel inputs.
+  output projection. Inputs left unfed remain inputs of a kernel supporting
+  conditional sampling and composition with `&`. Complete binding retains the
+  finite mixture route when applicable. `pushforward` also accepts kernels,
+  infers the mapped event spec when possible, and computes the ordinary
+  pushforward eagerly when its last required input is bound.
 
 ### Changed
 
@@ -4494,6 +4498,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   names the classes being removed.
 
 ### Fixed
+
+- Operations with `given=` use the actual fidelity of input binding and
+  normalization when selecting a route and reporting the result.
+  A mapped kernel that requires Monte Carlo binding permits the operation's
+  sampling route to use its own budget. Exact finite mappings retain their
+  fidelity under an explicit `method`.
 
 - A law passed where a kernel is required is rejected before sampling, both in
   `check` and in a call. `predictive_check` preserves sweeps over batches of kernels.

@@ -626,6 +626,7 @@ class TestConditionalOperations:
 
     def test_exact_only_rejects_approximate_binding_before_it_runs(self):
         kernel = _Approximate()
+        assert mean.using(exact_only=True).check(kernel, given={"mu": 2.0}).feasible is False
         with pytest.raises(ResolutionError):
             mean.using(exact_only=True)(kernel, given={"mu": 2.0})
         assert not kernel.calls
@@ -720,3 +721,52 @@ class TestPartialInputs:
         kernel = Shared()
         with pytest.raises((ApplicabilityError, ResolutionError, ValueError)):
             condition_on(kernel, {"theta/a": jnp.ones(2), "theta/b": jnp.ones(3)})
+
+
+@pytest.mark.parametrize("mapped", [False, True])
+def test_conditional_candidates_reuse_the_prepared_law(mapped):
+    class SamplingLaw(_Fallback):
+        def _condition_on(self, given, /, **kwargs):
+            self.calls.append(given)
+            return distribution(
+                sample=lambda key: jnp.float32(given["mu"]), event_spec=OutputSpec(y=REAL)
+            )
+
+    kernel = SamplingLaw()
+    calls = []
+
+    def simulator(y):
+        calls.append(float(y))
+        return jnp.float32(y)
+
+    q = (
+        pushforward.using(max_evaluations=7)(
+            kernel, Function(simulator, traceable=False, output_spec=OutputSpec(y=REAL))
+        )
+        if mapped
+        else kernel
+    )
+    configured = mean.using(num_samples=13)
+    assert configured.check(q, given={"mu": 2.0}).feasible is None
+    assert kernel.calls == calls == []
+    result = configured(q, given={"mu": 2.0})
+    np.testing.assert_allclose(result, 2.0, rtol=0, atol=0)
+    assert result.provenance.metadata["route"] == "conditional"
+    assert result.provenance.metadata["exact"] is False
+    assert len(kernel.calls) == 1
+    assert len(calls) == (7 if mapped else 0)
+
+
+def test_conditional_binding_execution_error_propagates():
+    error = ValueError("model failed")
+
+    class Broken(_Fallback):
+        def _condition_on(self, given, /, **kwargs):
+            self.calls.append(given)
+            raise error
+
+    kernel = Broken()
+    with pytest.raises(ValueError) as raised:
+        mean(kernel, given={"mu": 2.0})
+    assert raised.value is error
+    assert len(kernel.calls) == 1

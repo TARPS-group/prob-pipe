@@ -479,7 +479,10 @@ class ConditionalDistribution(TrackedTerm, Annotated, ABC, metaclass=_Conditiona
     Users call operations rather than methods: ``condition_on(K, s)`` binds the
     inputs, and ``sample(K, given=s)``, ``log_prob(K, y, given=s)``, and
     ``mean(K, given=s)`` are the fused conditional calls, equal to the same
-    operation on ``condition_on(K, s)``. A subclass implements
+    operation on ``condition_on(K, s)`` when both paths are exact. An
+    approximation on either path is recorded by that operation; a direct
+    conditional sampler may remain exact when binding builds an empirical law.
+    A subclass implements
     :meth:`_condition_on`, and it may claim the conditional capabilities.
 
     The conditional methods, such as ``_conditional_sample``, must be pure:

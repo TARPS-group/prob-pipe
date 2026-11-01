@@ -7,7 +7,6 @@ import numpy as np
 import pytest
 
 from probpipe import (
-    ApplicabilityError,
     DistributionBatch,
     EmpiricalDistribution,
     Normal,
@@ -121,18 +120,6 @@ def test_the_kernel_event_form_survives_projection(form, finite):
     assert isinstance(law, MixtureDistribution if finite else EmpiricalDistribution)
     if not finite:
         assert law.num_atoms == 7
-
-
-@pytest.mark.parametrize("finite", [False, True])
-def test_unfed_required_inputs_are_refused(finite):
-    kernel = conditional_distribution(
-        lambda mu, sigma: Normal("y", mu, sigma), given_spec={"mu": REAL, "sigma": REAL}
-    )
-    mixing = _mixing() if finite else Gaussian("mu")
-    with pytest.raises(ApplicabilityError, match=r"does not supply.*sigma"):
-        mixture.check(kernel, mixing)
-    with pytest.raises(ApplicabilityError, match=r"does not supply.*sigma"):
-        mixture(kernel, mixing)
 
 
 def test_generic_sampling_is_excluded_by_exact_only():

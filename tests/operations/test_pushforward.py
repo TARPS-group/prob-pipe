@@ -336,11 +336,6 @@ class TestTheOperand:
             law = pushforward(kernel, lambda y: 2.0 * y, given={"mu": 1.0})
         assert _value(mean(law)) == pytest.approx(4.0, abs=0.5)
 
-    def test_a_kernel_without_given_is_refused(self):
-        kernel = conditional_distribution(lambda mu: Normal("y", mu, 1.0), given_spec={"mu": REAL})
-        with pytest.raises(ApplicabilityError, match="requires given values"):
-            pushforward(kernel, lambda y: y)
-
 
 def _the_law(law: Distribution) -> Any:
     return law

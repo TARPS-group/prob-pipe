@@ -33,7 +33,7 @@ import inspect
 import reprlib
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterable, Mapping
-from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, cast, runtime_checkable
 
 from ..core._dispatch import Feasibility
 from ..core._repr import public_class_name
@@ -608,6 +608,34 @@ def _implements(cls: type, method: str) -> bool:
     return False
 
 
+def _conditional_capability_guard(
+    kernel: Any,
+    method: str,
+    given: Mapping[str, Any] | None = None,
+    *arguments: Any,
+    **keywords: Any,
+) -> Feasibility:
+    """Read a conditional guard with known inputs; an unread upstream input stays unresolved."""
+    predicate = getattr(kernel, f"{method}_guard", None)
+    if predicate is None:
+        return _capability_guard(kernel, method, *arguments, **keywords)
+    takes_given = type(kernel)._conditional_guard_inputs.get(f"{method}_guard")
+    if takes_given is None:
+        # Instance-provided guards are not available when the class is created.
+        takes_given = "given" in inspect.signature(predicate).parameters
+    if not takes_given:
+        return _capability_guard(kernel, method, *arguments, **keywords)
+    supplied = {} if given is None else given
+    try:
+        return _capability_guard(kernel, method, supplied, *arguments, **keywords)
+    except KeyError as error:
+        if error.args[0] not in kernel.given_spec or error.args[0] in supplied:
+            raise
+        return Feasibility(
+            None, pending=(f"the factor guard needs upstream input {error.args[0]!r}",)
+        )
+
+
 def _check_guards(cls: type) -> None:
     """Check that each guard in the body of *cls* guards a method *cls* implements.
 
@@ -650,6 +678,14 @@ def _check_guards(cls: type) -> None:
         raise TypeError(
             f"{cls.__name__}.{name} guards {method}, which {cls.__name__} does not implement{hint}"
         )
+
+    cast(Any, cls)._conditional_guard_inputs = {
+        name: "given" in inspect.signature(getattr(cls, name)).parameters
+        for name in dir(cls)
+        if name.startswith("_conditional")
+        and name.endswith(_GUARD_SUFFIX)
+        and callable(getattr(cls, name))
+    }
 
 
 _CAPABILITY_SUBCLASSES: dict[tuple[type, frozenset[type]], type] = {}

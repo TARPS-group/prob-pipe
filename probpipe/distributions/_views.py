@@ -71,6 +71,7 @@ from ._capabilities import (
     _capability_guard,
     _capability_subclass,
     _claimed,
+    _conditional_capability_guard,
     _marginal_claims,
 )
 from ._conditional import (
@@ -2820,12 +2821,17 @@ def _renamed_conditional_marginal_guard(
     )
 
 
-_RENAMED_KERNEL = "_RenamedConditionalDistribution"
-
-
 def _forwarded(method: str, body: Callable[..., Any]) -> dict[str, Callable[..., Any]]:
-    """The entry of a kernel capability whose guard is the parent's for the same arguments."""
-    return {method: body, f"{method}_guard": _parent_guard(method, _RENAMED_KERNEL)}
+    """The entry of a kernel capability whose guard receives the translated inputs."""
+
+    def guard(self: Any, given: Any = None, *arguments: Any, **keywords: Any) -> Feasibility:
+        """The parent's guard at the inputs translated through this boundary."""
+        translated = None if given is None else self._translated(given)[0]
+        return _conditional_capability_guard(
+            self._parent, method, translated, *arguments, **keywords
+        )
+
+    return {method: body, f"{method}_guard": guard}
 
 
 #: Each conditional capability a renamed kernel takes from its parent, with its
@@ -2883,6 +2889,7 @@ class _RenamedConditionalDistribution(ConditionalDistribution):
         complete, keyed by the parent's leaf paths.
     """
 
+    _parent: Any
     _capability_table = _RENAMED_KERNEL_CAPABILITIES
 
     def _derived_traceability(self) -> Traceability:
@@ -3077,6 +3084,28 @@ class _RenamedConditionalDistribution(ConditionalDistribution):
         return _RenamedConditionalDistribution(
             result, remaining, self.event_spec, origins, self._event, pending=pending
         )
+
+
+def _hold_inputs(
+    kernel: ConditionalDistribution, given: Mapping[str, Any]
+) -> ConditionalDistribution:
+    """Hold complete inputs while leaving optional inputs available to upstream factors."""
+    values = _unflatten_paths(dict(given))
+    if kernel.spec.free_dims:
+        bindings: dict[str, int] = {}
+        for name, spec in kernel.given_spec.items():
+            if name in values:
+                spec._bind_dims_from_value(values[name], bindings, name)
+        kernel = kernel.with_dim_sizes(**bindings)
+    remaining = kernel.given_spec.without(*values)
+    return _RenamedConditionalDistribution(
+        kernel,
+        remaining,
+        kernel.event_spec,
+        {path: path for path in _given_leaf_specs(remaining)},
+        _EventRenames.of(kernel.event_spec, kernel.event_spec, {}),
+        pending=_leaf_values(kernel.given_spec, values),
+    )
 
 
 def _renamed_kernel(

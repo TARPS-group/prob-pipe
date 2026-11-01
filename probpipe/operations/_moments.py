@@ -1201,6 +1201,8 @@ class _PushforwardMean(_EvaluationRules):
     ``num_samples``.
     """
 
+    _bind_given_first = False
+
     #: The controls the run forwards to the call of the map, besides the
     #: ``max_evaluations`` that the call's ``num_samples`` gives.
     _forwarded = tuple(name for name in _EvaluationRules._forwarded if name != "max_evaluations")
@@ -1347,18 +1349,15 @@ def _integrand(call: BoundCall) -> Callable[[Any], Any]:
     return integrand
 
 
-def _closed_form_expectation(call: BoundCall, result: OutputSpec | None) -> Any:
-    """``d._expectation(f)``, under the integrand's outputs."""
-    return call.operands["d"]._expectation(_integrand(call))
-
-
 expectation.capability_route(
     "closed_form",
     operand="d",
     protocol=SupportsExpectation,
     method="_expectation",
     exact=True,
-    execute=_closed_form_expectation,
+    execute=lambda call, _: call.operands["d"]._expectation(
+        _integrand(call)
+    ),  # closed form expectation
 )
 
 
@@ -1377,14 +1376,12 @@ def _moment_expression(summary: str) -> Callable[[Any], Expression]:
     return rule
 
 
-def _expectation_expression(d: Any, f: Any) -> Expression:
-    """The expression of ``𝔼[f(X)]`` for ``X ~ d``: the expectation of *f* at a draw, as ``𝔼[f(mu ~ d)]``."""
-    return Summary("E", Applied(_output_label(f, subject="expectation"), (draw_of(d),)))
-
-
 _install_expression_rule(mean, _moment_expression("E"))
 _install_expression_rule(variance, _moment_expression("Var"))
 _install_expression_rule(standard_deviation, _moment_expression("SD"))
 _install_expression_rule(cov, _moment_expression("Cov"))
 _install_expression_rule(quantile, _moment_expression("Q"))
-_install_expression_rule(expectation, _expectation_expression)
+_install_expression_rule(
+    expectation,
+    lambda d, f: Summary("E", Applied(_output_label(f, subject="expectation"), (draw_of(d),))),
+)

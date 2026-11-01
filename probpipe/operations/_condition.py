@@ -65,7 +65,7 @@ from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, replace
 from itertools import pairwise
 from types import MappingProxyType
-from typing import Any, ClassVar
+from typing import Any, ClassVar, cast
 
 from .._messages import unknown_names
 from ..core._catalog import registry_catalog
@@ -115,6 +115,7 @@ from ..distributions._distribution import (
 )
 from ..distributions._empirical import EmpiricalDistribution
 from ..distributions._factored import (
+    FactoredConditionalDistribution,
     FactoredDistribution,
     SupportsFactors,
     _bound_factor,
@@ -123,7 +124,7 @@ from ..distributions._factored import (
     _product_of,
     _with_named,
 )
-from ..distributions._views import _RenamedDistribution
+from ..distributions._views import _RenamedConditionalDistribution, _RenamedDistribution
 from ..functions import _evaluation_keys
 from ..functions._call import checking
 from ..functions._resolution import PointReport
@@ -530,11 +531,8 @@ def _fixes_every(d: Any) -> Feasibility:
 # ---------------------------------------------------------------------------
 
 
-def _at_given(kernel: ConditionalDistribution, given: Any, **options: Any) -> Any:
-    """The law or kernel that *kernel* yields at *given*, its provenance recording the binding.
-
-    A result that carries a record of its own keeps it.
-    """
+def _binding_inputs(kernel: ConditionalDistribution, given: Any) -> tuple[Any, dict[str, Any]]:
+    """Bind dimensions and expose nested given paths as whole inputs."""
     values = _given_values(given)
     bindings: dict[str, int] = {}
     from ._given import _bind_given_dims_from_value
@@ -557,6 +555,15 @@ def _at_given(kernel: ConditionalDistribution, given: Any, **options: Any) -> An
             moves[path] = name
         kernel = kernel.rename(moves)
         values = {moves.get(path, path): value for path, value in values.items()}
+    return kernel, values
+
+
+def _at_given(kernel: ConditionalDistribution, given: Any, **options: Any) -> Any:
+    """The law or kernel that *kernel* yields at *given*, its provenance recording the binding.
+
+    A result that carries a record of its own keeps it.
+    """
+    kernel, values = _binding_inputs(kernel, given)
     result = kernel._condition_on(values, **options)
     if result is not kernel and result.provenance is None:
         result.with_provenance(
@@ -1000,6 +1007,32 @@ def _can_bind_inputs(call: BoundCall) -> Feasibility:
     return Feasibility(True)
 
 
+def _mapped_binding(
+    kernel: Any, given: Any, *, include_factors: bool = False
+) -> tuple[Any, Any] | None:
+    """The mapped kernel, or joint containing one, reached through renamed boundaries."""
+    target = kernel
+    while isinstance(target, _RenamedConditionalDistribution):
+        target = target._parent
+    if not hasattr(target, "_binding_report"):
+        if not include_factors or not isinstance(target, FactoredConditionalDistribution):
+            return None
+        if not any(_mapped_binding(factor, {}) is not None for factor in target.factors):
+            return None
+    if isinstance(kernel, _RenamedConditionalDistribution) or (
+        include_factors and isinstance(kernel, FactoredConditionalDistribution)
+    ):
+        kernel, given = _binding_inputs(kernel, given)
+    while isinstance(kernel, _RenamedConditionalDistribution):
+        given, _, _ = kernel._translated(given)
+        kernel = kernel._parent
+    if hasattr(kernel, "_binding_report") or (
+        include_factors and isinstance(kernel, FactoredConditionalDistribution)
+    ):
+        return kernel, given
+    return None
+
+
 def _bind_inputs(call: BoundCall) -> Any:
     """The kernel's ``_condition_on`` at the given values of its inputs.
 
@@ -1010,6 +1043,24 @@ def _bind_inputs(call: BoundCall) -> Any:
     """
     kernel = call.operands["d"]
     options: dict[str, Any] = {}
+    if _mapped_binding(kernel, call.operands["given"]) is not None:
+        return _at_given(kernel, call.operands["given"], _binding_controls=dict(call.controls))
+    if "mapped factor bindings" in call._memo:
+        if "prepared factors" not in call._memo:
+            call._memo["prepared factors"] = {
+                index: _at_given(
+                    factor,
+                    bound,
+                    _binding_controls=call._memo["factor binding controls"],
+                    _binding_prepared=call._memo[("factor binding", id(factor))].get(
+                        "mapped source"
+                    ),
+                )
+                for index, factor, bound in call._memo["mapped factor bindings"]
+            }
+        return _at_given(
+            kernel, call.operands["given"], _prepared_factors=call._memo["prepared factors"]
+        )
     if isinstance(kernel, (_PerValueNormalization, SupportsApproximateConditioning)):
         options = dict(call.controls.get("method_options", {}))
     return _at_given(kernel, call.operands["given"], **options)
@@ -1255,9 +1306,16 @@ def _slice(call: BoundCall) -> Any:
                 )
         if bound:
             options: dict[str, Any] = {}
-            if isinstance(factor, (_PerValueNormalization, SupportsApproximateConditioning)):
+            if _mapped_binding(factor, bound) is not None:
+                options = {
+                    "_binding_controls": call._memo.get("factor binding controls", call.controls),
+                    "_binding_prepared": call._memo.get(("factor binding", id(factor)), {}).get(
+                        "mapped source"
+                    ),
+                }
+            elif isinstance(factor, (_PerValueNormalization, SupportsApproximateConditioning)):
                 options = dict(call.controls.get("method_options", {}))
-            factor = _bound_factor(factor, bound, options)
+            factor = _bound_factor(cast(ConditionalDistribution, factor), bound, options)
         factors.append(factor)
     law = (
         _law_at_defaults(factors[0], ())
@@ -1450,25 +1508,116 @@ class _NormalizingRoute(_RegistryRoute):
     ) -> Feasibility:
         """The exact stage's report, then the normalization's, under the controls.
 
-        A probe runs no method. A check computes the exact stage's result only
+        The probe selects the route's normalization method for execution.
+        A check computes the exact stage's result only
         to read the target of the normalization, and only when the stage is
         exact, so it reports the route unresolved where the declarations do not
         state whether the result is normalized, or the target is the law an
         approximate kernel yields.
+
+        Input binding retains the law computed by a runtime probe in the
+        call's memo. Normalization reads that law's capabilities, and later
+        candidates and execution reuse it.
         """
         report = self._stage.check(call)
         if report.feasible is not True:
             return report
-        exact = self._stage.exact(call)
+        kernel = call.operands["d"]
+        mapped = (
+            _mapped_binding(kernel, call.operands["given"], include_factors=True)
+            if self._stage is _BIND_INPUTS
+            else None
+        )
+        if mapped is not None and hasattr(mapped[0], "_binding_report"):
+            target, given = mapped
+            if method is not None:
+                return Feasibility(
+                    False, f"the mapped kernel is normalized; drop inference method {method!r}"
+                )
+            return target._binding_report(
+                given,
+                {
+                    **target._controls,
+                    "exact_only": exact_only or target._controls.get("exact_only", False),
+                },
+                call._memo,
+                method_options=call.controls.get("method_options", {}),
+            )
+        binding_exact = None
+        factor_bindings = None
+        if self._stage is _SLICE:
+            factor_bindings = [
+                (index, factor, bound)
+                for index, (factor, _, bound) in enumerate(_sliced_factors(call))
+            ]
+        elif self._stage is _BIND_INPUTS and mapped is not None:
+            joint, values = mapped
+            values = _given_values(values)
+            factor_bindings = [
+                (
+                    index,
+                    factor,
+                    {name: values[name] for name in factor.given_spec if name in values},
+                )
+                for index, factor in enumerate(joint.factors)
+                if isinstance(factor, ConditionalDistribution)
+            ]
+        if factor_bindings is not None:
+            reports = []
+            mapped_factors = []
+            for index, factor, bound in factor_bindings:
+                mapped = _mapped_binding(factor, bound) if bound else None
+                if mapped is not None:
+                    mapped_factors.append((index, factor, bound))
+                    target, given = mapped
+                    reports.append(
+                        target._binding_report(
+                            given,
+                            {
+                                **target._controls,
+                                "exact_only": exact_only
+                                or target._controls.get("exact_only", False),
+                            },
+                            call._memo.setdefault(("factor binding", id(factor)), {}),
+                            method_options=call.controls.get("method_options", {}),
+                        )
+                    )
+                elif bound:
+                    reports.append(
+                        PointReport(
+                            True, exact=not isinstance(factor, SupportsApproximateConditioning)
+                        )
+                    )
+            if mapped_factors:
+                for report in reports:
+                    if report.feasible is not True:
+                        return report
+                binding_exact = all(report.exact is True for report in reports)
+                call._memo["factor binding controls"] = {
+                    "exact_only": exact_only,
+                    "method_options": call.controls.get("method_options", {}),
+                }
+                if self._stage is _BIND_INPUTS:
+                    call._memo["mapped factor bindings"] = mapped_factors
+        exact = self._stage.exact(call) if binding_exact is None else binding_exact
         if exact_only and not exact:
             return Feasibility(
                 False,
                 "binding the inputs runs approximate conditioning "
                 "(SupportsApproximateConditioning), which exact_only excludes",
             )
-        conditional = None
+        conditional = call._memo.get("bound law") if self._stage is _BIND_INPUTS else None
         normalized = self._stage.normalized(call)
-        if normalized is None:
+        if (
+            self._stage is _BIND_INPUTS
+            and not checking()
+            and not isinstance(kernel, _PerValueNormalization)
+        ):
+            if conditional is None:
+                conditional = self._stage.compute(call)
+                call._memo["bound law"] = conditional
+            normalized = not _needs_normalization(conditional)
+        elif normalized is None:
             if checking():
                 return Feasibility(
                     None,
@@ -1487,9 +1636,8 @@ class _NormalizingRoute(_RegistryRoute):
                     f"does not apply; drop method",
                     actionable=True,
                 )
-            d = call.operands["d"]
-            if isinstance(d, _PerValueNormalization) and not self._stage.yields_kernel(call):
-                return self._evaluation_report(call, d, exact)
+            if isinstance(kernel, _PerValueNormalization) and not self._stage.yields_kernel(call):
+                return self._evaluation_report(call, kernel, exact)
             return PointReport(True, exact=exact)
         normalization = self._normalization(call, method, exact_only)
         if self._stage.yields_kernel(call):
@@ -1505,6 +1653,8 @@ class _NormalizingRoute(_RegistryRoute):
                     ),
                 )
             conditional = self._stage.compute(call)
+            if self._stage is _BIND_INPUTS:
+                call._memo["bound law"] = conditional
         info = normalization.report(conditional)
         if info.feasible is not True or exact or not isinstance(info, MethodInfo):
             return info
@@ -1564,8 +1714,28 @@ class _NormalizingRoute(_RegistryRoute):
         self, call: BoundCall, result: OutputSpec | None, *, method: str | None, exact_only: bool
     ) -> Any:
         """The exact stage's result, normalized as the declarations, or else its own, require."""
-        conditional = self._stage.compute(call)
-        normalized = self._stage.normalized(call)
+        kernel = call.operands["d"]
+        if (
+            self._stage is _BIND_INPUTS
+            and _mapped_binding(kernel, call.operands["given"]) is not None
+        ):
+            return _at_given(
+                kernel,
+                call.operands["given"],
+                _binding_controls={
+                    "exact_only": exact_only,
+                    "method_options": call.controls.get("method_options", {}),
+                },
+                _binding_prepared=call._memo.get("mapped source"),
+            )
+        conditional = call._memo.get("bound law") if self._stage is _BIND_INPUTS else None
+        if conditional is None:
+            conditional = self._stage.compute(call)
+        normalized = (
+            not _needs_normalization(conditional)
+            if self._stage is _BIND_INPUTS
+            else self._stage.normalized(call)
+        )
         if normalized is None:
             normalized = not _needs_normalization(conditional)
         if normalized:
@@ -1784,7 +1954,7 @@ def _exact_stage_result(call: BoundCall, result: OutputSpec | None) -> Any:
     raise AssertionError("the exact stage ran with no stage that applies")
 
 
-condition_on.register_route(
+_bind_inputs_route = condition_on.register_route(
     _NormalizingRoute(
         "bind_inputs",
         source=RouteSource.STRUCTURAL,
