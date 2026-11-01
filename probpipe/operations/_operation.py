@@ -1194,19 +1194,12 @@ def _kind_names(kinds: Iterable[type]) -> str:
     return ", ".join(kind.__name__ for kind in kinds)
 
 
-@dataclass(frozen=True)
-class _ExactGivenReport(PointReport):
-    """An exact delegated route's report, retaining the law evaluated during resolution."""
-
-    law: Any = None
-
-
 class _GivenCandidate:
     """The conditional route, deferred until the kernel's law is available.
 
     The unrestricted candidate checks input binding and defers the resulting
-    law's capabilities and fidelity to execution. For marginal, an exact
-    candidate precedes Monte Carlo and resolves the bound law during execution.
+    law's capabilities and fidelity to execution. An exact candidate precedes
+    approximate candidates and resolves the bound law during execution.
     A check never applies the kernel and reports this choice unresolved.
     A declaration-only given leaves input binding unresolved too.
     """
@@ -1220,11 +1213,32 @@ class _GivenCandidate:
         self._exact_only = exact_only
         self.label = "conditional (exact)" if exact_only else "conditional"
 
+    def _bound_law(self, call: BoundCall) -> tuple[Any, bool]:
+        """Bind once in this call, retaining the law and the binding's fidelity."""
+        from ..distributions._views import _carrying
+        from ._condition import _BIND_INPUTS, _conditioned_expression, condition_on
+
+        if "conditional" not in call._memo:
+            subject_name = cast(str, cast(Operation, call.operation)._given_subject)
+            subject = call.operands[subject_name]
+            binding = BoundCall(
+                condition_on,
+                MappingProxyType({"d": subject.kernel, "given": subject.given}),
+                call.controls,
+            )
+            law = _carrying(
+                _BIND_INPUTS.compute(binding),
+                _conditioned_expression(subject.kernel, subject.given),
+            )
+            call._memo["conditional"] = (law, _BIND_INPUTS.exact(binding))
+        return call._memo["conditional"]
+
     def probe(self, call: BoundCall, result: OutputSpec | None) -> Feasibility:
         """Check binding, and resolve exact delegation only outside a check."""
         from ._given import _GivenLaw
 
-        subject = call.operands[call.operation._given_subject]
+        subject_name = cast(str, cast(Operation, call.operation)._given_subject)
+        subject = call.operands[subject_name]
         if not isinstance(subject, _GivenLaw):
             return Feasibility(False, "the operand has no given values")
         if isinstance(subject.given, StandIn):
@@ -1253,10 +1267,7 @@ class _GivenCandidate:
                 )
             from ._condition import _needs_normalization
 
-            law = condition_on.using(
-                method="unnormalized",
-                method_options=call.controls["method_options"],
-            )(subject.kernel, subject.given)
+            law, binding_exact = self._bound_law(call)
             if _needs_normalization(law):
                 normalize = condition_on.using(
                     exact_only=True, method_options=call.controls["method_options"]
@@ -1265,13 +1276,14 @@ class _GivenCandidate:
                 if normalization.feasible is not True:
                     return normalization
                 law = normalize(law, {})
-            operands = {**call.operands, "d": law}
+                call._memo["conditional"] = (law, binding_exact)
+            operands = {**call.operands, subject_name: law}
             bound = values_to_bound_arguments(call.operation.signature, operands)
             operation = call.operation.using(**{**call.controls, "exact_only": True})
             report = operation.check(*bound.args, **bound.kwargs)
             if report.feasible is not True:
                 return report
-            return _ExactGivenReport(True, exact=True, law=law)
+            return PointReport(True, exact=True)
         return PointReport(
             True,
             "delegation is available; the conditioned law's operation capabilities and fidelity are checked at execution",
@@ -1280,23 +1292,30 @@ class _GivenCandidate:
 
     def run(self, call: BoundCall, result: OutputSpec | None, report: Feasibility) -> Any:
         """Condition at execution, then run the original operation under its controls."""
-        from ._condition import condition_on
+        from ._condition import _needs_normalization, condition_on
 
-        subject = call.operands[call.operation._given_subject]
-        if self._exact_only:
-            law = cast(_ExactGivenReport, report).law
-        else:
+        law, binding_exact = self._bound_law(call)
+        if _needs_normalization(law):
             law = condition_on.using(
                 exact_only=call.controls["exact_only"],
                 method_options=call.controls["method_options"],
-            )(subject.kernel, subject.given)
-        values = {**call.operands, call.operation._given_subject: law}
+            )(law, {})
+            binding_exact = binding_exact and law.provenance.metadata["exact"]
+        subject_name = cast(str, cast(Operation, call.operation)._given_subject)
+        values = {**call.operands, subject_name: law}
         bound = values_to_bound_arguments(call.operation.signature, values)
         controls = (
             {**call.controls, "exact_only": True} if self._exact_only else dict(call.controls)
         )
         result = call.operation.using(**controls)(*bound.args, **bound.kwargs)
-        return RouteOutcome(result, True) if self._exact_only else result
+        if self._exact_only:
+            exact = True
+        else:
+            provenance = getattr(result, "provenance", None)
+            operation_exact = None if provenance is None else provenance.metadata.get("exact")
+            steps = (binding_exact, operation_exact)
+            exact = False if False in steps else (True if steps == (True, True) else None)
+        return RouteOutcome(result, exact)
 
     def exactness(self, report: Feasibility) -> bool | None:
         """Known approximate conditioning is approximate; otherwise fidelity is deferred."""
@@ -1331,8 +1350,10 @@ class Operation(Function):
     overrides the subject's kind. A complete given supplies a conditional
     operand's required inputs and binds its symbolic dimensions before planning
     the result. Routes use the kernel's declared conditional twins, including
-    sampling-based fallbacks and derived routes. If no such route applies,
-    delegation applies the operation to ``condition_on(subject, given)`` at execution.
+    sampling-based fallbacks and derived routes. Exact delegation through
+    ``condition_on(subject, given)`` follows the native exact candidates and
+    precedes approximate candidates. Unrestricted delegation remains last.
+    A check defers delegation that needs the bound law (VI.0).
     A check never constructs that law. The delegation report defers the law's
     capabilities and fidelity, conservatively reporting open fidelity as
     approximate. Invalid or incomplete givens raise ``ApplicabilityError``;
@@ -1409,6 +1430,7 @@ class Operation(Function):
         delegating route.
     """
 
+    _given_subject: str | None
     _options_need_named_executor: ClassVar[bool] = True
 
     def __init__(
@@ -1992,13 +2014,14 @@ class Operation(Function):
             and values is not None
             and values.get("given") is not None
         ):
-            if (
-                self.name == "marginal"
-                and controls["method"] is None
-                and not controls["exact_only"]
-            ):
+            if controls["method"] is None:
                 index = next(
-                    i for i, c in enumerate(candidates) if c.route.source is RouteSource.FALLBACK
+                    (
+                        i
+                        for i, c in enumerate(candidates)
+                        if c.route.source is RouteSource.FALLBACK or c.exact is not True
+                    ),
+                    len(candidates),
                 )
                 return (
                     *candidates[:index],
