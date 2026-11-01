@@ -316,12 +316,14 @@ class TestConditionalOperations:
             np.testing.assert_array_equal(result.atoms, [4.0, 9.0])
 
     def test_a_formula_passes_exact_only_to_a_conditional_operation(self):
-        from probpipe.operations import operation
+        from probpipe.operations import OperationRegistry, operation
         from probpipe.operations._moments import _mean_result
 
         kernel = _Fallback()
 
-        @operation(result=_mean_result, derived_route_check=lambda d: True)
+        @operation(
+            result=_mean_result, derived_route_check=lambda d: True, registry=OperationRegistry()
+        )
         def summary(d: Distribution):
             """A formula calling the conditional mean under inherited controls."""
             return mean(kernel, given={"mu": 2.0})
@@ -336,10 +338,10 @@ class TestConditionalOperations:
         assert result.provenance.metadata["exact"] is False
 
     def test_an_operation_with_a_differently_named_subject_delegates(self):
-        from probpipe.operations import operation
+        from probpipe.operations import OperationRegistry, operation
         from probpipe.operations._moments import _mean_result
 
-        @operation(result=lambda law: _mean_result(law))
+        @operation(result=lambda law: _mean_result(law), registry=OperationRegistry())
         def average(law: Distribution):
             """A mean whose subject is named law."""
 
