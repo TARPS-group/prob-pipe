@@ -13,6 +13,7 @@ settle:
 from __future__ import annotations
 
 import jax.numpy as jnp
+import numpy as np
 import pytest
 
 from probpipe import (
@@ -22,6 +23,7 @@ from probpipe import (
     EmpiricalDistribution,
     Function,
     InputSpec,
+    Normal,
     NumericArrayBatch,
     NumericArraySpec,
     OutputSpec,
@@ -286,3 +288,63 @@ class TestFailures:
         )
 
         assert isinstance(error_of(lambda: wrapped(jnp.ones(3), jnp.ones(4))), ApplicabilityError)
+
+
+class TestPlanningBeforeResolution:
+    @pytest.mark.parametrize("input_kind", ["plain", "sweep", "distribution"])
+    @pytest.mark.parametrize(
+        "controls",
+        [{"method": "not_registered"}, {"exact_only": True}],
+        ids=["unknown-method", "exact-only"],
+    )
+    def test_input_dimension_conflicts_precede_route_restrictions(self, input_kind, controls):
+        calls = []
+
+        @function(
+            input_spec={"x": NumericArraySpec(("n",)), "y": NumericArraySpec(("n",))},
+            output_spec=NumericArraySpec(("n",)),
+            traceable=False,
+        )
+        def add(x, y):
+            calls.append((x, y))
+            return x + y
+
+        x = jnp.arange(3.0)
+        if input_kind == "sweep":
+            x = NumericArrayBatch(jnp.stack([x, x + 1]), "row", label="x")
+        elif input_kind == "distribution":
+            x = Normal("x", loc=x, scale=1.0)
+        y = jnp.ones(4)
+        restricted = add.using(**controls)
+
+        with pytest.raises(ApplicabilityError) as checked:
+            restricted.check(x, y)
+        with pytest.raises(ApplicabilityError) as called:
+            restricted(x, y)
+
+        assert str(called.value) == str(checked.value)
+        assert calls == []
+
+    @pytest.mark.parametrize("swept", [False, True], ids=["plain", "sweep"])
+    def test_valid_inputs_keep_the_values_and_bound_output_shape(self, swept):
+        @function(
+            input_spec={"x": NumericArraySpec(("n",)), "y": NumericArraySpec(("n",))},
+            output_spec=NumericArraySpec(("n",)),
+            traceable=False,
+            exact_only=True,
+        )
+        def add(x, y):
+            return x + y
+
+        x = jnp.arange(6.0).reshape(2, 3) if swept else jnp.arange(3.0)
+        argument = NumericArrayBatch(x, "row", label="x") if swept else x
+        y = jnp.array([2.0, 4.0, 6.0])
+
+        checked = add.check(argument, y)
+        result = add(argument, y)
+
+        assert checked.feasible is True
+        assert checked.result.term_spec.shape == (3,)
+        output_spec = result.element_spec.term_spec if swept else result.spec
+        assert output_spec.shape == (3,)
+        np.testing.assert_array_equal(result.raw, np.asarray(x) + np.asarray(y))

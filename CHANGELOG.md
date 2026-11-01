@@ -4499,6 +4499,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Function calls check shared input dimensions before selecting a route.
+  Conflicting dimensions raise the same input error as `check()` when
+  `method` or `exact_only` also rules out the route.
+
 - Operations with `given=` use the actual fidelity of input binding and
   normalization when selecting a route and reporting the result.
   A mapped kernel that requires Monte Carlo binding permits the operation's

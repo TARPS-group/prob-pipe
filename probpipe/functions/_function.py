@@ -230,17 +230,6 @@ def function(
     return decorator
 
 
-def effective_workflow_kind(function: Function) -> WorkflowKind:
-    """The orchestration mode of *function*, as :attr:`Function.effective_workflow_kind` states it.
-
-    The function's ``workflow_kind`` control takes precedence over the global
-    configuration, and ``DEFAULT`` defers to it; when both are ``DEFAULT``,
-    orchestration is ``OFF``. A requested ``TASK`` or ``FLOW`` falls back to
-    ``OFF``, with a warning, when Prefect is not installed.
-    """
-    return _orchestration_mode(function.options["workflow_kind"])
-
-
 def _orchestration_mode(workflow_kind_control: WorkflowKind) -> WorkflowKind:
     """The orchestration mode that the ``workflow_kind`` control *workflow_kind_control* selects.
 
@@ -732,6 +721,12 @@ def _run_call(
         signature_info=function._signature_info,
         roles=function._roles,
     )
+    invocation_bindings = _lifted_call_bindings(function, argument_values, broadcast_plan)
+    concrete_output_spec = (
+        function.output_spec.with_dim_sizes(**invocation_bindings)
+        if function.output_spec is not None
+        else None
+    )
     explicit_parameter_names = frozenset(
         function.signature.bind_partial(*args, **call_inputs).arguments
     ) | frozenset(function._bind)
@@ -780,12 +775,6 @@ def _run_call(
 
     workflow_kind = _orchestration_mode(resolved_controls["workflow_kind"])
     _replay._validate_active_plan(_recipe.serialize_stochastic_plan(stochastic_plan))
-    invocation_bindings = _lifted_call_bindings(function, argument_values, broadcast_plan)
-    concrete_output_spec = (
-        function.output_spec.with_dim_sizes(**invocation_bindings)
-        if function.output_spec is not None
-        else None
-    )
     if concrete_output_spec is None and candidates is not None and selection is None:
         # A Function realized by routes declares its result at each point, so the
         # lifted call declares what one point declares.
@@ -2219,7 +2208,7 @@ class _CallEngine:
     @staticmethod
     def workflow_kind(function: Function) -> WorkflowKind:
         """The orchestration mode that :attr:`Function.effective_workflow_kind` reports."""
-        return effective_workflow_kind(function)
+        return _orchestration_mode(function.options["workflow_kind"])
 
 
 #: The installed engine.
