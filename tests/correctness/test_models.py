@@ -526,14 +526,14 @@ class TestFactoredJoints:
         assert float(mean.using(raw=True)(marginal_x)) == pytest.approx(1.0)
         assert float(variance.using(raw=True)(marginal_x)) == pytest.approx(4.0)
 
-    @pytest.mark.pending(
-        reason="marginal's Monte Carlo route returns the empirical marginal",
-        raises=ResolutionError,
-    )
     def test_the_marginal_of_a_dependent_factor_is_estimated_from_draws(self):
         with workflow_run(seed=17):
-            marginal_y = marginal(_chain(), "y")
-        assert float(mean.using(raw=True)(marginal_y)) == pytest.approx(3.0, abs=0.5)
+            marginal_y = marginal.using(num_samples=DRAWS)(_chain(), "y")
+        _within_mcse(float(mean.using(raw=True)(marginal_y)), 3.0, np.sqrt(16.25))
+        # Across seeds 17 to 20, the largest variance error was 0.262.
+        np.testing.assert_allclose(
+            float(variance.using(raw=True)(marginal_y)), 16.25, atol=0.8, rtol=0
+        )
 
 
 # ---------------------------------------------------------------------------

@@ -14,6 +14,9 @@ import pytest
 
 from probpipe import (
     ApplicabilityError,
+    Distribution,
+    EmpiricalDistribution,
+    Function,
     Normal,
     NumericArraySpec,
     NumericRecordBatch,
@@ -32,6 +35,7 @@ from probpipe import (
     marginal,
     mean,
     prob,
+    pushforward,
     quantile,
     random_log_prob,
     random_unnormalized_log_prob,
@@ -161,6 +165,7 @@ class TestConditionalOperations:
             log_prob,
             unnormalized_log_prob,
             prob,
+            pushforward,
             unnormalized_prob,
             random_log_prob,
             random_unnormalized_log_prob,
@@ -202,7 +207,8 @@ class TestConditionalOperations:
         "operation", [log_prob, unnormalized_log_prob, prob, unnormalized_prob]
     )
     def test_density_twins_and_derived_operations(self, operation):
-        result = operation(_Direct(), 1.0, given={"mu": 2.0})
+        kernel = _Fallback() if operation in (prob, unnormalized_prob) else _Direct()
+        result = operation(kernel, 1.0, given={"mu": 2.0})
         expected = jax.scipy.stats.norm.logpdf(1.0, 2.0)
         if operation in (prob, unnormalized_prob):
             expected = jnp.exp(expected)
@@ -210,13 +216,11 @@ class TestConditionalOperations:
         assert "mu" in result.label
 
     @pytest.mark.parametrize("operation", [mean, variance, expectation])
-    @pytest.mark.parametrize("method", [None, "monte_carlo"])
-    def test_sampling_twins_serve_monte_carlo_without_constructing_a_law(self, operation, method):
+    def test_explicit_sampling_twins_run_without_constructing_a_law(self, operation):
         kernel = _Direct()
         args = (lambda y: y,) if operation is expectation else ()
         options = {"num_samples": 64}
-        if method is not None:
-            options["method"] = "sampling_lift" if operation is expectation else method
+        options["method"] = "sampling_lift" if operation is expectation else "monte_carlo"
         view = operation.using(**options)
         expected_route = "pushforward_mean" if operation is expectation else "monte_carlo"
         assert view.check(kernel, *args, given={"mu": 2.0}).route == expected_route
@@ -227,10 +231,17 @@ class TestConditionalOperations:
         assert kernel.keys
 
     def test_the_standard_deviation_takes_the_variances_monte_carlo_route(self):
-        kernel = _Direct()
+        class Sampling(_Direct):
+            def _condition_on(self, given, /, **kwargs):
+                return distribution(
+                    sample=lambda key: given["mu"] + jax.random.normal(key),
+                    event_spec=OutputSpec(y=REAL),
+                )
+
+        kernel = Sampling()
         view = standard_deviation.using(num_samples=64)
         report = view.check(kernel, given={"mu": 2.0})
-        assert (report.route, report.exact) == ("derived", False)
+        assert report.feasible is None
         with workflow_run(seed=42):
             result = view(kernel, given={"mu": 2.0})
         assert jnp.isfinite(result)
@@ -239,9 +250,7 @@ class TestConditionalOperations:
     def test_check_does_not_apply_a_fallback_kernel(self):
         kernel = _Fallback()
         report = mean.check(kernel, given={"mu": 2.0})
-        assert report.feasible is True
-        assert report.route == "conditional"
-        assert report.exact is False
+        assert report.feasible is None
         assert report.deferred
         assert not kernel.calls
         np.testing.assert_allclose(mean(kernel, given={"mu": 2.0}), 2.0)
@@ -262,10 +271,88 @@ class TestConditionalOperations:
 
         kernel = Unnormalized()
         report = mean.using(exact_only=exact_only).check(kernel, given={"mu": 2.0})
-        assert report.feasible is True
-        assert report.route == "conditional"
+        assert report.feasible is None
         assert report.deferred
         assert not kernel.calls
+
+    @pytest.mark.parametrize("exact_only", [False, True])
+    @pytest.mark.parametrize(
+        "operation, args, expected",
+        [
+            (mean, (), 2.0),
+            (variance, (), 1.0),
+            (standard_deviation, (), 1.0),
+            (quantile, (0.5,), 2.0),
+            (cov, (), [[1.0]]),
+        ],
+    )
+    def test_a_plain_normal_kernel_exposes_exact_summaries(
+        self, exact_only, operation, args, expected
+    ):
+        kernel = _Fallback()
+        configured = operation.using(exact_only=exact_only)
+        assert configured.check(kernel, *args, given={"mu": 2.0}).feasible is None
+        assert kernel.calls == []
+        result = configured(kernel, *args, given={"mu": 2.0})
+        np.testing.assert_allclose(result, expected, rtol=0, atol=0)
+        assert result.provenance.metadata["exact"] is True
+        assert result.provenance.metadata["route"] == "conditional"
+        assert len(kernel.calls) == 1
+
+    @pytest.mark.parametrize("operation", [expectation, pushforward])
+    def test_exact_conditioning_precedes_a_registrys_sampling_rule(self, operation):
+        kernel = conditional_distribution(
+            lambda mu: EmpiricalDistribution(jnp.array([mu, mu + 1]), output_name="y"),
+            given_spec={"mu": REAL},
+        )
+        f = Function(lambda y: y * y, output_spec=OutputSpec(z=REAL))
+        result = operation(kernel, f, given={"mu": 2.0})
+        assert result.provenance.metadata["route"] == "conditional"
+        assert result.provenance.metadata["exact"] is True
+        assert "num_samples" not in result.provenance.metadata
+        if operation is expectation:
+            np.testing.assert_allclose(result, 6.5, rtol=0, atol=0)
+        else:
+            np.testing.assert_array_equal(result.atoms, [4.0, 9.0])
+
+    def test_a_formula_passes_exact_only_to_a_conditional_operation(self):
+        from probpipe.operations import OperationRegistry, operation
+        from probpipe.operations._moments import _mean_result
+
+        kernel = _Fallback()
+
+        @operation(
+            result=_mean_result, derived_route_check=lambda d: True, registry=OperationRegistry()
+        )
+        def summary(d: Distribution):
+            """A formula calling the conditional mean under inherited controls."""
+            return mean(kernel, given={"mu": 2.0})
+
+        result = summary.using(exact_only=True)(Normal("y", 0.0, 1.0))
+        np.testing.assert_allclose(result, 2.0, rtol=0, atol=0)
+        assert len(kernel.calls) == 1
+
+    def test_approximate_binding_keeps_the_delegated_result_approximate(self):
+        result = mean(_Approximate(), given={"mu": 2.0})
+        np.testing.assert_allclose(result, 2.0, rtol=0, atol=0)
+        assert result.provenance.metadata["exact"] is False
+
+    def test_an_operation_with_a_differently_named_subject_delegates(self):
+        from probpipe.operations import OperationRegistry, operation
+        from probpipe.operations._moments import _mean_result
+
+        @operation(result=lambda law: _mean_result(law), registry=OperationRegistry())
+        def average(law: Distribution):
+            """A mean whose subject is named law."""
+
+        average.capability_route(
+            "closed_form", operand="law", protocol=SupportsMean, method="_mean", exact=True
+        )
+        kernel = _Fallback()
+        result = average(kernel, given={"mu": 2.0})
+        np.testing.assert_allclose(result, 2.0, rtol=0, atol=0)
+        assert result.provenance.metadata["exact"] is True
+        assert len(kernel.calls) == 1
 
     def test_an_explicit_method_is_kept_through_delegation(self):
         np.testing.assert_allclose(
@@ -517,17 +604,21 @@ class TestConditionalOperations:
         ],
     )
     def test_moment_twins(self, operation, args, expected):
-        kernel = _Moments()
+        kernel = _Fallback() if operation is standard_deviation else _Moments()
         np.testing.assert_allclose(operation(kernel, *args, given={"mu": 2.0}), expected)
-        assert operation.check(kernel, *args, given={"mu": 2.0}).exact is True
+        report = operation.check(kernel, *args, given={"mu": 2.0})
+        if operation is standard_deviation:
+            assert report.feasible is None
+        else:
+            assert report.exact is True
 
     def test_covariance_and_marginal_twins(self):
         kernel = _Moments()
         np.testing.assert_allclose(cov(kernel, given={"mu": 2.0}), [[1.0]])
         np.testing.assert_allclose(mean(marginal(kernel, "y", given={"mu": 2.0})), 2.0)
         report = marginal.check(kernel, "y", given={"mu": -2.0})
-        assert report.route == "conditional"
-        assert report.exact is False
+        assert report.feasible is None
+        assert "bound law" in " ".join(report.pending)
 
     def test_apply_supports_the_fused_argument(self):
         np.testing.assert_allclose(
@@ -537,6 +628,7 @@ class TestConditionalOperations:
 
     def test_exact_only_rejects_approximate_binding_before_it_runs(self):
         kernel = _Approximate()
+        assert mean.using(exact_only=True).check(kernel, given={"mu": 2.0}).feasible is False
         with pytest.raises(ResolutionError):
             mean.using(exact_only=True)(kernel, given={"mu": 2.0})
         assert not kernel.calls
@@ -631,3 +723,52 @@ class TestPartialInputs:
         kernel = Shared()
         with pytest.raises((ApplicabilityError, ResolutionError, ValueError)):
             condition_on(kernel, {"theta/a": jnp.ones(2), "theta/b": jnp.ones(3)})
+
+
+@pytest.mark.parametrize("mapped", [False, True])
+def test_conditional_candidates_reuse_the_prepared_law(mapped):
+    class SamplingLaw(_Fallback):
+        def _condition_on(self, given, /, **kwargs):
+            self.calls.append(given)
+            return distribution(
+                sample=lambda key: jnp.float32(given["mu"]), event_spec=OutputSpec(y=REAL)
+            )
+
+    kernel = SamplingLaw()
+    calls = []
+
+    def simulator(y):
+        calls.append(float(y))
+        return jnp.float32(y)
+
+    q = (
+        pushforward.using(max_evaluations=7)(
+            kernel, Function(simulator, traceable=False, output_spec=OutputSpec(y=REAL))
+        )
+        if mapped
+        else kernel
+    )
+    configured = mean.using(num_samples=13)
+    assert configured.check(q, given={"mu": 2.0}).feasible is None
+    assert kernel.calls == calls == []
+    result = configured(q, given={"mu": 2.0})
+    np.testing.assert_allclose(result, 2.0, rtol=0, atol=0)
+    assert result.provenance.metadata["route"] == "conditional"
+    assert result.provenance.metadata["exact"] is False
+    assert len(kernel.calls) == 1
+    assert len(calls) == (7 if mapped else 0)
+
+
+def test_conditional_binding_execution_error_propagates():
+    error = ValueError("model failed")
+
+    class Broken(_Fallback):
+        def _condition_on(self, given, /, **kwargs):
+            self.calls.append(given)
+            raise error
+
+    kernel = Broken()
+    with pytest.raises(ValueError) as raised:
+        mean(kernel, given={"mu": 2.0})
+    assert raised.value is error
+    assert len(kernel.calls) == 1

@@ -70,6 +70,7 @@ from ._capabilities import (
     _capability_subclass,
     _claimed,
     _claims,
+    _conditional_capability_guard,
     _conjunction,
     _kernel_claims,
     _marginal_claims,
@@ -1051,6 +1052,14 @@ def _sole_field_projection(method: str) -> Callable[..., Any]:
     return projected
 
 
+def _sole_field_sample(self: _SoleField, key: PRNGKey, sample_shape: tuple[int, ...] = ()) -> Any:
+    """The one field's draws in the raw form declared by its event."""
+    from ._views import _drawn_form
+
+    draws = _children(_raw_record(self._law._sample(key, sample_shape)))[self._output_name]
+    return _drawn_form(draws, cast(TermSpec, self.event_spec.term_spec), sample_shape)
+
+
 def _sole_field_density(method: str) -> Callable[..., Any]:
     """The density *method* of a :class:`_SoleField`, the law's at the record of the value."""
 
@@ -1118,7 +1127,7 @@ def _sole_field_marginal_capabilities(
 #: Each capability a :class:`_SoleField` takes from its record law, with its methods.
 _SOLE_FIELD_CAPABILITIES: dict[type, Mapping[str, Callable[..., Any]]] = {
     SupportsSampling: {
-        "_sample": _sole_field_projection("_sample"),
+        "_sample": _sole_field_sample,
         "_sample_guard": _sole_field_guard("_sample"),
     },
     SupportsLogProb: {
@@ -1945,12 +1954,16 @@ def _factors_guard(owner: str, joint_method: str, method: str) -> Callable[[Any]
     *method*, and the joint's call is feasible when every factor's is.
     """
 
-    def guard(self: Any) -> Feasibility:
+    def guard(self: Any, given: Any = None) -> Feasibility:
+        values = {} if given is None else _children(given)
         return _conjunction(
-            _capability_guard(
+            _conditional_capability_guard(
                 factor,
-                f"_conditional{method}" if isinstance(factor, ConditionalDistribution) else method,
+                f"_conditional{method}",
+                {name: values[name] for name in factor.given_spec if name in values},
             )
+            if isinstance(factor, ConditionalDistribution)
+            else _capability_guard(factor, method)
             for factor in self._graph.factors
         )
 
@@ -2440,6 +2453,8 @@ class FactoredConditionalDistribution(ConditionalDistribution, SupportsFactors):
     ) -> Distribution | ConditionalDistribution:
         """Bind inputs in every factor that names them, and rebuild the joint.
 
+        An input supplied by another factor remains open even when it is optional.
+
         Parameters
         ----------
         given : Record or Mapping[str, Any]
@@ -2467,8 +2482,12 @@ class FactoredConditionalDistribution(ConditionalDistribution, SupportsFactors):
         unknown = set(values) - set(self.given_spec)
         if unknown:
             raise KeyError(_unknown_inputs(self.label, sorted(unknown), self.given_spec))
+        prepared = options.pop("_prepared_factors", {})
         factors: list[Factor] = []
-        for factor in self.factors:
+        for index, factor in enumerate(self.factors):
+            if index in prepared:
+                factors.append(prepared[index])
+                continue
             if isinstance(factor, ConditionalDistribution):
                 bound = {
                     input_name: value
@@ -2476,7 +2495,15 @@ class FactoredConditionalDistribution(ConditionalDistribution, SupportsFactors):
                     if input_name in factor.given_spec
                 }
                 if bound:
-                    factor = _bound_factor(factor, bound, options)
+                    if (
+                        set(factor.given_spec.required) <= bound.keys()
+                        and factor.given_spec.optional & self.event_spec.outputs.keys()
+                    ):
+                        from ._views import _hold_inputs
+
+                        factor = _hold_inputs(factor, bound)
+                    else:
+                        factor = _bound_factor(factor, bound, options)
             factors.append(factor)
         if set(self.given_spec.required) <= set(values):
             joint = FactoredDistribution(

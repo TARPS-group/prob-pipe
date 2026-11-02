@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed (breaking)
 
+- **Exact conditional operations.** With `given=`, an exact operation exposed
+  by exact conditioning precedes approximate routes, including sampling through
+  a registry. Conditional delegation reuses the bound law within the call and
+  records the resulting operation's fidelity.
+
 - **A product built with `&` carries provenance, so it takes no record of
   your own.** Before, `(a & b).with_provenance(p)` attached `p`. Now it raises
   `RuntimeError`, since the merge records `&` and provenance is set once. To
@@ -2139,6 +2144,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Monte Carlo marginals.** `marginal(d, paths)` estimates a standalone
+  marginal from joint samples when no exact marginal is available. Set the
+  count with `marginal.using(num_samples=4096)(d, paths)`. The empirical result
+  keeps the selected fields' structure and dependence, and provenance records
+  the approximation and sample count. A marginal covering the whole event retains
+  the law exactly, including a scalar law selected by its root output name.
+
 - **`print(x.provenance)` prints the lineage of `x`.** Each line is one step,
   from the loaded data or another root down to `x`, with the call that made it,
   its route and method, and whether it is exact or approximate. A step that two
@@ -3419,6 +3431,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   )(model, observed)
   ```
 
+- **Kernel mixtures.** `mixture(K, mixing)` integrates a mixing law over
+  the kernel's inputs and preserves its output event structure. Empirical
+  mixing laws produce a `MixtureDistribution` with the original weights.
+  Other sampling laws produce an empirical approximation through the joint's
+  output projection. Inputs left unfed remain inputs of a kernel supporting
+  conditional sampling and composition with `&`. Complete binding retains the
+  finite mixture route when applicable. `pushforward` also accepts kernels,
+  infers the mapped event spec when possible, and computes the ordinary
+  pushforward eagerly when its last required input is bound.
+
 ### Changed
 
 - **Tutorials 1 to 4 are revised and shown on the site again.** They follow one
@@ -4477,6 +4499,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Operations with `given=` use the actual fidelity of input binding and
+  normalization when selecting a route and reporting the result.
+  A mapped kernel that requires Monte Carlo binding permits the operation's
+  sampling route to use its own budget. Exact finite mappings retain their
+  fidelity under an explicit `method`.
+
 - A law passed where a kernel is required is rejected before sampling, both in
   `check` and in a call. `predictive_check` preserves sweeps over batches of kernels.
 
@@ -4518,6 +4546,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Default workflow streams continue across notebook cells.** IPython cells
   with top-level `await` and kernels that change tasks between cells keep the
   configured stream. User-created tasks retain their own ownership checks.
+
+- **The provenance of `convert` serializes.** Before,
+  `convert(d, Normal).provenance.to_dict()` raised `AttributeError`, since the
+  record described its target, the class `Normal`, by the `label` and
+  `provenance` properties that the class carries for its instances. Now a
+  provenance record reads a label and a provenance from a tracked term only,
+  so a class or another plain input is described by its type alone.
 
 - **An installed PyMC older than 6.2 raises an `ImportError` that names the
   upgrade,** as `PyMC 5.28.5 is installed, but PyMCModel requires PyMC 6.2 or

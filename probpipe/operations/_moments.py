@@ -101,9 +101,7 @@ from ..distributions._capabilities import (
     SupportsExpectation,
     SupportsMean,
     SupportsQuantile,
-    SupportsSampling,
     SupportsVariance,
-    _capability_guard,
 )
 from ..distributions._distribution import Distribution, DistributionSpec
 from ..distributions._empirical import EmpiricalDistribution
@@ -118,10 +116,10 @@ from ._operation import (
     RouteSource,
     _assembled,
     _call_label,
+    _can_sample,
     _DelegatingRoute,
     _install_expression_rule,
-    _subject_name,
-    _workflow_draws,
+    _monte_carlo_draws,
     operation,
 )
 from ._pushforward import (
@@ -372,18 +370,6 @@ def _event_typed_variance(d: DistributionSpec) -> bool:
 # ---------------------------------------------------------------------------
 
 
-def _can_sample(call: BoundCall, result: OutputSpec | None) -> Feasibility:
-    """The law samples, and the moment is assumed to exist.
-
-    Sampling alone does not establish that a moment exists, so the estimate
-    assumes the moment is finite.
-    """
-    d = call.operands["d"]
-    if not isinstance(d, SupportsSampling):
-        return Feasibility(False, f"{_subject_name(d)} does not sample")
-    return _capability_guard(d, "_sample")
-
-
 def _can_average(call: BoundCall, result: OutputSpec | None) -> Feasibility:
     """The law samples numeric draws, which average coordinatewise, or laws, which average to a mixture.
 
@@ -417,22 +403,6 @@ def _can_average_squares(call: BoundCall, result: OutputSpec | None) -> Feasibil
             f"cannot take the variance of draws of a non-numeric event; got {type(event).__name__}",
         )
     return _can_sample(call, result)
-
-
-def _monte_carlo_draws(call: BoundCall, operation_kind: str) -> Any:
-    """``num_samples`` workflow-owned draws of the law, the draw axis leading.
-
-    The count is noted as a ``num_samples`` the call used, so the call's provenance records it.
-    """
-    count = call.controls["num_samples"]
-    draws = _workflow_draws(
-        call.operands["d"],
-        (count,),
-        operation_kind=operation_kind,
-        execution_mode="monte_carlo",
-    )
-    _note_num_samples_used(count)
-    return draws
 
 
 #: The label, the output, and the level of the empirical law of a fallback's draws.
@@ -1231,6 +1201,8 @@ class _PushforwardMean(_EvaluationRules):
     ``num_samples``.
     """
 
+    _bind_given_first = False
+
     #: The controls the run forwards to the call of the map, besides the
     #: ``max_evaluations`` that the call's ``num_samples`` gives.
     _forwarded = tuple(name for name in _EvaluationRules._forwarded if name != "max_evaluations")
@@ -1377,18 +1349,15 @@ def _integrand(call: BoundCall) -> Callable[[Any], Any]:
     return integrand
 
 
-def _closed_form_expectation(call: BoundCall, result: OutputSpec | None) -> Any:
-    """``d._expectation(f)``, under the integrand's outputs."""
-    return call.operands["d"]._expectation(_integrand(call))
-
-
 expectation.capability_route(
     "closed_form",
     operand="d",
     protocol=SupportsExpectation,
     method="_expectation",
     exact=True,
-    execute=_closed_form_expectation,
+    execute=lambda call, _: call.operands["d"]._expectation(
+        _integrand(call)
+    ),  # closed form expectation
 )
 
 
@@ -1407,14 +1376,12 @@ def _moment_expression(summary: str) -> Callable[[Any], Expression]:
     return rule
 
 
-def _expectation_expression(d: Any, f: Any) -> Expression:
-    """The expression of ``𝔼[f(X)]`` for ``X ~ d``: the expectation of *f* at a draw, as ``𝔼[f(mu ~ d)]``."""
-    return Summary("E", Applied(_output_label(f, subject="expectation"), (draw_of(d),)))
-
-
 _install_expression_rule(mean, _moment_expression("E"))
 _install_expression_rule(variance, _moment_expression("Var"))
 _install_expression_rule(standard_deviation, _moment_expression("SD"))
 _install_expression_rule(cov, _moment_expression("Cov"))
 _install_expression_rule(quantile, _moment_expression("Q"))
-_install_expression_rule(expectation, _expectation_expression)
+_install_expression_rule(
+    expectation,
+    lambda d, f: Summary("E", Applied(_output_label(f, subject="expectation"), (draw_of(d),))),
+)
