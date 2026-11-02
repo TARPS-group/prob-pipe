@@ -1,6 +1,6 @@
 name: Bug report
 description: Something isn't working as expected
-labels: ["bug"]
+labels: ["type:bug", "status:needs-triage"]
 body:
   - type: markdown
     attributes:
@@ -37,6 +37,47 @@ body:
     attributes:
       label: Actual behavior (include the traceback if any)
       render: shell
+    validations:
+      required: true
+
+  - type: dropdown
+    id: silent
+    attributes:
+      label: Did ProbPipe give a wrong result without an error or warning?
+      description: |
+        A wrong result is a wrong value, draw, density, or probability, or a
+        provenance record that misstates how a result was computed.
+      options:
+        - "Yes: the result is wrong, and no error or warning was raised"
+        - "No: ProbPipe raised an error, crashed, or hung"
+        - "No: the result is correct but slow, approximate, or reported with a misleading message"
+        - Not sure
+    validations:
+      required: true
+
+  - type: dropdown
+    id: regression
+    attributes:
+      label: Did an earlier version work?
+      description: If it did, name the version under Additional context.
+      options:
+        - "Yes: an earlier version gave the right result"
+        - "No: earlier versions fail too"
+        - Not tried
+    validations:
+      required: true
+
+  - type: dropdown
+    id: workaround
+    attributes:
+      label: Is there a workaround?
+      description: |
+        A workaround is another documented call that gives the result. If there
+        is one, describe it under Additional context.
+      options:
+        - "Yes"
+        - "No"
+        - Not sure
     validations:
       required: true
 

@@ -1,9 +1,10 @@
 name: Auto-label PRs
 
 # Applies `area:*` labels to PRs based on the file paths they touch.
-# Path → label mapping lives in .github/labeler.yml. The `kind:*` and
-# `status:*` labels are intentionally NOT auto-applied — humans set
-# those based on intent, which paths can't tell us.
+# Path → label mapping lives in .github/labeler.yml. The `type:*`,
+# `severity:*`, `priority:*`, `kind:*`, and `status:*` labels are
+# intentionally NOT auto-applied — humans set those based on intent,
+# which paths can't tell us (CONTRIBUTING.md § Issue triage).
 
 on:
   # `pull_request_target` runs in the BASE-branch context (so the labeler
@@ -30,6 +31,6 @@ jobs:
         with:
           repo-token: "${{ secrets.GITHUB_TOKEN }}"
           # Don't remove labels that aren't in the config — preserves
-          # manual labels like `kind:breaking-change`, `priority`, and
+          # manual labels like `type:*`, `kind:breaking-change`, and
           # any `status:*` a maintainer applied.
           sync-labels: false

@@ -25,6 +25,7 @@ The design reference in `design/` describes the target state, and the documents 
 | A docs page or a notebook | `CONTRIBUTING.md` § Documentation |
 | Installation | `CONTRIBUTING.md` § Installation |
 | A release to PyPI | `CONTRIBUTING.md` § Releasing |
+| The labels, priority, and milestone of an issue | `CONTRIBUTING.md` § Issue triage |
 | The branch, the PR title and body, the CHANGELOG entry, and labels | `CONTRIBUTING.md` § PR Workflow and `.github/PULL_REQUEST_TEMPLATE.md` |
 
 Where `design/` disagrees with the code or with a contributor document, `CONTRIBUTING.md` § Changing the code, rule 1, decides.
@@ -49,6 +50,7 @@ uv run mkdocs serve                                     # preview the docs
 uv run python scripts/design/design_blocks.py check III.7 --module probpipe.distributions
 uv run python scripts/design/ledger.py --no-tests       # the stubs and the stale docs
 uv run python scripts/design/prose.py AGENTS.md         # writing-rule candidates; default design/*.md
+uv run python scripts/triage/report.py                  # the triage report of the open issues, through gh
 ```
 
 The `design_blocks.py` line compares the code blocks of design section III.7 with the code.
