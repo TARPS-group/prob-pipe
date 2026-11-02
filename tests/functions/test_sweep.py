@@ -228,6 +228,7 @@ class TestExecuteSweep:
                 swept_point_traceability=lambda values, refs: (False, "it claims traceable=False"),
                 distribution_broadcast=_unexpected_distribution_broadcast,
                 function_name="double",
+                output_name="double",
             )
             (evaluation_points,) = requested
             executor = _executor_that_ran(evaluation_points)
@@ -254,6 +255,7 @@ class TestExecuteSweep:
                 swept_point_traceability=_require_not_called,
                 distribution_broadcast=_unexpected_distribution_broadcast,
                 function_name="identity",
+                output_name="identity",
                 include_inputs=True,
             )
 
@@ -290,6 +292,7 @@ class TestExecuteSweep:
             swept_point_traceability=_require_not_called,
             distribution_broadcast=distribution_broadcast,
             function_name="nested",
+            output_name="nested",
         )
 
         assert isinstance(result, DistributionBatch)

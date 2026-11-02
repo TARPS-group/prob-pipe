@@ -2,7 +2,8 @@
 
 This private module classifies already-normalized workflow inputs into
 the broadcast regime and sweep shape that ``Function`` should
-execute. Planning is intentionally side-effect-free.
+execute, and plans the call's output spec from the evaluation's
+(V.6). Planning is intentionally side-effect-free.
 
 An argument at a parameter with a role, as an operation's are, lifts by the
 role: it passes whole when the role admits its kind, and is otherwise swept or
@@ -16,15 +17,16 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from itertools import product as cartesian_product
 from math import prod
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 import numpy as np
 
-from ..core._batch import Batch
+from ..core._batch import Batch, BatchSpec, _flat_batch_spec
+from ..core._record_spec import RecordSpec
 from ..core._spec_base import TermSpec
-from ..core._specs import OutputSpec
+from ..core._specs import OutputSpec, _has_record_outputs, _root_output_name
 from ..core.config import _checked_count
-from ..distributions._distribution import Distribution
+from ..distributions._distribution import Distribution, DistributionSpec
 from ..distributions._empirical import EmpiricalDistribution
 from ..values import _binding
 from . import _descendants, _normalization
@@ -277,6 +279,21 @@ def lift_of(value: Any, expected: Any, role: tuple[type[TermSpec], ...] | None =
     return role_lift(value, role) or "whole"
 
 
+def law_passes_whole(expected: Any, role: tuple[type[TermSpec], ...] | None = None) -> bool:
+    """Whether every unbatched law passes whole at a parameter annotated *expected* with role *role*.
+
+    This is the answer :func:`lift_of` gives for every such law, so it holds
+    for a law not yet constructed: without a role, the annotation names a
+    distribution or is ``Any``, and with one, the annotation is ``Any`` or
+    the role names no kind or admits a law.
+    """
+    if _binding.resolved_hint(expected) is Any:
+        return True
+    if role is None:
+        return _normalization.is_distribution_hint(expected)
+    return not role or role_admits(role, DistributionSpec)
+
+
 def lift_at(function: Any, parameter: str | None, value: Any) -> Lift:
     """How a call of *function* passes *value* at *parameter*, as :func:`lift_of` states.
 
@@ -372,6 +389,298 @@ def require_empty_sweep_output(plan: BroadcastPlan, output_spec: OutputSpec | No
             or not output_spec.term_spec.is_concrete
         ):
             raise ValueError("An empty sweep requires a concrete output_spec")
+
+
+def planned_result(
+    output_spec: OutputSpec | None,
+    plan: BroadcastPlan,
+    *,
+    argument_values: Mapping[str, Any],
+    output_name: str,
+    output_label: str,
+    include_inputs: bool,
+) -> OutputSpec | None:
+    """The call's planned output spec, whose term spec is the spec of the term the call returns.
+
+    *output_spec* is the evaluation's output spec: the function's output spec,
+    which describes the value one evaluation returns. A plain call returns that
+    value, so its output spec is *output_spec*. A lifted call returns the kind
+    its regime gives (V.6):
+
+    1. a sweep returns a batch on the swept levels whose elements are the
+       evaluations' values;
+    2. a broadcast returns a law whose event spec is the evaluations' event
+       spec, :func:`evaluations_event_spec`, joined to the lifted inputs under
+       *include_inputs*, and its output spec is the positional form
+       ``OutputSpec(DistributionSpec(event))``;
+    3. a nested sweep returns a batch of those laws on the swept levels.
+
+    An evaluation that returns a batch makes the swept batch one batch on the
+    swept levels followed by the evaluation's own, as the sweep stacks it. The
+    spec of the term the call returns completes the planned spec: return fills
+    in what the declarations leave open, such as a dtype or an output-only
+    dimension.
+
+    Parameters
+    ----------
+    output_spec : OutputSpec or None
+        The evaluation's output spec, with the dimensions shared with the
+        inputs bound, or ``None`` when nothing declares it.
+    plan : BroadcastPlan
+        The call's lifting regime, its swept levels, and its lifted laws.
+    argument_values : Mapping of str to Any
+        The call's arguments by parameter name, from which each lifted law's
+        event spec is read under *include_inputs*.
+    output_name : str
+        The function's output name, which holds a broadcast's evaluations whole
+        when they have no outputs of their own.
+    output_label : str
+        The result's label, which the error messages name.
+    include_inputs : bool
+        Whether a broadcast's law joins the draws of its lifted inputs to the
+        outputs.
+
+    Returns
+    -------
+    OutputSpec or None
+        The call's output spec. A lifted call whose *output_spec* is ``None``
+        or whose spec is unspecified returns ``None``, since only the returned
+        values complete the spec of its elements or its event.
+
+    Raises
+    ------
+    ApplicabilityError
+        If a broadcast includes its inputs and a lifted parameter's label is
+        also an output, as :func:`require_distinct_joint_names` states.
+    ValueError
+        If a sweep's output spec declares a batch on a swept level, as
+        :func:`require_distinct_swept_levels` states.
+
+    Notes
+    -----
+    *Interim implementation detail.* The batch a sweep returns names a single
+    array or opaque element ``element``, and ``OutputSpec`` refuses the
+    positional form over a batch of base values, so a swept output spec keeps
+    *output_spec*'s form and names over a batch of its spec, as
+    ``OutputSpec(f=BatchSpec(NumericArraySpec(()), item=2))``. Once a returned
+    batch takes its element's names from the evaluation's output spec, the
+    swept batch's element spec is *output_spec* itself.
+    """
+    if plan.regime == "none":
+        return output_spec
+    if output_spec is None:
+        return None
+    if plan.regime == "sweep":
+        require_distinct_swept_levels(plan, output_spec, output_label=output_label)
+        return None if output_spec.term_spec is None else _swept_output_spec(output_spec, plan)
+    event_spec = evaluations_event_spec(output_spec, output_name=output_name)
+    if event_spec.term_spec is None:
+        if include_inputs:
+            # The outputs' names are known, so a clash with a parameter is too.
+            require_distinct_joint_names(
+                event_spec, lifted_refs=plan.dist_args, output_label=output_label
+            )
+        return None
+    if include_inputs:
+        joint_field_specs = joint_event_fields(
+            event_spec,
+            argument_values=argument_values,
+            lifted_refs=plan.dist_args,
+            output_label=output_label,
+        )
+        event_spec = OutputSpec(RecordSpec(joint_field_specs))
+    law_output_spec = OutputSpec(DistributionSpec(event_spec))
+    return (
+        law_output_spec
+        if plan.regime == "distribution"
+        else _swept_output_spec(law_output_spec, plan)
+    )
+
+
+def _swept_output_spec(element_output_spec: OutputSpec, plan: BroadcastPlan) -> OutputSpec:
+    """*element_output_spec*'s form and names over the batch of such elements on *plan*'s swept levels.
+
+    *element_output_spec* states its spec, as :func:`planned_result` requires of a lifted call.
+    """
+    swept = BatchSpec._from_groups(
+        cast(TermSpec, element_output_spec.term_spec),
+        plan.sweep_axis_groups,
+        plan.sweep_level_names,
+    )
+    return element_output_spec._with_term_spec(_flat_batch_spec(swept))
+
+
+def require_distinct_swept_levels(
+    plan: BroadcastPlan, output_spec: OutputSpec | None, *, output_label: str
+) -> None:
+    """Refuse a sweep whose output spec declares a batch on a level the sweep ranges over.
+
+    The swept batch holds the swept levels followed by the levels of the batch
+    each evaluation returns, and a batch names each level once.
+
+    Parameters
+    ----------
+    plan : BroadcastPlan
+        The call's lifting regime and swept levels.
+    output_spec : OutputSpec or None
+        The evaluation's output spec, or ``None`` when nothing declares it.
+    output_label : str
+        The result's label, which the error message names.
+
+    Raises
+    ------
+    ValueError
+        If *plan* sweeps and *output_spec* declares a batch on one of its
+        swept levels.
+    """
+    if plan.regime != "sweep" or output_spec is None:
+        return
+    declared = output_spec.term_spec
+    if not isinstance(declared, BatchSpec):
+        return
+    shared = [name for name in declared.level_names if name in plan.sweep_level_names]
+    if shared:
+        raise ValueError(
+            f"cannot sweep {output_label!r}: its returned batch repeats the swept level "
+            f"{shared[0]!r}. Rename that level in output_spec and the function body"
+        )
+
+
+def evaluations_event_spec(output_spec: OutputSpec, *, output_name: str) -> OutputSpec:
+    """The event spec of the law of a broadcast's evaluations, without the lifted inputs.
+
+    The event is *output_spec* when it names its outputs: the keyword form, or
+    the positional form over a record. The positional form over a law, a
+    kernel, or a batch of records or of laws names no outputs that a law's
+    event can carry, so the event holds each evaluation whole under
+    *output_name*.
+
+    Parameters
+    ----------
+    output_spec : OutputSpec
+        The evaluation's output spec.
+    output_name : str
+        The function's output name.
+
+    Returns
+    -------
+    OutputSpec
+        *output_spec*, or its spec in the keyword form under *output_name*.
+
+    Notes
+    -----
+    *Interim implementation detail.* Design V.6 holds each such evaluation in
+    a record with one field, named *output_name*. The families of laws over
+    laws, kernels, and batches still name their event whole in the keyword
+    form (II.2), so the event takes that form until they hold a record.
+    """
+    if _root_output_name(output_spec) is None and not _has_record_outputs(output_spec):
+        return OutputSpec(**{output_name: output_spec.term_spec})
+    return output_spec
+
+
+def require_distinct_joint_names(
+    event_spec: OutputSpec,
+    *,
+    lifted_refs: Sequence[_binding.FunctionInputRef],
+    output_label: str,
+) -> None:
+    """Refuse a joint event whose lifted parameter has the name of an output.
+
+    The joint event of a broadcast under ``include_inputs`` holds each lifted
+    parameter's draw under the parameter's label beside the outputs, so a
+    label must name no output. The outputs are known from *event_spec*'s names
+    even while its spec is unspecified.
+
+    Parameters
+    ----------
+    event_spec : OutputSpec
+        The evaluations' event spec, as :func:`evaluations_event_spec` gives it.
+    lifted_refs : sequence of FunctionInputRef
+        The references to the lifted laws.
+    output_label : str
+        The result's label, which the error message names.
+
+    Raises
+    ------
+    ApplicabilityError
+        If a lifted parameter's label is also an output of *event_spec*.
+    """
+    parameter_labels = dict.fromkeys(ref.label for ref in lifted_refs)
+    clash = sorted(set(parameter_labels) & set(event_spec.outputs))
+    if not clash:
+        return
+    if len(clash) == 1:
+        named, held = f"parameter {clash[0]!r}", "an output with that name"
+    else:
+        named, held = f"parameters {clash}", "outputs with those names"
+    raise ApplicabilityError(
+        f"include_inputs=True cannot add {named} to the output of {output_label!r}, which "
+        f"already has {held}. Rename the {'parameter' if len(clash) == 1 else 'parameters'}, "
+        f"or pass output_spec=OutputSpec({unused_output_name(parameter_labels)}=None) to hold the output "
+        "under a name no parameter has"
+    )
+
+
+def joint_event_fields(
+    event_spec: OutputSpec,
+    *,
+    argument_values: Mapping[str, Any],
+    lifted_refs: Sequence[_binding.FunctionInputRef],
+    output_label: str,
+) -> dict[str, TermSpec]:
+    """The fields of the joint event of a broadcast's lifted inputs and its evaluations.
+
+    Each lifted parameter contributes one field under its label, holding the
+    spec of its law's draw, in the order of *lifted_refs*. A batch-valued draw
+    is one batch over all its levels. The outputs of *event_spec* follow: a record's
+    fields, or the one output at the root.
+
+    Parameters
+    ----------
+    event_spec : OutputSpec
+        The evaluations' event spec, as :func:`evaluations_event_spec` gives
+        it, whose spec is specified.
+    argument_values : Mapping of str to Any
+        The call's arguments by parameter name, which hold the lifted laws.
+    lifted_refs : sequence of FunctionInputRef
+        The references to the lifted laws, in the order of their fields.
+    output_label : str
+        The result's label, which the error message names.
+
+    Returns
+    -------
+    dict of str to TermSpec
+        The fields by name, the lifted inputs first.
+
+    Raises
+    ------
+    ApplicabilityError
+        If a lifted parameter's label is also an output of *event_spec*, as
+        :func:`require_distinct_joint_names` states.
+    """
+    require_distinct_joint_names(event_spec, lifted_refs=lifted_refs, output_label=output_label)
+    joint_field_specs: dict[str, TermSpec] = {}
+    for ref in lifted_refs:
+        draw_spec = _binding.input_ref_value(argument_values, ref).event_spec.term_spec
+        joint_field_specs[ref.label] = (
+            _flat_batch_spec(draw_spec) if isinstance(draw_spec, BatchSpec) else draw_spec
+        )
+    if _has_record_outputs(event_spec):
+        joint_field_specs.update(cast(RecordSpec, event_spec.term_spec).children)
+    else:
+        joint_field_specs[cast(str, _root_output_name(event_spec))] = cast(
+            TermSpec, event_spec.term_spec
+        )
+    return joint_field_specs
+
+
+def unused_output_name(taken: Mapping[str, Any]) -> str:
+    """An output name that no key of *taken* is: ``output``, extended by ``_`` until it is free."""
+    name = "output"
+    while name in taken:
+        name += "_"
+    return name
 
 
 def build_stochastic_plan(
