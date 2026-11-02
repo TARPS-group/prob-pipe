@@ -344,7 +344,8 @@ ships.
    semantic versioning prescribes before 1.0.
 3. **Assignment:** a P0 issue goes to the current patch milestone, a P1 issue
    to the next release's milestone, and a P2 issue to a minor release's
-   milestone once someone plans the work.
+   milestone once someone plans the work. An epic has no milestone, as
+   [Initiatives and epics](#initiatives-and-epics) states.
 4. **Release gate:** a release ships when its milestone has no open P0 or S1
    issue and no open P1 issue. Before the release, each open P1 issue is
    closed or moved to the next milestone with a comment that gives the reason.
@@ -391,8 +392,12 @@ ships.
    labels and milestones stay the source of truth. The board's columns are the
    values of the Project's Status field: Triage, Ready, In progress, and Done.
    The Project's built-in workflows set the Status when an issue is added or
-   closed. The Project has a saved view for the weekly triage and one for each
-   open release, which filter by `priority:*` label and group by milestone.
+   closed. The Project's field "Initiative" groups the epics. The Project has
+   four saved views:
+   - Now: the P0 and P1 issues, and the issues of the current milestone;
+   - Epics: the `type:epic` issues, grouped by initiative;
+   - Triage: the `status:needs-triage` issues, for the weekly triage;
+   - Ideas: the `status:idea` issues.
 
 ---
 
