@@ -697,6 +697,14 @@ jobs:
         with:
           enable-cache: true
 
+      - name: Name the runner image
+        # The runner's ImageOS variable (e.g. ubuntu24) names the image, and the
+        # expression context does not hold it, so this step outputs it for the
+        # cache keys below.
+        if: steps.stan_check.outputs.skip != 'true'
+        id: runner_image
+        run: echo "image=$ImageOS" >> "$GITHUB_OUTPUT"
+
       - name: Cache the BridgeStan build
         # BridgeStan downloads its C++ sources and builds the Stan math + TBB
         # static libs under ~/.bridgestan on the first compile (minutes). Cache
@@ -705,13 +713,15 @@ jobs:
         # the latest prior build, so an unrelated dependency bump reuses the
         # existing libs (no rebuild). Only a bridgestan version bump rebuilds —
         # under its own ~/.bridgestan/<version>/ subdir, so a stale restore can't
-        # mismatch.
+        # mismatch. The key names the runner image (e.g. ubuntu24), because a
+        # model that one image's toolchain compiles aborts at sampling when it is
+        # linked against libs that another image built.
         if: steps.stan_check.outputs.skip != 'true'
         uses: actions/cache@v6
         with:
           path: ~/.bridgestan
-          key: bridgestan-${{ runner.os }}-${{ hashFiles('uv.lock') }}
-          restore-keys: bridgestan-${{ runner.os }}-
+          key: bridgestan-${{ runner.os }}-${{ steps.runner_image.outputs.image }}-${{ hashFiles('uv.lock') }}
+          restore-keys: bridgestan-${{ runner.os }}-${{ steps.runner_image.outputs.image }}-
 
       - name: Install dependencies
         if: steps.stan_check.outputs.skip != 'true'
@@ -723,13 +733,14 @@ jobs:
 
       - name: Cache the CmdStan build
         # install_cmdstan downloads CmdStan and builds it under ~/.cmdstan, which
-        # takes minutes, so a cache hit skips the next step.
+        # takes minutes, so a cache hit skips the next step. The key names the
+        # runner image for the reason the BridgeStan cache gives.
         if: steps.stan_check.outputs.skip != 'true'
         id: cmdstan_cache
         uses: actions/cache@v6
         with:
           path: ~/.cmdstan
-          key: cmdstan-${{ runner.os }}-${{ env.CMDSTAN_VERSION }}
+          key: cmdstan-${{ runner.os }}-${{ steps.runner_image.outputs.image }}-${{ env.CMDSTAN_VERSION }}
 
       - name: Install CmdStan
         # cmdstanpy finds the build under ~/.cmdstan. Without it the cmdstan_nuts
