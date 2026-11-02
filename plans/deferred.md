@@ -119,6 +119,14 @@ A plan written on 2026-10-28, in `plans/deferred/` and not yet approved; it list
 |---|---|
 | One contract for `using`: controls (ProbPipe's names), options (a registered entry's names), and settings (`config`), each declared once by an `Option` that validation, defaults, provenance, the catalog, and the documentation all read; option names checked against every method a call could select; a warning, `UnusedControlWarning`, for each given control or option a call does not read (#675); one vocabulary of common options, which renames `num_results` to `num_draws`; `backend_options` for backend arguments; `describe_using()` and `CallReport.unused`; and the hand-kept lists of control names replaced by one `passes` field (steps C1 to C5) | `plans/deferred/controls-and-options.md` |
 
+### Arrays
+
+A plan written on 2026-10-31, in `plans/deferred/` and not yet approved; it lists its open questions, which are reviewed before any of it is implemented. Its § 9 lists the edits the numeric, batch, and paths plans need.
+
+| Work | Source |
+|---|---|
+| One contract for arrays: optional dimension names on every axis, kept by `with_dim_sizes`, with a batch level as one named dimension; coordinates held by terms and bound in the dimension scope; every numeric array stored as one JAX array, converted once at the wrap through an array-host registry that reads and exports xarray and pandas; operators that broadcast by position and check names; `isel`, `sel`, `rename_dims`, and `with_coords` apart from paths; one `to_xarray` export in place of three (steps A1 to A6) | `plans/deferred/array-contract.md` |
+
 ## Open issues the push changes
 
 Each row says what the push does for an open issue before the workshop, and what the issue keeps for after it.
