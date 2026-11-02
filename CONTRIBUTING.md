@@ -302,8 +302,8 @@ sets it.
 
 | Priority | Meaning | Release target |
 |---|---|---|
-| P0 | work on it now, ahead of other work | a patch release as soon as it is fixed |
-| P1 | fix it in the next release | the next release's milestone |
+| P0 | work on it now, ahead of other work | the earliest release allowed by [Releases](#releases), as soon as it is fixed |
+| P1 | fix it in the next eligible release | the next release's milestone allowed by [Releases](#releases) |
 | P2 | planned, within about three months | a minor release's milestone, once someone plans the work |
 | P3 | worth doing, not planned | no milestone, and contributions are welcome |
 
@@ -342,9 +342,11 @@ ships.
 2. **Patch or minor:** a bug fix without a breaking change can go in a patch
    release. A feature or a breaking change goes in a minor release, as
    semantic versioning prescribes before 1.0.
-3. **Assignment:** a P0 issue goes to the current patch milestone, a P1 issue
-   to the next release's milestone, and a P2 issue to a minor release's
-   milestone once someone plans the work. An epic has no milestone, as
+3. **Assignment:** the patch-or-minor rule above determines which releases
+   may contain a change, at every priority. A P0 issue goes to the earliest
+   eligible milestone, a P1 issue to the next eligible release's milestone,
+   and a P2 issue to a minor release's milestone once someone plans the work.
+   An epic has no milestone, as
    [Initiatives and epics](#initiatives-and-epics) states.
 4. **Release gate:** a release ships when its milestone has no open P0 or S1
    issue and no open P1 issue. Before the release, each open P1 issue is

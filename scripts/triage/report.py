@@ -45,6 +45,7 @@ PRIORITY_P2 = "priority:P2"
 PRIORITY_P3 = "priority:P3"
 
 NEEDS_TRIAGE = "status:needs-triage"
+IDEA = "status:idea"
 
 #: The days without activity after which a P1 or P2 issue is due for re-triage.
 STALE_DAYS = 90
@@ -113,6 +114,11 @@ def violations(issue: dict[str, Any]) -> list[str]:
         found.append("a P3 issue with a milestone")
     if TYPE_EPIC in labels and issue["milestone"]:
         found.append("an epic with a milestone")
+    if IDEA in labels:
+        if PRIORITY_P3 not in labels:
+            found.append("an idea without priority:P3")
+        if issue["milestone"]:
+            found.append("an idea with a milestone")
     return found
 
 

@@ -68,6 +68,32 @@ class TestMissing:
 
 
 class TestViolations:
+    @pytest.mark.parametrize("priority", ["priority:P0", "priority:P1", "priority:P2"])
+    def test_an_idea_requires_p3(self, priority):
+        issue = _issue(1, "type:feature", "status:idea", priority, "area:core")
+        assert report.violations(issue) == ["an idea without priority:P3"]
+
+    def test_an_idea_without_a_priority_is_reported(self):
+        issue = _issue(1, "type:feature", "status:idea", "area:core")
+        (finding,) = report.untriaged([issue])
+        assert finding.problems == ("no priority", "an idea without priority:P3")
+
+    @pytest.mark.parametrize("priority", ["priority:P1", "priority:P3"])
+    def test_an_idea_with_a_milestone_is_reported(self, priority):
+        issue = _issue(1, "type:feature", "status:idea", priority, "area:core", milestone="0.3.0")
+        (finding,) = report.rule_violations([issue])
+        assert finding.problems == (
+            "a P3 issue with a milestone"
+            if priority == "priority:P3"
+            else "an idea without priority:P3",
+            "an idea with a milestone",
+        )
+
+    def test_a_p3_idea_without_a_milestone_is_valid(self):
+        issue = _issue(1, "type:feature", "status:idea", "priority:P3", "area:core")
+        assert report.missing(issue) == []
+        assert report.violations(issue) == []
+
     def test_two_type_labels_are_a_violation(self):
         issue = _issue(1, "type:bug", "type:docs", "severity:S3", "priority:P2", "area:core")
         assert report.violations(issue) == ["2 `type:` labels: type:bug, type:docs"]
