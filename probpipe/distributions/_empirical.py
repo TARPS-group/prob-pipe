@@ -15,7 +15,6 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from .._array_utils import _is_numeric_array
 from .._messages import label_given_first
 from .._weights import (
     Weights,
@@ -77,6 +76,18 @@ type _RequestedNode = tuple[str, tuple[str, ...], TermSpec]
 # ---------------------------------------------------------------------------
 # The atoms and their weights
 # ---------------------------------------------------------------------------
+
+
+def _is_numeric_array(x: object) -> bool:
+    """Return ``True`` if *x* is a JAX or numpy array with a numeric dtype.
+
+    Numpy object arrays, which hold values that are not arrays, return ``False``.
+    """
+    if isinstance(x, jax.Array):
+        return True
+    if isinstance(x, np.ndarray):
+        return x.dtype != object
+    return False
 
 
 def _numeric_atoms(atoms: Any) -> bool:

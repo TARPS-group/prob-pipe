@@ -31,18 +31,6 @@ def _as_array(x: Any, *, name: str = "input") -> Array:
         ) from e
 
 
-def _is_numeric_array(x: object) -> bool:
-    """Return ``True`` if *x* is a JAX or numpy array with a numeric dtype.
-
-    Numpy object arrays, which hold values that are not arrays, return ``False``.
-    """
-    if isinstance(x, jax.Array):
-        return True
-    if isinstance(x, np.ndarray):
-        return x.dtype != object
-    return False
-
-
 def _is_numpy_scalar(x: Any) -> bool:
     """Return true if object is a Python scalar or 0-d JAX array."""
     return isinstance(x, (int, float, complex, bool)) or (

@@ -260,12 +260,6 @@ def _domain_refusal(f: Function, parameter: str, event: TermSpec, fixed: Mapping
     return f"its parameter {parameter!r} takes {takes}, but {draw}"
 
 
-def _event_of(d: Any) -> TermSpec | None:
-    """The spec of one draw of the law *d* declares, or ``None`` when it declares none."""
-    event = getattr(d, "event_spec", None)
-    return getattr(event, "term_spec", None)
-
-
 def _lifted_fixed_argument(f: Function, fixed: Mapping[str, Any]) -> str:
     """Why a fixed argument of *f* is not a constant, or ``""``.
 
@@ -303,7 +297,7 @@ def _integrand_applicability_checks(subject: str) -> tuple[Callable[..., Any], C
 
     def draw_admitted(d: Any, f: Any, fixed_args: Any) -> Any:
         """The map's open parameter admits a draw of the law."""
-        event = _event_of(d)
+        event = getattr(getattr(d, "event_spec", None), "term_spec", None)  # The spec of one draw of the law *d* declares, or ``None`` when it declares none.
         if event is None:
             return True
         fn = _as_function(f, subject=subject)
