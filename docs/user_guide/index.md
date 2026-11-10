@@ -13,21 +13,21 @@ The [tutorials](../tutorials/01_first_analysis.ipynb) follow one analysis from s
 2. **Fit and check a model:** read chapters 4 to 7, from [Your data: values, records, and batches](04_values_and_records.ipynb) to [Checking a fit](07_checking_results.ipynb).
 3. **Reuse, update, and reproduce results:** read chapters 8 and 9, [Working with results](08_conversion_and_updating.ipynb) and [Tracking and reproducing results](09_how_results_are_computed.ipynb).
 
-The detailed specs in [Uncertainty in a computation](01_uncertainty_in_a_computation.ipynb#specs) are for declaring or inspecting inputs and outputs.
+The [specs](03_functions_and_lifting.ipynb#specs) in chapter 3 are for declaring or inspecting inputs and outputs.
 
 ## Chapters
 
 | Chapter | What it covers |
 |---|---|
-| 1. [Uncertainty in a computation](01_uncertainty_in_a_computation.ipynb) | Values, distributions, and functions in one example; optional reference on term properties. |
+| 1. [Uncertainty in a computation](01_uncertainty_in_a_computation.ipynb) | Values, distributions, and functions in one example. |
 | 2. [Distributions](02_distributions.ipynb) | The parametric families, the operations on a distribution, and distributions built from a sampler or a density. |
-| 3. [Propagating uncertainty through functions](03_functions_and_lifting.ipynb) | ProbPipe-native functions, calling them on distributions and batches, `pushforward`, and `expectation`. |
-| 4. [Your data: values, records, and batches](04_values_and_records.ipynb) | Numeric data and records, including pandas and xarray fields. |
+| 3. [Propagating uncertainty through functions](03_functions_and_lifting.ipynb) | ProbPipe-native functions, calling them on distributions and batches, `pushforward`, `expectation`, and the specs that declare inputs and outputs. |
+| 4. [Your data: values, records, and batches](04_values_and_records.ipynb) | Numeric data and records, pandas and xarray fields, and batches of values, records, and distributions. |
 | 5. [Building a model](05_building_a_model.ipynb) | Conditional distributions, merging a model with `&`, and the fields and marginals of a joint model. |
 | 6. [Fitting a model to data](06_conditioning_and_inference.ipynb) | Conditioning models on observations and selecting inference methods. |
 | 7. [Checking a fit](07_checking_results.ipynb) | Checking inference, evaluating predictions, and testing calibration. |
 | 8. [Working with results](08_conversion_and_updating.ipynb) | Distribution representations, resampling, and sequential updates. |
-| 9. [Tracking and reproducing results](09_how_results_are_computed.ipynb) | Inspecting computations and controlling approximation and randomness. |
+| 9. [Tracking and reproducing results](09_how_results_are_computed.ipynb) | Inspecting computations, controlling approximation and randomness, provenance, labels and notation, and immutability. |
 | [Ray via Prefect](ray.md) | Running ProbPipe functions on Ray workers through Prefect. |
 
 Each notebook opens in Google Colab from the badge at its top.
