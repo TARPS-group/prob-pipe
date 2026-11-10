@@ -94,15 +94,15 @@ nav:
     - Design assistant: get_started/design_assistant.md
   - User guide:
     - user_guide/index.md
-    - Terms: user_guide/01_terms.ipynb
-    - Values and records: user_guide/02_values_and_records.ipynb
-    - Distributions: user_guide/03_distributions.ipynb
-    - Joint models and conditional distributions: user_guide/04_joint_models.ipynb
-    - Functions on values and distributions: user_guide/05_functions_and_lifting.ipynb
-    - Conditioning and inference methods: user_guide/06_conditioning_and_inference.ipynb
-    - Checking results: user_guide/07_checking_results.ipynb
-    - Converting and updating distributions: user_guide/08_conversion_and_updating.ipynb
-    - How a result was computed: user_guide/09_how_results_are_computed.ipynb
+    - Uncertainty in a computation: user_guide/01_uncertainty_in_a_computation.ipynb
+    - Distributions: user_guide/02_distributions.ipynb
+    - Propagating uncertainty through functions: user_guide/03_functions_and_lifting.ipynb
+    - "Your data: values, records, and batches": user_guide/04_values_and_records.ipynb
+    - Building a model: user_guide/05_building_a_model.ipynb
+    - Fitting a model to data: user_guide/06_conditioning_and_inference.ipynb
+    - Checking a fit: user_guide/07_checking_results.ipynb
+    - Working with results: user_guide/08_conversion_and_updating.ipynb
+    - Tracking and reproducing results: user_guide/09_how_results_are_computed.ipynb
     - Ray via Prefect: user_guide/ray.md
   - API reference:
     - api/index.md

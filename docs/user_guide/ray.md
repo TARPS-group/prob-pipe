@@ -3,7 +3,7 @@
 # Ray via Prefect
 
 Use Ray through Prefect when a function has expensive independent evaluations that can run on separate workers.
-Start with [Functions on values and distributions](05_functions_and_lifting.ipynb) to understand how a function applies to distributions and batches.
+Start with [Propagating uncertainty through functions](03_functions_and_lifting.ipynb) to understand how a function applies to distributions and batches.
 The configuration below changes where evaluations run while preserving the mathematical request.
 
 ## Choose what to distribute

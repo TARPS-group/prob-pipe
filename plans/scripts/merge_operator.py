@@ -322,7 +322,7 @@ def rewrite_text(source, filename):
         "probpipe/functions/_descendants.py",
         "tests/functions/test_descendants.py",
         "probpipe/distributions/_distribution.py",
-        "docs/user_guide/04_joint_models.ipynb",
+        "docs/user_guide/05_building_a_model.ipynb",
         "STYLE_GUIDE.md",
         "docs/api/distributions.md",
     }:
@@ -478,7 +478,7 @@ def rewrite_text(source, filename):
             source,
             flags=re.S,
         )
-    if filename == "docs/user_guide/04_joint_models.ipynb":
+    if filename == "docs/user_guide/05_building_a_model.ipynb":
         source = re.sub(
             r"`([^`\n]*)`", lambda m: "`" + re.sub(r"(?<!\*)\*(?!\*)", "&", m[1]) + "`", source
         )
