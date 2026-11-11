@@ -94,7 +94,7 @@ nav:
     - Design assistant: get_started/design_assistant.md
   - User guide:
     - user_guide/index.md
-    - Uncertainty in a computation: user_guide/01_uncertainty_in_a_computation.ipynb
+    - Key concepts: user_guide/01_key_concepts.ipynb
     - Distributions: user_guide/02_distributions.ipynb
     - Propagating uncertainty through functions: user_guide/03_functions_and_lifting.ipynb
     - "Your data: values, records, and batches": user_guide/04_values_and_records.ipynb

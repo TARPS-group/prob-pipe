@@ -3418,12 +3418,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Reorganize the user guide around a short statistics example and task-based reading paths.
   Clarify distribution lifting, exactness, diagnostic interpretation, and Ray execution,
   and refresh the notebook outputs.
-  The chapters are reordered so that each uses only earlier ones: uncertainty in a
-  computation, distributions, propagating uncertainty through functions, data, building a
+  The chapters are reordered so that each uses only earlier ones: key concepts,
+  distributions, propagating uncertainty through functions, data, building a
   model, fitting, checking a fit, working with results, and tracking and reproducing
   results. The pages `01_terms`, `02_values_and_records`, `03_distributions`,
   `04_joint_models`, and `05_functions_and_lifting` move to new file names, so links to
   them change.
+  The user guide's index opens with a four-step Challenger example of lifting, fitting,
+  changing the inference method, and provenance. Chapter 1 becomes "Key concepts", at
+  `01_key_concepts`: it defines the terms, lifting, Monte Carlo error, operations,
+  provenance, and seeds, and then applies them to the braking distance of a car whose
+  speed is uncertain.
 
 - **The documentation installs ProbPipe from `main`.** The install commands,
   the Colab cells of the tutorials and user guide, their data URLs, and the
