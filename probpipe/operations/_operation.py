@@ -77,7 +77,7 @@ from typing import Any, ClassVar, Protocol, cast, runtime_checkable
 
 from .._messages import unknown_names
 from ..core._array_backend import _event_shape_of, _is_numeric_leaf, _numpy_dtype_of
-from ..core._call_context import _CountNotingControls, _note_num_samples_used
+from ..core._call_context import _COUNT_CONTROLS, _CountNotingControls, _note_num_samples_used
 from ..core._catalog import EntrySummary, SupportsRegistryCataloging, registry_catalog
 from ..core._dispatch import BaseDispatchRegistry, Feasibility, MethodInfo, ResolutionError
 from ..core._expression import Expression, Named
@@ -1199,6 +1199,20 @@ def _kind_names(kinds: Iterable[type]) -> str:
     return ", ".join(kind.__name__ for kind in kinds)
 
 
+def _set_counts(operation_view: Function) -> dict[str, Any]:
+    """The counts *operation_view* sets itself, which a re-call of the operation on the bound law forwards.
+
+    A count the view leaves unset resolves again in the re-call, so the
+    operation's own defaults and a map's own count apply there as they do in a
+    direct call.
+    """
+    return {
+        count_name: operation_view._options[count_name]
+        for count_name in _COUNT_CONTROLS
+        if count_name in operation_view._options
+    }
+
+
 class _GivenCandidate:
     """The conditional route, deferred until the kernel's law is available.
 
@@ -1285,7 +1299,9 @@ class _GivenCandidate:
             law, binding_exact = self._bound_law(call)
             operands = {**call.operands, subject_name: law}
             bound = values_to_bound_arguments(call.operation.signature, operands)
-            operation = call.operation._forwarding({**call.controls.peek(), "exact_only": True})
+            operation = call.operation._forwarding(
+                {**_set_counts(call.operation), "exact_only": True}
+            )
             report = operation.check(*bound.args, **bound.kwargs)
             if report.feasible is not True:
                 return report
@@ -1301,11 +1317,9 @@ class _GivenCandidate:
         subject_name = cast(str, cast(Operation, call.operation)._given_subject)
         values = {**call.operands, subject_name: law}
         bound = values_to_bound_arguments(call.operation.signature, values)
-        controls = (
-            {**call.controls.peek(), "exact_only": True}
-            if self._exact_only
-            else dict(call.controls.peek())
-        )
+        controls = _set_counts(call.operation)
+        if self._exact_only:
+            controls["exact_only"] = True
         result = call.operation._forwarding(controls)(*bound.args, **bound.kwargs)
         if self._exact_only:
             exact = binding_exact

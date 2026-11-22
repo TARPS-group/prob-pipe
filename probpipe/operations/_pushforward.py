@@ -414,13 +414,11 @@ def pushforward(d: Distribution, f: Any, fixed_args: Mapping[str, Any] | None = 
 # ---------------------------------------------------------------------------
 
 #: The engine controls the pushforward forwards to the call of its map when its
-#: caller set them, beside the rule the route selects and its exactness. Both
-#: counts are among them, so a converter of the map's argument takes the
-#: caller's ``num_samples``. The control ``include_inputs`` is not, since it
-#: would make the result the law of the map's inputs and outputs together.
+#: caller set them, beside the rule the route selects and its exactness. The
+#: control ``include_inputs`` is not among them, since it would make the result
+#: the law of the map's inputs and outputs together.
 _FORWARDED_CONTROLS = (
     "max_evaluations",
-    "num_samples",
     "workflow_kind",
     "method_options",
 )

@@ -90,7 +90,7 @@ No `config` section holds `executor` or `executor_options`, so an executor has n
 
 **The two counts.** Two controls count the work of an approximation, and each has one role:
 1. `max_evaluations` is the maximum number of times a call lifted over laws evaluates its function (V.5). The lift enumerates the empirical arguments whose combinations of atoms number at most `max_evaluations` (V.7), and it draws the other arguments jointly: `max_evaluations` draws when it enumerates none, and otherwise `max_evaluations // n` draws for each of the `n` combinations, at least one. Its default is 256.
-2. `num_samples` is the number of Monte Carlo draws that a route estimating a summary takes, as the Monte Carlo `mean` does (VI.5), and that a converter takes where it draws, unless the converter's own `num_samples` option is given (VI.10). The call's provenance records it whenever a route of the call draws it. Its default is 1024.
+2. `num_samples` is the number of Monte Carlo draws that a route estimating a summary takes, as the Monte Carlo `mean` does (VI.5), and that a converter takes where it draws, unless the converter's own `num_samples` option is given (VI.10). Its default is 1024. `expectation` is the summary whose draws are a lift's, so `max_evaluations` counts them (VI.0). Whenever a route of the call draws, the call's provenance records the number of draws under the name `num_samples`, and for an `expectation` it records its lift's draws there.
 
 The session's defaults of the two counts are the fields of `config.sampling`, which a call reads when it runs, so a setting governs the functions constructed before it. The environment variables `PROBPIPE_SAMPLING_MAX_EVALUATIONS` and `PROBPIPE_SAMPLING_NUM_SAMPLES` set their initial values.
 

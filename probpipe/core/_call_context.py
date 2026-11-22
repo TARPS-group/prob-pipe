@@ -12,9 +12,9 @@ Provides:
     and :func:`_open_call_context`, which runs one call in its own context;
   - :class:`_ExecutionChoice`, the executor a call chose and its options, and
     :class:`_NamedExecutorUse`, whether a named executor ran anything;
-  - :class:`_CountReads`, which of a call's two counts the code it runs read, with :class:`_CountNotingControls`,
-    :func:`_note_count_read`, :func:`_read_count`, and
-    :func:`_sources_of_count`;
+  - :class:`_CountReads`, which of a call's two counts the code it runs read,
+    with :class:`_CountNotingControls`, :func:`_note_count_read`,
+    :func:`_read_count`, and :func:`_sources_of_count`;
   - :class:`_NumSamplesUsed` and :class:`_EvaluationLog`, the call's two
     accumulators: the numbers of Monte Carlo draws its estimates took, and the
     sets of evaluation points it ran, with :func:`_collecting_call_accumulators`
@@ -388,9 +388,8 @@ class _CountReads:
     is noted in it. A read of a count that a derived route passed down, or
     that a route forwarded to the function it calls, is also noted in the
     record of the call that passed or forwarded it, which the reading call's
-    ``count_sources`` name. The calls that read on a call's behalf
-    share its record, as worker threads do, so its contents are guarded by a
-    lock.
+    ``count_sources`` name. The calls that read on a call's behalf share its
+    record, as worker threads do, so its contents are guarded by a lock.
 
     A read made while the program store traces a compiled JAX program is kept
     with the program's other notes and noted again after every run, so a warm

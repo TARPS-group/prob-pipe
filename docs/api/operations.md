@@ -10,7 +10,8 @@ For a kernel, `given=` first tries the operation's native exact conditional
 capabilities, then exact conditioning followed by an exact operation.
 The latter requires exact input binding and any necessary normalization.
 If either needs an approximation, the operation can select its Monte Carlo
-route using the requested `num_samples`.
+route using the requested `num_samples`, or, for `expectation`, the requested
+`max_evaluations`.
 Delegation to a bound law records the fidelity of binding, normalization,
 and the operation together.
 An explicit `method` selects the downstream operation's route; `method_options`

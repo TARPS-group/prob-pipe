@@ -1060,8 +1060,9 @@ class TestExpectation:
     def test_the_integrands_own_max_evaluations_applies_when_the_call_sets_none(self):
         law = Sampler("s")
         integrand = Function(lambda x: x, label="integrand", max_evaluations=5)
-        expectation(law, integrand)
+        estimate = expectation(law, integrand)
         assert law.shapes == [(5,)]
+        assert estimate.provenance.metadata["num_samples"] == 5
 
     def test_the_session_max_evaluations_sets_the_evaluations_when_the_call_sets_none(self):
         config.sampling.max_evaluations = 29
@@ -1383,7 +1384,8 @@ class TestTheExactnessOfBothSteps:
 
     def test_an_exact_rule_with_a_monte_carlo_mean_is_approximate(self, exact_to_sampler):
         with workflow_run(seed=0):
-            result = expectation.using(max_evaluations=_DRAWS)(Gaussian("g"), lambda x: x)
+            # The exact rule evaluates nothing, and the mean of its law reads num_samples.
+            result = expectation.using(num_samples=_DRAWS)(Gaussian("g"), lambda x: x)
         metadata = result.provenance.metadata
         assert (metadata["method"], metadata["exact"]) == ("exact_to_sampler", False)
         assert exact_to_sampler.pushed.shapes == [(_DRAWS,)]
@@ -1785,3 +1787,58 @@ class TestTheCountsAnOperationReads:
         with workflow_run(seed=0), pytest.warns(UnusedControlWarning, match=unused):
             result = pushforward.using(max_evaluations=10)(Gaussian("g"), lambda x: x)
         assert result.provenance.metadata["method"] == "exact_to_sampler"
+
+
+class _SamplerKernel(ConditionalDistribution):
+    """A kernel whose law at each input only samples, keeping every law it builds."""
+
+    def __init__(self) -> None:
+        super().__init__({"mu": REAL}, OutputSpec(s=REAL), label="kernel")
+        self.laws: list[Sampler] = []
+
+    def _condition_on(self, given: Any, /, **kwargs: Any) -> Any:
+        law = Sampler("s", float(given["mu"]))
+        self.laws.append(law)
+        return law
+
+
+class TestExpectationCountsLikeItsPushforward:
+    """Every route of expectation counts its lift's draws with max_evaluations."""
+
+    def test_with_given_the_integrands_own_max_evaluations_applies(self):
+        kernel = _SamplerKernel()
+        integrand = Function(lambda s: s, label="integrand", max_evaluations=8)
+        with workflow_run(seed=0), _no_unused_count_warning():
+            expectation(kernel, integrand, given={"mu": 2.0})
+        assert kernel.laws[-1].shapes == [(8,)]
+
+    def test_with_given_the_calls_max_evaluations_applies(self):
+        kernel = _SamplerKernel()
+        with workflow_run(seed=0), _no_unused_count_warning():
+            expectation.using(max_evaluations=9)(kernel, lambda s: s, given={"mu": 2.0})
+        assert kernel.laws[-1].shapes == [(9,)]
+
+    def test_with_given_num_samples_warns(self):
+        kernel = _SamplerKernel()
+        unused = "expectation did not use num_samples=9"
+        with workflow_run(seed=0), pytest.warns(UnusedControlWarning, match=unused):
+            expectation.using(num_samples=9)(kernel, lambda s: s, given={"mu": 2.0})
+
+    def test_over_a_batch_num_samples_warns_and_max_evaluations_applies(self):
+        laws = [Sampler("s", 0.0), Sampler("s", 1.0)]
+        batch = DistributionBatch(laws, "laws", label="laws")
+        unused = "expectation did not use num_samples=9"
+        with workflow_run(seed=0), pytest.warns(UnusedControlWarning, match=unused):
+            expectation.using(num_samples=9)(batch, lambda s: s)
+        with workflow_run(seed=0), _no_unused_count_warning():
+            expectation.using(max_evaluations=7)(batch, lambda s: s)
+        default = config.sampling.max_evaluations
+        assert [law.shapes for law in laws] == [[(default,), (7,)], [(default,), (7,)]]
+
+    def test_a_pushforward_kernel_warns_about_num_samples_it_does_not_keep(self):
+        kernel = conditional_distribution(
+            lambda mu: Normal("y", mu, 1.0), given_spec={"mu": REAL}, label="kernel"
+        )
+        unused = "pushforward did not use num_samples=9"
+        with pytest.warns(UnusedControlWarning, match=unused):
+            pushforward.using(num_samples=9)(kernel, lambda y: 2 * y)

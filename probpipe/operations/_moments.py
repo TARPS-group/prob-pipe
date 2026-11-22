@@ -1198,8 +1198,9 @@ class _PushforwardMean(_EvaluationRules):
 
     The route passes the call's controls to the map as ``pushforward`` does, so
     the map is evaluated at most the ``max_evaluations`` that the call sets, and
-    otherwise at most the map's own, and ``num_samples`` reaches the map's call
-    and the ``mean`` alike. When the sampling lift builds the law, the call's
+    otherwise at most the map's own. The derived route passes the call's
+    ``num_samples`` to the ``mean``, which reads it when the law it averages
+    has no exact mean. When the sampling lift builds the law, the call's
     provenance records the number of draws it took as ``num_samples``.
     """
 
