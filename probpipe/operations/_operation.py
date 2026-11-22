@@ -2341,17 +2341,21 @@ class Operation(Function):
 
 def _can_sample(call: BoundCall, result: OutputSpec | None) -> Feasibility:
     """The law samples, and its sampling guard admits the call."""
-    law = call.operands["d"]
+    return _law_samples(call.operands["d"])
+
+
+def _law_samples(law: Any) -> Feasibility:
+    """Whether *law* samples, with its sampling guard's report when it does."""
     if not isinstance(law, SupportsSampling):
         return Feasibility(False, f"{_subject_name(law)} does not sample")
     return _capability_guard(law, "_sample")
 
 
-def _monte_carlo_draws(call: BoundCall, operation_kind: str) -> Any:
-    """Workflow-owned draws of the law, recording the call's ``num_samples`` count."""
+def _monte_carlo_draws(call: BoundCall, operation_kind: str, *, operand: str = "d") -> Any:
+    """Workflow-owned draws of the law at *operand*, recording the call's ``num_samples`` count."""
     count = call.controls["num_samples"]
     draws = _workflow_draws(
-        call.operands["d"],
+        call.operands[operand],
         (count,),
         operation_kind=operation_kind,
         execution_mode="monte_carlo",

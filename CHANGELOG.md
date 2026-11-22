@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed (breaking)
 
+- **`cov` takes its law as `d1`.** The parameter of `cov` is renamed from `d`
+  to `d1`, beside the optional second law `d2`. Replace `cov(d=law)` with
+  `cov(law)` or `cov(d1=law)`.
+
 - **Exact conditional operations.** With `given=`, an exact operation exposed
   by exact conditioning precedes approximate routes, including sampling through
   a registry. Conditional delegation reuses the bound law within the call and
@@ -2143,6 +2147,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `method_options={"init": jnp.array([0.4, 0.55, 1.5])}`.
 
 ### Added
+
+- **Cross-covariance of two laws.** `cov(d1, d2)` returns `Cov(X1, X2)`, of
+  shape `(size of d1, size of d2)`, with the two laws drawn as a lift draws
+  them. Coupled marginals of one law, and copies and renames of it, take the
+  block of that law's covariance, which is exact whenever its covariance is,
+  so `cov(law["y"], law["x"])` replaces slicing `cov(law)` by its flat layout.
+  Two unrelated laws give an exact zero block without drawing. Other laws
+  drawn together, such as a transform and its base, take the covariance of
+  the law of the pair of their draws, which is exact over an empirical law
+  whose atoms the lift enumerates. Laws that are drawn independently but share
+  a factor, as `(a & b)["a"]` and `a` do, raise `ResolutionError`. The result
+  is labeled by both draws, as `ℂ[y ~ law, x ~ law]`.
 
 - **Monte Carlo marginals.** `marginal(d, paths)` estimates a standalone
   marginal from joint samples when no exact marginal is available. Set the

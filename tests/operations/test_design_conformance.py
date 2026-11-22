@@ -81,7 +81,7 @@ _PROSE = {
         "def mean(d): ...",
         "def variance(d): ...",
         "def standard_deviation(d): ...",
-        "def cov(d): ...",
+        "def cov(d1, d2=None): ...",
         "def quantile(d, q): ...",
         "def expectation(d, f, fixed_args): ...",
     ),
