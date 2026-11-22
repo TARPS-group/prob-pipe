@@ -94,7 +94,6 @@ from ..core.constraints import (
     non_negative,
     unit_interval,
 )
-from ..core.record import Record
 from ..core.tracked import TrackedTerm
 from ..distributions._capabilities import (
     SupportsCovariance,
@@ -103,7 +102,7 @@ from ..distributions._capabilities import (
     SupportsQuantile,
     SupportsVariance,
 )
-from ..distributions._distribution import Distribution, DistributionSpec
+from ..distributions._distribution import Distribution, DistributionSpec, _value_at_declared_kind
 from ..distributions._empirical import EmpiricalDistribution
 from ..distributions._factored import _raw_record
 from ..functions._call import ApplicabilityError, presented_arguments
@@ -1316,8 +1315,9 @@ def _integrand(call: BoundCall) -> Callable[[Any], Any]:
     """The integrand as a callable of one atom, presented as the evaluation rules present a draw.
 
     A record atom arrives as the nested mapping of its raw leaves and is passed
-    as a ``Record``, and the fixed arguments are passed as the direct call
-    presents them, with the map's construction ``bind``. An operation is
+    as a ``Record`` whose fields are in the law's declared order, whatever the
+    order of the mapping's keys. The fixed arguments are passed as the direct
+    call presents them, with the map's construction ``bind``. An operation is
     called as itself, and any other map as its raw callable, so it traces. A
     map whose open parameter is its first and takes the atom alone is the raw
     callable itself.
@@ -1330,7 +1330,8 @@ def _integrand(call: BoundCall) -> Callable[[Any], Any]:
     constants = {**({} if operation else f._bind), **fixed}
     if constants:
         constants = dict(presented_arguments(f._signature_info, constants))
-    record = isinstance(call.operands["d"].event_spec.term_spec, RecordSpec)
+    event = call.operands["d"].event_spec.term_spec
+    record = isinstance(event, RecordSpec)
     first = next(iter(f.signature.parameters.values()), None)
     positional = (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
     if (
@@ -1343,7 +1344,9 @@ def _integrand(call: BoundCall) -> Callable[[Any], Any]:
 
     def integrand(atom: Any) -> Any:
         if record and isinstance(atom, Mapping) and not isinstance(atom, TrackedTerm):
-            atom = Record(atom, label=parameter)
+            # A law that maps the integrand with jax.vmap passes a dict whose
+            # keys are sorted, so the record is laid out in the declared order.
+            atom = _value_at_declared_kind(event, parameter, atom)
         return _call_at(body, f, parameter, atom, constants)
 
     return integrand
