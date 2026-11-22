@@ -13,8 +13,9 @@ Provides:
   - :class:`_ExecutionChoice`, the executor a call chose and its options, and
     :class:`_NamedExecutorUse`, whether a named executor ran anything;
   - :class:`_CountReads` and :class:`_CountSource`, which of a call's two
-    counts the code it runs read, with :func:`_read_count`,
-    :func:`_note_count_read`, and :func:`_source_of_count`;
+    counts the code it runs read, with :class:`_CountNotingControls`,
+    :func:`_note_count_read`, :func:`_read_count`, and
+    :func:`_sources_of_count`;
   - :class:`_NumSamplesUsed` and :class:`_EvaluationLog`, the call's two
     accumulators: the numbers of Monte Carlo draws its estimates took, and the
     sets of evaluation points it ran, with :func:`_collecting_call_accumulators`
@@ -65,7 +66,7 @@ _NO_JAX_SETTINGS: Mapping[str, Any] = MappingProxyType({})
 #: derived route passes down and whose reads a call notes.
 _COUNT_CONTROLS = ("max_evaluations", "num_samples")
 
-_NO_COUNT_SOURCES: Mapping[str, _CountSource] = MappingProxyType({})
+_NO_COUNT_SOURCES: Mapping[str, tuple[_CountSource, ...]] = MappingProxyType({})
 
 #: The JAX settings that change what a computation returns, which a root call
 #: holds fixed and a worker process applies before it unpickles any work.
@@ -378,18 +379,29 @@ class _CountReads:
 
     A count is *given* to a call when the ``using`` view the call runs on sets
     it. A count is *read* when code that runs for the call looks its value up
-    to decide what the call computes: a lift's plan reads ``max_evaluations``,
-    and a Monte Carlo route or a converter that draws reads ``num_samples``.
-    The read of a count that a derived route passed down, or that a route
-    forwarded to the map it calls, is a read by the call that passed or
-    forwarded it, which the reading call finds through its
-    :class:`_CountSource`. A call that succeeds warns for each count it was
-    given and did not read.
+    to decide what the call computes: a lift over a distribution plans its
+    draws from ``max_evaluations``, and a Monte Carlo route or a converter
+    that draws takes ``num_samples`` draws. A call that succeeds warns for
+    each count it was given and did not read.
 
-    Every call creates one when it opens. The calls that read on its behalf
-    share it, as worker threads do, so its contents are guarded by a lock. A
-    pickled one arrives in a worker process with what was read so far, and a
-    read noted there stays there.
+    Every call creates one when it opens, and every read of the call's count
+    is noted in it. A read of a count that a derived route passed down, or
+    that a route forwarded to the function it calls, is also noted in the
+    record of the call that passed or forwarded it, which the reading call's
+    :class:`_CountSource` chain names. The calls that read on a call's behalf
+    share its record, as worker threads do, so its contents are guarded by a
+    lock.
+
+    A read made while the program store traces a compiled JAX program is kept
+    with the program's other notes and noted again after every run, so a warm
+    run, which traces nothing, notes the reads its trace made.
+
+    *Interim implementation detail:* a pickled record arrives in a worker
+    process with what was read so far, and a read noted there stays there.
+    The counts that govern a call's evaluation points are read before the
+    points are dispatched, by the routes, the lift's plan, and the converters
+    of the call's arguments, so no read of a count given to a call is made
+    only in a worker process today.
 
     Parameters
     ----------
@@ -407,7 +419,7 @@ class _CountReads:
 
     @property
     def read_counts(self) -> Mapping[str, int]:
-        """The counts read so far, each with the value read, by name."""
+        """The counts read so far, each with the value first read, by name."""
         with self._lock:
             return MappingProxyType(dict(self._read_counts))
 
@@ -435,10 +447,10 @@ class _CountReads:
 
 @dataclass(frozen=True)
 class _CountSource:
-    """Where a read of one of a call's counts is noted: a call's record, and the count's name there.
+    """One record a read of a call's count is noted in, and the count's name there.
 
     The name differs from the count read where a route spends one count as
-    another, as ``expectation`` spends its ``num_samples`` as the
+    the other, as ``expectation`` spends its ``num_samples`` as the
     ``max_evaluations`` of the map it lifts.
 
     Attributes
@@ -457,6 +469,11 @@ class _CountSource:
         self.count_reads.note_read(self.count_name, count)
 
 
+#: The records a read of each of a call's counts is noted in, by count name:
+#: the call's own first, then those of the calls that passed or forwarded it.
+_CountSources = Mapping[str, tuple[_CountSource, ...]]
+
+
 def _unpickled_count_reads(
     function_label: str, given_counts: Mapping[str, int], read_counts: Mapping[str, int]
 ) -> _CountReads:
@@ -467,41 +484,83 @@ def _unpickled_count_reads(
     return count_reads
 
 
-def _read_count(count_name: str, controls: Mapping[str, Any] | None = None) -> int:
-    """The running call's count *count_name*, noting the read in the record its source names.
+def _note_count_read(
+    count_name: str, count: int, count_sources: _CountSources | None = None
+) -> None:
+    """Note a read of the count *count_name*, whose value *count* the caller holds.
 
     Parameters
     ----------
     count_name : {"max_evaluations", "num_samples"}
-        The count to read.
-    controls : Mapping of str to Any, optional
-        The running call's resolved controls, where the caller holds them;
-        the call context's ``resolved_controls`` by default.
-
-    Returns
-    -------
-    int
-        The count's value.
+        The count read.
+    count : int
+        Its value.
+    count_sources : Mapping of str to tuple of _CountSource, optional
+        The records to note the read in; by default those of the running call,
+        and none outside every call.
     """
-    count = (current_call_context().resolved_controls if controls is None else controls)[count_name]
+    if count_sources is None:
+        count_sources = current_call_context().count_sources
+    for count_source in count_sources.get(count_name, ()):
+        count_source.note_read(count)
+
+
+def _read_count(count_name: str) -> int:
+    """The running call's resolved count *count_name*, with the read noted."""
+    count = current_call_context().resolved_controls[count_name]
     _note_count_read(count_name, count)
     return count
 
 
-def _note_count_read(count_name: str, count: int) -> None:
-    """Note that the running call read its count *count_name*, whose value *count* the caller holds.
+def _sources_of_count(count_name: str) -> tuple[_CountSource, ...]:
+    """The records a read of the running call's count *count_name* is noted in, which a route forwards with it."""
+    return current_call_context().count_sources.get(count_name, ())
 
-    The read is noted in the record that the count's source names, and
-    nowhere outside every call.
+
+class _CountNotingControls(Mapping[str, Any]):
+    """A call's resolved controls, which note each lookup of a count as a read of it.
+
+    A route reads its call's controls here, as ``call.controls``, so looking
+    up ``num_samples`` or ``max_evaluations`` notes the read in the records
+    of the call that built it, whatever thread the route runs in. Code that
+    copies the controls to pass them on, rather than to read them, copies
+    :meth:`peek`, which notes nothing.
+
+    Parameters
+    ----------
+    controls : Mapping of str to Any
+        The resolved controls.
+    count_sources : Mapping of str to tuple of _CountSource, optional
+        The records a read is noted in; by default those of the running call
+        when this is built.
     """
-    count_source = current_call_context().count_sources.get(count_name)
-    if count_source is not None:
-        count_source.note_read(count)
 
+    def __init__(
+        self, controls: Mapping[str, Any], count_sources: _CountSources | None = None
+    ) -> None:
+        self._controls = MappingProxyType(dict(controls))
+        self._count_sources = (
+            current_call_context().count_sources if count_sources is None else count_sources
+        )
 
-def _source_of_count(count_name: str) -> _CountSource | None:
-    """Where a read of the running call's count *count_name* is noted, which a route forwards with it."""
-    return current_call_context().count_sources.get(count_name)
+    def __getitem__(self, control_name: str) -> Any:
+        value = self._controls[control_name]
+        if control_name in _COUNT_CONTROLS:
+            _note_count_read(control_name, value, self._count_sources)
+        return value
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self._controls)
+
+    def __len__(self) -> int:
+        return len(self._controls)
+
+    def __repr__(self) -> str:
+        return f"{type(self).__name__}({dict(self._controls)!r})"
+
+    def peek(self) -> Mapping[str, Any]:
+        """The controls as a read-only mapping whose lookups note nothing, for passing them on."""
+        return self._controls
 
 
 @dataclass(frozen=True)
@@ -624,12 +683,12 @@ class _CallContext:
     count_reads : _CountReads or None
         The running call's own record of the counts it was given and read,
         which it warns from when it succeeds. ``None`` outside every call.
-    count_sources : Mapping[str, _CountSource]
-        Where a read of each of the running call's two counts is noted, by
-        count name: the call's own record, or, for a count a derived route
-        passed down or a route forwarded, the record of the call that passed
-        or forwarded it. A child call derives its own. Empty outside every
-        call.
+    count_sources : Mapping[str, tuple of _CountSource]
+        The records a read of each of the running call's two counts is noted
+        in, by count name: the call's own record first, then, for a count a
+        derived route passed down or a route forwarded, the records of the call
+        that passed or forwarded it. A child call derives its own. Empty
+        outside every call.
     """
 
     config_blocks: Mapping[str, Mapping[str, Any]] = _NO_CONFIG_BLOCKS
@@ -646,7 +705,7 @@ class _CallContext:
     embedded_calls: _EmbeddedCallState | None = None
     forbids_workflow_randomness: bool = False
     count_reads: _CountReads | None = None
-    count_sources: Mapping[str, _CountSource] = _NO_COUNT_SOURCES
+    count_sources: Mapping[str, tuple[_CountSource, ...]] = _NO_COUNT_SOURCES
 
     def with_config_block(self, config_values: Mapping[str, Mapping[str, Any]]) -> _CallContext:
         """This context under one more ``config`` block, which sets *config_values*.
@@ -687,6 +746,33 @@ class _CallContext:
         if passed_controls is not None:
             passed_controls = MappingProxyType(dict(passed_controls))
         return replace(self, passed_controls=passed_controls)
+
+    def with_count_reads_recorded_in(self, recorder: _CountReads) -> _CallContext:
+        """This context with *recorder* among the records a read of each of the running call's counts is noted in.
+
+        The program store records the reads a trace makes this way, to note
+        them again after every run of the traced JAX program.
+
+        Parameters
+        ----------
+        recorder : _CountReads
+            The record that also notes each read, under the count's own name.
+
+        Returns
+        -------
+        _CallContext
+            A copy whose ``count_sources`` end each count's records with
+            *recorder*.
+        """
+        return replace(
+            self,
+            count_sources=MappingProxyType(
+                {
+                    count_name: (*count_sources, _CountSource(recorder, count_name))
+                    for count_name, count_sources in self.count_sources.items()
+                }
+            ),
+        )
 
     def with_fresh_call_accumulators(self, *, collects_calls: bool = False) -> _CallContext:
         """This context with a new, empty ``num_samples_used`` and ``evaluation_log``.
@@ -765,7 +851,7 @@ class _CallContext:
         session_config_values: Mapping[str, Mapping[str, Any]] | None = None,
         jax_settings: Mapping[str, Any] | None = None,
         count_reads: _CountReads | None = None,
-        count_sources: Mapping[str, _CountSource] | None = None,
+        count_sources: Mapping[str, tuple[_CountSource, ...]] | None = None,
     ) -> _CallContext:
         """The context of a call opened in this context, which it derives and does not install.
 
@@ -800,9 +886,9 @@ class _CallContext:
         count_reads : _CountReads, optional
             The call's own record of the counts it was given and read; none by
             default.
-        count_sources : Mapping of str to _CountSource, optional
-            Where a read of each of the call's counts is noted, by count name;
-            none by default.
+        count_sources : Mapping of str to tuple of _CountSource, optional
+            The records a read of each of the call's counts is noted in, by
+            count name; none by default.
 
         Returns
         -------

@@ -17,7 +17,6 @@ import jax.numpy as jnp
 import numpy as np
 
 from .. import _messages
-from ..core._call_context import _read_count
 from ..core._dispatch import Feasibility
 from ..core._expression import Applied
 from ..core._object_batch import _collection_expression
@@ -562,9 +561,6 @@ class _FiniteMixture(_DelegatingRoute):
         K, mixing = call.operands["K"], call.operands["mixing"]
         joint = K & mixing
         if isinstance(joint, ConditionalDistribution):
-            if "max_evaluations" in call.operation._options:
-                # The kernel applies the count each time its inputs are bound.
-                _read_count("max_evaluations", call.operation._options)
             return _FiniteMixtureKernel(
                 joint,
                 _mixture._kernel_output_projection(K),
@@ -625,7 +621,8 @@ class _FiniteMixtureKernel(_PushforwardKernel):
 
     def _finish(self, source: Any, controls: Any, *, check: bool = False) -> Any:
         """Enumerate the mixing atoms after the remaining inputs have been bound."""
-        # The call that built the kernel noted the reads of its counts already.
+        # The bound mixture is the kernel's own work, not a call the caller
+        # gave counts to, so it never warns about them.
         operation = _mixture.mixture._forwarding(controls, count_sources={})
         return operation.check(source, self._mixing) if check else operation(source, self._mixing)
 

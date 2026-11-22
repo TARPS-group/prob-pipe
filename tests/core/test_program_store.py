@@ -1,6 +1,7 @@
 """Tests for compiled JAX programs: the fallback rule, the program store, its static settings, and notes made while tracing."""
 
 import threading
+import warnings
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from types import MappingProxyType
@@ -15,6 +16,7 @@ from probpipe import (
     Gamma,
     Normal,
     NumericArraySpec,
+    UnusedControlWarning,
     conditional_distribution,
     config,
     sample,
@@ -260,7 +262,9 @@ def _counting_kernel(read_setting: Callable[[], float], python_runs: list) -> An
 class TestStaticSettings:
     def test_two_counts_on_the_call_use_two_store_entries_and_their_own_counts(self):
         joint = _joint(_counting_kernel(_num_samples_in_effect, []))
-        with workflow_run(seed=0):
+        with workflow_run(seed=0), warnings.catch_warnings():
+            # A warm run traces nothing, so the trace's read of num_samples is noted again.
+            warnings.simplefilter("error", UnusedControlWarning)
             draws_500 = sample.using(num_samples=500)(joint, 4)
             draws_2000 = sample.using(num_samples=2000)(joint, 4)
             with count_compilations() as compiled:
@@ -299,9 +303,10 @@ class TestStaticSettings:
     def test_a_family_sampler_compiles_once_across_a_sweep_over_num_samples(self):
         law = Gamma("x", 2.0, 3.0)
         with workflow_run(seed=0):
-            sample.using(num_samples=100)(law, 8)
-            with count_compilations() as compiled:
-                sample.using(num_samples=200)(law, 8)
+            with config.sampling.using(num_samples=100):
+                sample(law, 8)
+            with count_compilations() as compiled, config.sampling.using(num_samples=200):
+                sample(law, 8)
         assert compiled.count == 0
 
     def test_a_block_the_traced_code_opens_applies_over_the_static_settings(self):

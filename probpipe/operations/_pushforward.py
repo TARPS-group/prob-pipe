@@ -23,7 +23,12 @@ import jax
 
 from .._messages import unknown_names
 from ..core._batch import Batch, BatchSpec
-from ..core._call_context import _COUNT_CONTROLS, _CountSource, _source_of_count
+from ..core._call_context import (
+    _COUNT_CONTROLS,
+    _CountSource,
+    _note_count_read,
+    _sources_of_count,
+)
 from ..core._dispatch import Feasibility, ResolutionError
 from ..core._execution_claims import TRACING_ERRORS, spec_stand_in
 from ..core._record_batch import _batch_over
@@ -443,8 +448,19 @@ def _draw_map(
         return f, parameter, dict(fixed)
     hint = f._signature_info.hints.get(parameter)
     direct = operation or hint is None or resolved_hint(hint) is not Any
-    target = f.using(exact_only=True) if direct and exact_only else f
-    call = target if direct else f.apply
+    # The new map lifts over the draws, so it takes the max_evaluations that
+    # f's using gave, and each draw's call of f, which lifts nothing, keeps
+    # none given to warn about.
+    given_max_evaluations = (
+        {"max_evaluations": f._options["max_evaluations"]}
+        if "max_evaluations" in f._given_counts
+        else {}
+    )
+    each_draw_f = (
+        f._forwarding(given_max_evaluations, count_sources={}) if given_max_evaluations else f
+    )
+    target = each_draw_f.using(exact_only=True) if direct and exact_only else each_draw_f
+    call = target if direct else each_draw_f.apply
     constants = dict(fixed)
 
     def each_draw(draw: Any) -> Any:
@@ -461,6 +477,8 @@ def _draw_map(
         output_label=f.output_label,
         **{name: f._options[name] for name in _MAP_CONTROLS if name in f._options},
     )
+    if given_max_evaluations:
+        mapped = mapped.using(**given_max_evaluations)
     return mapped, parameter, {}
 
 
@@ -516,14 +534,14 @@ class _EvaluationRules(_RegistryRoute):
         set_controls = call.operation._options
         return {name: set_controls[name] for name in self._forwarded if name in set_controls}
 
-    def _forwarded_count_sources(self, call: BoundCall) -> dict[str, _CountSource | None]:
-        """Where a read of each count by the call of the map is noted: where the call's count of the same name is.
+    def _forwarded_count_sources(self, call: BoundCall) -> dict[str, tuple[_CountSource, ...]]:
+        """The records a read of each count by the call of the map is also noted in: those of the call's count of the same name.
 
         So a count the caller set on the operation and forwarded to the map is
         read when the map's call reads it, and the operation's call learns how
         many times the map was evaluated even when the caller set no count.
         """
-        return {count_name: _source_of_count(count_name) for count_name in _COUNT_CONTROLS}
+        return {count_name: _sources_of_count(count_name) for count_name in _COUNT_CONTROLS}
 
     def probe(
         self, call: BoundCall, result: OutputSpec | None, *, method: str | None, exact_only: bool
@@ -577,9 +595,7 @@ class _EvaluationRules(_RegistryRoute):
             # bound, so the call has read them.
             count_sources = self._forwarded_count_sources(call)
             for count_name in controls.keys() & set(_COUNT_CONTROLS):
-                count_source = count_sources.get(count_name)
-                if count_source is not None:
-                    count_source.note_read(controls[count_name])
+                _note_count_read(count_name, controls[count_name], count_sources)
             return _PushforwardKernel(
                 call.operands["d"],
                 _as_function(call.operands["f"]),

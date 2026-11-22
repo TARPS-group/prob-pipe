@@ -673,8 +673,10 @@ def test_given_marginal_binding_fidelity_through_composition(finite, boundary):
         q = q & Normal("independent", 0.0, 1.0)
     elif boundary == "nested":
         q = pushforward(q, f)
+    # A finite law's marginal is exact, so only a sampled one takes the count.
+    counts = {} if finite else {"num_samples": 13}
     with workflow_run(seed=2):
-        result = marginal.using(num_samples=13)(q, "w", given=given)
+        result = marginal.using(**counts)(q, "w", given=given)
     assert result.provenance.metadata["exact"] is finite
     assert result.num_atoms == (2 if finite else 13)
     if finite:
@@ -711,10 +713,13 @@ def test_given_mixture_retains_finite_route_or_samples_directly(finite, operatio
         if finite
         else Normal("theta", 0.0, 1.0)
     )
-    q = mixture.using(max_evaluations=7)(k, mixing)
+    # A finite mixing law is enumerated exactly, so only a sampled one takes the counts.
+    q = mixture.using(**({} if finite else {"max_evaluations": 7}))(k, mixing)
     args = ("y",) if operation is marginal else ()
     with workflow_run(seed=3):
-        result = operation.using(num_samples=13)(q, *args, given={"x": 1.0})
+        result = operation.using(**({} if finite else {"num_samples": 13}))(
+            q, *args, given={"x": 1.0}
+        )
     assert result.provenance.metadata["exact"] is finite
     assert result.provenance.metadata["route"] == ("conditional" if finite else "monte_carlo")
     if finite:

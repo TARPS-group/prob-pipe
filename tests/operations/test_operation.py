@@ -26,6 +26,7 @@ from probpipe import (
     ResultKindError,
     ResultSchemaError,
     TrackedTerm,
+    UnusedControlWarning,
     config,
     function,
     workflow_run,
@@ -1333,7 +1334,8 @@ class TestDerivedRouteControls:
     def test_a_num_samples_the_constituent_sets_wins(self, count):
         law = Sampler("s")
         doubled = _body_doubled(center.using(raw=True, num_samples=count))
-        doubled.using(num_samples=33)(law)
+        with pytest.warns(UnusedControlWarning, match="doubled did not use num_samples=33"):
+            doubled.using(num_samples=33)(law)
         assert law.shapes == [(count,)]
 
     def test_a_constituent_keeps_the_session_default_when_the_derived_call_sets_no_count(
@@ -1415,7 +1417,8 @@ class TestDerivedRouteControls:
     def test_num_samples_reaches_only_the_calls_the_formula_makes(self):
         law = Sampler("s")
         doubled = _body_doubled(_via_center(exact=False).using(raw=True))
-        doubled.using(num_samples=33)(law)
+        with pytest.warns(UnusedControlWarning, match="doubled did not use num_samples=33"):
+            doubled.using(num_samples=33)(law)
         assert law.shapes == [(center.options["num_samples"],)]
 
     def test_exact_only_restricts_every_call_the_formula_runs(self):

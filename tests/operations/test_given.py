@@ -434,7 +434,7 @@ class TestConditionalOperations:
         given = distribution(sample=lambda key: {"mu": 2.0}, event_spec=RecordSpec(mu=REAL))
         kernel = _Fallback()
         with workflow_run(seed=42):
-            result = mean.using(num_samples=8)(kernel, given=given)
+            result = mean(kernel, given=given)
         np.testing.assert_allclose(mean(result), 2.0)
         assert kernel.calls
 
@@ -748,7 +748,8 @@ def test_conditional_candidates_reuse_the_prepared_law(mapped):
         if mapped
         else kernel
     )
-    configured = mean.using(num_samples=13)
+    # The mapped kernel's law is empirical, so its mean is exact and takes no draws.
+    configured = mean if mapped else mean.using(num_samples=13)
     assert configured.check(q, given={"mu": 2.0}).feasible is None
     assert kernel.calls == calls == []
     result = configured(q, given={"mu": 2.0})

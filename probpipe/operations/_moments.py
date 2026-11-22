@@ -68,7 +68,7 @@ from ..core._call_context import (
     _CountSource,
     _note_num_samples_used,
     _NumSamplesUsed,
-    _source_of_count,
+    _sources_of_count,
 )
 from ..core._dispatch import (
     Feasibility,
@@ -648,7 +648,7 @@ class _ByOutput(_DelegatingRoute):
 
         A block returns its raw value, which the route assembles.
         """
-        return {**call.controls, "method": None, "exact_only": exact_only, "raw": True}
+        return {**call.controls.peek(), "method": None, "exact_only": exact_only, "raw": True}
 
     @staticmethod
     def _values(call: BoundCall, view: Distribution) -> dict[str, Any]:
@@ -1214,12 +1214,14 @@ class _PushforwardMean(_EvaluationRules):
 
     def _forwarded_controls(self, call: BoundCall) -> dict[str, Any]:
         """The controls the caller set, with the call's ``num_samples`` as the map's ``max_evaluations``."""
-        return super()._forwarded_controls(call) | {"max_evaluations": call.controls["num_samples"]}
+        return super()._forwarded_controls(call) | {
+            "max_evaluations": call.controls.peek()["num_samples"]
+        }
 
-    def _forwarded_count_sources(self, call: BoundCall) -> dict[str, _CountSource | None]:
-        """Where the call's ``num_samples`` is read, for both counts of the map, since it spends it as the map's ``max_evaluations``."""
-        num_samples_source = _source_of_count("num_samples")
-        return {"max_evaluations": num_samples_source, "num_samples": num_samples_source}
+    def _forwarded_count_sources(self, call: BoundCall) -> dict[str, tuple[_CountSource, ...]]:
+        """The records of the call's ``num_samples``, for both counts of the map, since it spends it as the map's ``max_evaluations``."""
+        num_samples_sources = _sources_of_count("num_samples")
+        return {"max_evaluations": num_samples_sources, "num_samples": num_samples_sources}
 
     @property
     def condition(self) -> str:
@@ -1251,7 +1253,7 @@ class _PushforwardMean(_EvaluationRules):
         law = super().run(call, result, method=method, exact_only=exact_only)
         provenance = getattr(law, "provenance", None)
         if provenance is not None and provenance.metadata.get("route") == "sampling_lift":
-            _note_num_samples_used(call.controls["num_samples"])
+            _note_num_samples_used(call.controls.peek()["num_samples"])
         averaged = mean(law)
         steps = (_recorded_exactness(law), _recorded_exactness(averaged))
         exact = False if False in steps else (True if steps == (True, True) else None)

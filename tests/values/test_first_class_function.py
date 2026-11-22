@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import contextlib
 import inspect
 import subprocess
 import sys
 import textwrap
+import warnings
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import partial
+from types import MappingProxyType
 from typing import Any
 
 import jax
@@ -52,6 +55,8 @@ from probpipe import (
     simplex,
     workflow_run,
 )
+from probpipe.core._call_context import _CountReads, _CountSource, current_call_context
+from probpipe.values._function_base import _count_reads_and_sources
 
 #: The executor controls a lift runs under in these tests. ``jax`` maps a
 #: traceable function, and ``sequential`` evaluates a function that claims
@@ -2060,6 +2065,14 @@ def _square(x):
     return x**2
 
 
+@contextlib.contextmanager
+def _no_unused_count_warning():
+    """A scope in which an ``UnusedControlWarning`` raises, so a test asserts there is none."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", probpipe.UnusedControlWarning)
+        yield
+
+
 class TestUnusedCountWarning:
     """A call warns once for each count its ``using`` view set that nothing the call ran read."""
 
@@ -2076,8 +2089,8 @@ class TestUnusedCountWarning:
         with workflow_run(seed=0), pytest.warns(probpipe.UnusedControlWarning) as record:
             result = square.using(num_samples=1000)(Normal("x", 0.0, 1.0))
         assert self._messages(record) == [
-            "square did not use num_samples=1000, because the call evaluates a function at "
-            f"draws of a law, which max_evaluations={probpipe.config.sampling.max_evaluations} "
+            "square did not use num_samples=1000, because the call evaluated a function at "
+            f"draws of a distribution, which max_evaluations={probpipe.config.sampling.max_evaluations} "
             "counts. Set max_evaluations=1000 instead"
         ]
         assert result.num_atoms == probpipe.config.sampling.max_evaluations
@@ -2094,7 +2107,7 @@ class TestUnusedCountWarning:
             assert square.using(max_evaluations=3)(2.0) == 4.0
         assert self._messages(record) == [
             "square did not use max_evaluations=3, because the call evaluated no function at "
-            "draws of a law"
+            "draws of a distribution"
         ]
 
     def test_each_unread_count_warns_once_in_the_order_of_the_two_counts(self):
@@ -2103,13 +2116,13 @@ class TestUnusedCountWarning:
             square.using(num_samples=5, max_evaluations=3)(2.0)
         assert self._messages(record) == [
             "square did not use max_evaluations=3, because the call evaluated no function at "
-            "draws of a law",
+            "draws of a distribution",
             "square did not use num_samples=5, because the call took no Monte Carlo draws",
         ]
 
     def test_a_count_the_call_reads_does_not_warn(self):
         square = Function(_square, label="square")
-        with workflow_run(seed=0):
+        with workflow_run(seed=0), _no_unused_count_warning():
             result = square.using(max_evaluations=7)(Normal("x", 0.0, 1.0))
         assert result.num_atoms == 7
 
@@ -2121,19 +2134,42 @@ class TestUnusedCountWarning:
             view(2.0)
 
     def test_a_count_set_at_construction_never_warns(self):
-        assert Function(_square, label="square", max_evaluations=3)(2.0) == 4.0
+        with _no_unused_count_warning():
+            assert Function(_square, label="square", max_evaluations=3)(2.0) == 4.0
 
     def test_a_count_set_by_a_config_block_never_warns(self):
-        with probpipe.config.sampling.using(max_evaluations=3, num_samples=5):
+        with (
+            probpipe.config.sampling.using(max_evaluations=3, num_samples=5),
+            _no_unused_count_warning(),
+        ):
             assert Function(_square, label="square")(2.0) == 4.0
 
     def test_a_count_reset_to_its_default_is_no_longer_given(self):
         view = Function(_square, label="square").using(max_evaluations=3)
-        assert view.using(max_evaluations=None)(2.0) == 4.0
+        with _no_unused_count_warning():
+            assert view.using(max_evaluations=None)(2.0) == 4.0
 
     def test_check_never_warns(self):
-        report = Function(_square, label="square").using(max_evaluations=3).check(2.0)
+        with _no_unused_count_warning():
+            report = Function(_square, label="square").using(max_evaluations=3).check(2.0)
         assert report.feasible is True
+
+    def test_a_check_inside_a_derived_route_reads_for_itself_alone(self):
+        parent_reads = _CountReads("derived", {"num_samples": 5})
+        parent_context = replace(
+            current_call_context(),
+            call_depth=1,
+            passed_controls=MappingProxyType(
+                {"exact_only": False, "max_evaluations": None, "num_samples": 5}
+            ),
+            count_sources=MappingProxyType(
+                {"num_samples": (_CountSource(parent_reads, "num_samples"),)}
+            ),
+        )
+        square = Function(_square, label="square")
+        for entry_method_name, upstream in (("__call__", 1), ("check", 0)):
+            _, count_sources = _count_reads_and_sources(square, parent_context, entry_method_name)
+            assert len(count_sources["num_samples"]) == 1 + upstream
 
     def test_apply_warns_as_a_call_does(self):
         with pytest.warns(probpipe.UnusedControlWarning, match="did not use max_evaluations=3"):
@@ -2150,4 +2186,5 @@ class TestUnusedCountWarning:
         square = Function(_square, label="square").using(max_evaluations=3)
         forwarded = square._forwarding({"max_evaluations": 4}, count_sources={})
         assert forwarded._given_counts == frozenset()
-        assert forwarded(2.0) == 4.0
+        with _no_unused_count_warning():
+            assert forwarded(2.0) == 4.0

@@ -80,7 +80,7 @@ from typing import Any, ClassVar, Protocol, cast, runtime_checkable
 
 from .._messages import unknown_names
 from ..core._array_backend import _event_shape_of, _is_numeric_leaf, _numpy_dtype_of
-from ..core._call_context import _note_num_samples_used, _read_count
+from ..core._call_context import _CountNotingControls, _note_num_samples_used
 from ..core._catalog import EntrySummary, SupportsRegistryCataloging, registry_catalog
 from ..core._dispatch import BaseDispatchRegistry, Feasibility, MethodInfo, ResolutionError
 from ..core._expression import Expression, Named
@@ -163,7 +163,11 @@ class BoundCall:
         point of a lifted call, an element or a stand-in for a draw.
     controls : Mapping[str, Any]
         The resolved controls, ``method``, ``exact_only``, ``raw``, and
-        ``method_options`` among them.
+        ``method_options`` among them. A lookup of ``max_evaluations`` or
+        ``num_samples`` here is a read of that count by the call, which the
+        call notes so that it warns about a count it was given and never read;
+        code that copies the controls to pass them on copies
+        ``controls.peek()``, which notes nothing.
 
     Notes
     -----
@@ -178,6 +182,10 @@ class BoundCall:
     operands: Mapping[str, Any]
     controls: Mapping[str, Any]
     _memo: dict[Any, Any] = field(default_factory=dict, init=False, repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.controls, _CountNotingControls):
+            object.__setattr__(self, "controls", _CountNotingControls(self.controls))
 
     @property
     def specs(self) -> Mapping[str, TermSpec]:
@@ -771,7 +779,7 @@ def _derived_route_scope(call: BoundCall) -> AbstractContextManager[None]:
     operation_view = call.operation
 
     def passed_count(name: str) -> int | None:
-        return call.controls[name] if name in operation_view._options else None
+        return call.controls.peek()[name] if name in operation_view._options else None
 
     return _passing_controls_to_formula_calls(
         exact_only=call.controls["exact_only"],
@@ -1247,7 +1255,7 @@ class _GivenCandidate:
             call._memo["conditional binding"] = BoundCall(
                 condition_on,
                 MappingProxyType({"d": subject.kernel, "given": subject.given}),
-                {**call.controls, "method": None},
+                {**call.controls.peek(), "method": None},
             )
         binding = call._memo["conditional binding"]
         if checking():
@@ -1280,7 +1288,7 @@ class _GivenCandidate:
             law, binding_exact = self._bound_law(call)
             operands = {**call.operands, subject_name: law}
             bound = values_to_bound_arguments(call.operation.signature, operands)
-            operation = call.operation._forwarding({**call.controls, "exact_only": True})
+            operation = call.operation._forwarding({**call.controls.peek(), "exact_only": True})
             report = operation.check(*bound.args, **bound.kwargs)
             if report.feasible is not True:
                 return report
@@ -1297,7 +1305,9 @@ class _GivenCandidate:
         values = {**call.operands, subject_name: law}
         bound = values_to_bound_arguments(call.operation.signature, values)
         controls = (
-            {**call.controls, "exact_only": True} if self._exact_only else dict(call.controls)
+            {**call.controls.peek(), "exact_only": True}
+            if self._exact_only
+            else dict(call.controls.peek())
         )
         result = call.operation._forwarding(controls)(*bound.args, **bound.kwargs)
         if self._exact_only:
@@ -2349,7 +2359,7 @@ def _can_sample(call: BoundCall, result: OutputSpec | None) -> Feasibility:
 
 def _monte_carlo_draws(call: BoundCall, operation_kind: str) -> Any:
     """Workflow-owned draws of the law, recording the call's ``num_samples`` count."""
-    count = _read_count("num_samples", call.controls)
+    count = call.controls["num_samples"]
     draws = _workflow_draws(
         call.operands["d"],
         (count,),

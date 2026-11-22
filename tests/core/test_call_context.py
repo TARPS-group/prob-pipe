@@ -8,14 +8,15 @@ from types import MappingProxyType
 import jax.numpy as jnp
 import pytest
 
-from probpipe import Function, NumericArrayBatch, config, function
+from probpipe import Function, NumericArrayBatch, UnusedControlWarning, config, function
 from probpipe.core._call_context import (
     _collecting_call_accumulators,
+    _CountNotingControls,
     _CountReads,
     _CountSource,
+    _note_count_read,
     _note_num_samples_used,
     _NumSamplesUsed,
-    _read_count,
     _under_call_context,
     current_call_context,
 )
@@ -114,7 +115,10 @@ class TestCallsOpenAContext:
 
         with config.sampling.using(num_samples=33):
             body(1.0)
-            body.using(num_samples=5)(1.0)
+            # The body looks at the context rather than drawing, so the count
+            # is not read.
+            with pytest.warns(UnusedControlWarning, match="body did not use num_samples=5"):
+                body.using(num_samples=5)(1.0)
         assert seen == [(1, "body", 33), (1, "body", 5)]
         assert current_call_context().is_default()
 
@@ -135,7 +139,9 @@ class TestCallsOpenAContext:
             return (inner.using(num_samples=5).apply(x), inner.apply(x))
 
         session_num_samples = config.sampling.num_samples
-        assert outer.using(num_samples=7, raw=True)(1.0) == (5, session_num_samples)
+        # The inner calls read their own counts, which are none of outer's.
+        with pytest.warns(UnusedControlWarning, match="outer did not use num_samples=7"):
+            assert outer.using(num_samples=7, raw=True)(1.0) == (5, session_num_samples)
         assert read_by_check == [5, session_num_samples]
 
     def test_the_context_is_restored_after_a_call_raises(self):
@@ -569,5 +575,31 @@ class TestCountReads:
         assert restored.given_counts == {"num_samples": 5}
         assert restored.read_counts == {"max_evaluations": 256}
 
+    def test_noting_controls_note_a_count_lookup_but_not_a_peek(self):
+        count_reads = _CountReads("mean", {"num_samples": 9, "max_evaluations": 3})
+        controls = _CountNotingControls(
+            {"num_samples": 9, "max_evaluations": 3, "raw": False},
+            {"num_samples": (_CountSource(count_reads, "num_samples"),)},
+        )
+        assert dict(controls.peek()) == {"num_samples": 9, "max_evaluations": 3, "raw": False}
+        assert controls["raw"] is False
+        assert count_reads.read_counts == {}
+        assert controls["num_samples"] == 9
+        assert count_reads.read_counts == {"num_samples": 9}
+
+    def test_a_read_is_noted_in_every_record_of_its_chain(self):
+        own, upstream = _CountReads("map", {}), _CountReads("expectation", {"num_samples": 4})
+        chain = {
+            "max_evaluations": (
+                _CountSource(own, "max_evaluations"),
+                _CountSource(upstream, "num_samples"),
+            )
+        }
+        _note_count_read("max_evaluations", 4, chain)
+        assert own.read_counts == {"max_evaluations": 4}
+        assert upstream.read_counts == {"num_samples": 4}
+
     def test_outside_every_call_a_read_is_noted_nowhere(self):
-        assert _read_count("num_samples", {"num_samples": 9}) == 9
+        assert current_call_context().count_sources == {}
+        _note_count_read("num_samples", 9)
+        assert current_call_context().count_reads is None

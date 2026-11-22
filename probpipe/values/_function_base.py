@@ -39,7 +39,7 @@ from ..core._call_context import (
     _jax_settings_snapshot,
     _NamedExecutorUse,
     _open_call_context,
-    _source_of_count,
+    _sources_of_count,
     _under_call_context,
     current_call_context,
 )
@@ -94,7 +94,7 @@ class UnusedControlWarning(UserWarning):
     ``num_samples``, that its ``using`` view set and that no code running for
     the call read. A count set when the ``Function`` was constructed, or by a
     ``config`` block or the session, is a default for every call and never
-    warns. To make the warning an error, as ProbPipe's test suite does::
+    warns. To make the warning an error::
 
         import warnings
         warnings.simplefilter("error", probpipe.UnusedControlWarning)
@@ -889,7 +889,9 @@ def _child_context_for_call(
     """
     is_root_call = parent_context.call_depth == 0
     count_reads, count_sources = _count_reads_and_sources(
-        function_view if uninherited_view is None else uninherited_view, parent_context
+        function_view if uninherited_view is None else uninherited_view,
+        parent_context,
+        entry_method_name,
     )
     return parent_context.child_for_call(
         entry_method_name=entry_method_name,
@@ -908,20 +910,25 @@ def _child_context_for_call(
 
 
 def _count_reads_and_sources(
-    function_view: Function, parent_context: _CallContext
-) -> tuple[_CountReads, dict[str, _CountSource]]:
-    """The record of a call of *function_view* opened in *parent_context*, and where each of its counts' reads is noted.
+    function_view: Function,
+    parent_context: _CallContext,
+    entry_method_name: Literal["__call__", "apply", "check"],
+) -> tuple[_CountReads, dict[str, tuple[_CountSource, ...]]]:
+    """The record of a call of *function_view* opened in *parent_context*, and the records each count's reads are noted in.
 
-    The record holds the counts the view's ``using`` gave it. A read of each
-    count is noted, by the first rule that applies:
+    The record holds the counts the view's ``using`` gave it, and every read
+    of the call's counts is noted in it. A read is also noted in the records of
+    the call the count came from, by the first rule that applies:
 
-    1. in the record of the call that forwarded it, for a count a route
-       forwarded to the view (:meth:`Function._forwarding`);
-    2. in this call's record, for a count the view sets itself, by ``using``
-       or at construction;
-    3. in the record that *parent_context* notes it in, for a count an
-       enclosing derived route passes down;
-    4. otherwise in this call's record.
+    1. for a count a route forwarded to the view (:meth:`Function._forwarding`),
+       the records it forwarded with the count;
+    2. for a count the view sets itself, by ``using`` or at construction, none;
+    3. for a count an enclosing derived route passes down, the records
+       *parent_context* notes its read in;
+    4. otherwise none.
+
+    A ``check`` runs nothing, so a read it makes is noted in its own record
+    alone and never counts as a read by another call.
 
     Parameters
     ----------
@@ -930,11 +937,14 @@ def _count_reads_and_sources(
         passes down.
     parent_context : _CallContext
         The context the call is opened in.
+    entry_method_name : {"__call__", "apply", "check"}
+        The ``Function`` method that opens the call.
 
     Returns
     -------
-    tuple of (_CountReads, dict of str to _CountSource)
-        The call's record, and the source of each count by name.
+    tuple of (_CountReads, dict of str to tuple of _CountSource)
+        The call's record, and the records of each count by name, the call's
+        own first.
     """
     count_reads = _CountReads(
         function_view.label,
@@ -944,55 +954,63 @@ def _count_reads_and_sources(
         },
     )
     passed_controls = parent_context.passed_controls
-    count_sources: dict[str, _CountSource] = {}
+    count_sources: dict[str, tuple[_CountSource, ...]] = {}
     for count_name in _COUNT_CONTROLS:
-        forwarded_source = function_view._forwarded_count_sources.get(count_name)
-        passed_source = parent_context.count_sources.get(count_name)
-        if forwarded_source is not None:
-            count_sources[count_name] = forwarded_source
+        own_source = _CountSource(count_reads, count_name)
+        if entry_method_name == "check":
+            upstream_sources: tuple[_CountSource, ...] = ()
+        elif count_name in function_view._forwarded_count_sources:
+            upstream_sources = function_view._forwarded_count_sources[count_name]
         elif (
             count_name not in function_view._options
             and passed_controls is not None
             and passed_controls[count_name] is not None
-            and passed_source is not None
         ):
-            count_sources[count_name] = passed_source
+            upstream_sources = parent_context.count_sources.get(count_name, ())
         else:
-            count_sources[count_name] = _CountSource(count_reads, count_name)
+            upstream_sources = ()
+        count_sources[count_name] = (own_source, *upstream_sources)
     return count_reads, count_sources
 
 
 def _unread_count_message(
-    function_label: str, count_name: str, count: int, read_counts: Mapping[str, int]
+    function_label: str,
+    count_name: str,
+    count: int,
+    read_counts: Mapping[str, int],
+    given_counts: Mapping[str, int],
 ) -> str:
-    """The message of the warning that the call of *function_label* did not use the count *count_name*.
+    """The message of the warning that the call of *function_label* did not use its count *count_name*.
 
-    A call that read the other count names it as the count that governs its
-    work, and its fix sets that count instead.
+    A call that read the other count names that count and its value as what
+    governed its work. Its fix sets the other count instead, or, when the
+    call was given the other count too, removes the unread one.
 
     Examples
     --------
-    >>> _unread_count_message("expectation", "max_evaluations", 4, {"num_samples": 1024})
-    'expectation did not use max_evaluations=4, because the call takes Monte Carlo draws, which num_samples=1024 counts. Set num_samples=4 instead'
-    >>> _unread_count_message("mean", "num_samples", 500, {})
+    >>> _unread_count_message("expectation", "max_evaluations", 4, {"num_samples": 1024}, {})
+    'expectation did not use max_evaluations=4, because the call took Monte Carlo draws, which num_samples=1024 counts. Set num_samples=4 instead'
+    >>> _unread_count_message("mean", "num_samples", 500, {}, {"num_samples": 500})
     'mean did not use num_samples=500, because the call took no Monte Carlo draws'
     """
     unused = f"{function_label} did not use {count_name}={count}"
     if count_name == "num_samples":
         other_count_name = "max_evaluations"
-        governed_work = "the call evaluates a function at draws of a law"
+        governed_work = "the call evaluated a function at draws of a distribution"
         no_work = "the call took no Monte Carlo draws"
     else:
         other_count_name = "num_samples"
-        governed_work = "the call takes Monte Carlo draws"
-        no_work = "the call evaluated no function at draws of a law"
+        governed_work = "the call took Monte Carlo draws"
+        no_work = "the call evaluated no function at draws of a distribution"
     if other_count_name not in read_counts:
         return f"{unused}, because {no_work}"
-    return (
+    reason = (
         f"{unused}, because {governed_work}, which "
-        f"{other_count_name}={read_counts[other_count_name]} counts. "
-        f"Set {other_count_name}={count} instead"
+        f"{other_count_name}={read_counts[other_count_name]} counts"
     )
+    if other_count_name in given_counts:
+        return f"{reason}. Remove {count_name}={count} from using"
+    return f"{reason}. Set {other_count_name}={count} instead"
 
 
 def _warn_unread_counts(count_reads: _CountReads) -> None:
@@ -1006,7 +1024,13 @@ def _warn_unread_counts(count_reads: _CountReads) -> None:
     read_counts = count_reads.read_counts
     for count_name, count in count_reads.unread_given_counts().items():
         warnings.warn(
-            _unread_count_message(count_reads.function_label, count_name, count, read_counts),
+            _unread_count_message(
+                count_reads.function_label,
+                count_name,
+                count,
+                read_counts,
+                count_reads.given_counts,
+            ),
             UnusedControlWarning,
             stacklevel=2,
             skip_file_prefixes=_WARNING_SKIP_PREFIXES,
@@ -1325,10 +1349,10 @@ class Function(TrackedTerm, Annotated):
     #: The counts this view's ``using`` set, which a call of the view warns
     #: about when no code running for the call reads them.
     _given_counts: frozenset[str] = frozenset()
-    #: Where a read of each count by a call of this view is noted, by count
-    #: name, for a view a route built with :meth:`_forwarding`: the record of
-    #: the call whose count it is.
-    _forwarded_count_sources: Mapping[str, _CountSource] = MappingProxyType({})
+    #: The records a read of each count by a call of this view is also noted
+    #: in, by count name, for a view a route built with :meth:`_forwarding`:
+    #: those of the call whose count it is.
+    _forwarded_count_sources: Mapping[str, tuple[_CountSource, ...]] = MappingProxyType({})
 
     def __new__(cls, *args: Any, **kwargs: Any) -> Self:
         # The constructor's arguments are checked here, before ``__init__`` binds
@@ -1621,31 +1645,31 @@ class Function(TrackedTerm, Annotated):
     def _forwarding(
         self,
         controls: Mapping[str, Any],
-        count_sources: Mapping[str, _CountSource | None] | None = None,
+        count_sources: Mapping[str, tuple[_CountSource, ...]] | None = None,
     ) -> Self:
         """This view with *controls* set as :meth:`using` sets them, for a route that forwards its own call's controls.
 
         A route that calls a function on its call's behalf, as ``pushforward``
         calls its map, forwards the controls its own call was given or
         resolved. The counts among them are not given to the view, so a call
-        of the view never warns about them. Instead, a read of a count by the
-        view's call is noted where *count_sources* says, so the call that
-        forwarded the count learns whether it was read. A count that
+        of the view never warns about them. A read of a count by the view's
+        call is also noted in the records *count_sources* names, so the call
+        that forwarded the count learns whether it was read. A count that
         *controls* leaves unset keeps the view's own value, so its read is
-        noted at its source only when neither the view's ``using`` nor the
-        call the source belongs to was given that count: the value read is
-        then no given value, and the note only tells that call which count
-        governed its work.
+        noted in those records only when neither the view's ``using`` nor the
+        first of those calls was given that count: the value read is then no
+        given value, and the note only tells that call which count governed
+        its work.
 
         Parameters
         ----------
         controls : Mapping of str to Any
             The forwarded controls, by name.
-        count_sources : Mapping of str to _CountSource or None, optional
-            Where a read of each count is noted, by count name, with ``None``
-            or an absent name for a count whose reads only the view's own call
-            notes. By default, where a read of the running call's count of the
-            same name is noted.
+        count_sources : Mapping of str to tuple of _CountSource, optional
+            The records a read of each count is also noted in, by count name,
+            with an empty tuple or an absent name for a count whose reads only
+            the view's own call notes. By default, the records a read of the
+            running call's count of the same name is noted in.
 
         Returns
         -------
@@ -1655,17 +1679,17 @@ class Function(TrackedTerm, Annotated):
         forwarding_view = self.using(**controls)
         if count_sources is None:
             count_sources = {
-                count_name: _source_of_count(count_name) for count_name in _COUNT_CONTROLS
+                count_name: _sources_of_count(count_name) for count_name in _COUNT_CONTROLS
             }
         given_counts = set(forwarding_view._given_counts) - controls.keys()
         forwarded_count_sources = {
-            count_name: count_source
-            for count_name, count_source in count_sources.items()
-            if count_source is not None
+            count_name: sources
+            for count_name, sources in count_sources.items()
+            if sources
             and count_name not in given_counts
             and (
                 count_name in controls
-                or count_source.count_name not in count_source.count_reads.given_counts
+                or sources[0].count_name not in sources[0].count_reads.given_counts
             )
         }
         object.__setattr__(forwarding_view, "_given_counts", frozenset(given_counts))
