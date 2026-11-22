@@ -38,11 +38,8 @@ operations and plain Functions alike (VI.0):
   scope makes outside any other call, unless that call's view sets its own;
 - ``num_samples`` passes as ``max_evaluations`` does.
 
-A formula that estimates a summary through a lift, as ``expectation``'s does,
-also spends the summary's resolved ``num_samples`` as the lift's
-``max_evaluations``, since each draw is one evaluation of the map. The call of
-a derived route states the Monte Carlo draws of the constituents it runs, so
-its provenance records their ``num_samples``.
+The call of a derived route states the Monte Carlo draws of the constituents
+it runs, so its provenance records their ``num_samples``.
 
 The scope covers the calls made in the calling thread and in the workers the
 engine dispatches to. A planned conversion follows its parameter's

@@ -219,7 +219,9 @@ class TestConditionalOperations:
     def test_explicit_sampling_twins_run_without_constructing_a_law(self, operation):
         kernel = _Direct()
         args = (lambda y: y,) if operation is expectation else ()
-        options = {"num_samples": 64}
+        # expectation's draws are its lift's evaluations, and a summary's are its own.
+        count = "max_evaluations" if operation is expectation else "num_samples"
+        options = {count: 64}
         options["method"] = "sampling_lift" if operation is expectation else "monte_carlo"
         view = operation.using(**options)
         expected_route = "pushforward_mean" if operation is expectation else "monte_carlo"

@@ -1025,7 +1025,7 @@ class TestExpectation:
             False,
         )
         with workflow_run(seed=6):
-            estimate = expectation.using(num_samples=_DRAWS)(law, lambda x: x**2)
+            estimate = expectation.using(max_evaluations=_DRAWS)(law, lambda x: x**2)
         assert abs(_value(estimate) - 1.0) < 0.1
 
     def test_method_selects_the_sampling_lift_for_a_law_with_a_closed_form(self):
@@ -1044,36 +1044,52 @@ class TestExpectation:
         with pytest.raises(ResolutionError, match="no_such_method"):
             expectation.using(method="no_such_method")(Gaussian("g"), lambda x: x)
 
-    def test_num_samples_is_the_number_of_evaluations_of_the_integrand(self):
+    def test_max_evaluations_is_the_number_of_evaluations_of_the_integrand(self):
         law = Sampler("s")
-        unused = "expectation did not use max_evaluations=2"
-        with pytest.warns(UnusedControlWarning, match=unused):
-            estimate = expectation.using(num_samples=33, max_evaluations=2)(law, lambda x: x)
+        with pytest.warns(UnusedControlWarning, match="Remove num_samples=2 from using"):
+            estimate = expectation.using(max_evaluations=33, num_samples=2)(law, lambda x: x)
         assert law.shapes == [(33,)]
         assert estimate.provenance.metadata["num_samples"] == 33
 
-    def test_num_samples_wins_over_the_integrands_own_max_evaluations(self):
+    def test_the_calls_max_evaluations_wins_over_the_integrands_own(self):
         law = Sampler("s")
         integrand = Function(lambda x: x, label="integrand", max_evaluations=5)
-        expectation.using(num_samples=33)(law, integrand)
+        expectation.using(max_evaluations=33)(law, integrand)
         assert law.shapes == [(33,)]
 
-    def test_the_session_num_samples_sets_the_evaluations_when_the_call_sets_none(self):
-        config.sampling.num_samples = 29
-        config.sampling.max_evaluations = 3
+    def test_the_integrands_own_max_evaluations_applies_when_the_call_sets_none(self):
+        law = Sampler("s")
+        integrand = Function(lambda x: x, label="integrand", max_evaluations=5)
+        expectation(law, integrand)
+        assert law.shapes == [(5,)]
+
+    def test_the_session_max_evaluations_sets_the_evaluations_when_the_call_sets_none(self):
+        config.sampling.max_evaluations = 29
+        config.sampling.num_samples = 3
         law = Sampler("s")
         estimate = expectation(law, lambda x: x)
         assert law.shapes == [(29,)]
         assert estimate.provenance.metadata["num_samples"] == 29
 
-    def test_num_samples_decides_between_enumerating_and_sampling_the_atoms(self):
+    def test_an_expectation_counts_its_draws_as_its_pushforward_does(self):
+        law = Sampler("s")
+        with workflow_run(seed=0):
+            expectation.using(max_evaluations=17)(law, lambda x: x)
+            pushforward.using(max_evaluations=17)(law, lambda x: x)
+        with workflow_run(seed=0):
+            expectation(law, lambda x: x)
+            pushforward(law, lambda x: x)
+        default = config.sampling.max_evaluations
+        assert law.shapes == [(17,), (17,), (default,), (default,)]
+
+    def test_max_evaluations_decides_between_enumerating_and_sampling_the_atoms(self):
         atoms = EmpiricalDistribution(jnp.arange(6.0), output_name="x")
         view = expectation.using(method="pushforward_mean")
-        enumerated = view.using(num_samples=6)(atoms, lambda x: x)
+        enumerated = view.using(max_evaluations=6)(atoms, lambda x: x)
         assert enumerated.provenance.metadata["method"] == "empirical_enumeration"
         assert "num_samples" not in enumerated.provenance.metadata
         with workflow_run(seed=0):
-            sampled = view.using(num_samples=5)(atoms, lambda x: x)
+            sampled = view.using(max_evaluations=5)(atoms, lambda x: x)
         assert sampled.provenance.metadata["method"] == "sampling_lift"
         assert sampled.provenance.metadata["num_samples"] == 5
 
@@ -1201,7 +1217,7 @@ class TestTheIntegrandReceivesDraws:
 
         assert _value(expectation(_atoms(), square)) == pytest.approx(14.0 / 3.0)
         with workflow_run(seed=3):
-            estimate = expectation.using(num_samples=_DRAWS)(Gaussian("g", 1.0), square)
+            estimate = expectation.using(max_evaluations=_DRAWS)(Gaussian("g", 1.0), square)
         assert received and not any(isinstance(x, Distribution) for x in received)
         # E[X^2] = 2 for X ~ N(1, 1); 4000 draws give a standard error of about 0.04.
         assert _value(estimate) == pytest.approx(2.0, abs=0.15)
@@ -1243,14 +1259,14 @@ class TestTheIntegrandReceivesDraws:
             return mean(D)
 
         with workflow_run(seed=0):
-            estimate = expectation.using(num_samples=200)(measure, statistic)
+            estimate = expectation.using(max_evaluations=200)(measure, statistic)
         # The replicate means of the atoms 1, 2, 3 have mean 2 and standard
         # deviation sqrt(2/9), so 200 of them give a standard error of about 0.033.
         assert _value(estimate) == pytest.approx(2.0, abs=0.2)
 
     def test_a_vector_event_is_integrated_coordinatewise(self):
         with workflow_run(seed=0):
-            estimate = expectation.using(num_samples=_DRAWS)(Vector("v"), lambda v: v * v)
+            estimate = expectation.using(max_evaluations=_DRAWS)(Vector("v"), lambda v: v * v)
         # The coordinates have scales 1 and 2; 4000 draws give standard errors
         # of about 0.022 and 0.09 for their second moments.
         np.testing.assert_allclose(jnp.asarray(estimate), [1.0, 4.0], atol=0.3)
@@ -1367,7 +1383,7 @@ class TestTheExactnessOfBothSteps:
 
     def test_an_exact_rule_with_a_monte_carlo_mean_is_approximate(self, exact_to_sampler):
         with workflow_run(seed=0):
-            result = expectation.using(num_samples=_DRAWS)(Gaussian("g"), lambda x: x)
+            result = expectation.using(max_evaluations=_DRAWS)(Gaussian("g"), lambda x: x)
         metadata = result.provenance.metadata
         assert (metadata["method"], metadata["exact"]) == ("exact_to_sampler", False)
         assert exact_to_sampler.pushed.shapes == [(_DRAWS,)]
@@ -1664,21 +1680,21 @@ class TestTheCountsAnOperationReads:
             result = pushforward.using(max_evaluations=10)(Sampler("s"), lambda v: v**2)
         assert result.num_atoms == 10
 
-    def test_expectation_spends_num_samples_so_max_evaluations_warns(self):
+    def test_expectation_reads_max_evaluations_so_num_samples_warns(self):
         law = Sampler("s")
         with workflow_run(seed=0), pytest.warns(UnusedControlWarning) as record:
-            expectation.using(max_evaluations=4)(law, lambda v: v**2)
+            expectation.using(num_samples=4)(law, lambda v: v**2)
         assert _unused_count_messages(record) == [
-            "expectation did not use max_evaluations=4, because the call took Monte Carlo "
-            f"draws, which num_samples={config.sampling.num_samples} counts. "
-            "Set num_samples=4 instead"
+            "expectation did not use num_samples=4, because the call evaluated a function at "
+            f"draws of a distribution, which max_evaluations={config.sampling.max_evaluations} "
+            "counts. Set max_evaluations=4 instead"
         ]
-        assert law.shapes == [(config.sampling.num_samples,)]
+        assert law.shapes == [(config.sampling.max_evaluations,)]
 
-    def test_expectation_reads_the_num_samples_it_spends(self):
+    def test_expectation_reads_the_max_evaluations_it_passes_to_its_lift(self):
         law = Sampler("s")
         with workflow_run(seed=0), _no_unused_count_warning():
-            expectation.using(num_samples=4)(law, lambda v: v**2)
+            expectation.using(max_evaluations=4)(law, lambda v: v**2)
         assert law.shapes == [(4,)]
 
     def test_an_exact_route_reads_no_count(self):

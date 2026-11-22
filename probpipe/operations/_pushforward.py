@@ -25,7 +25,7 @@ from .._messages import unknown_names
 from ..core._batch import Batch, BatchSpec
 from ..core._call_context import (
     _COUNT_CONTROLS,
-    _CountSource,
+    _CountReads,
     _note_count_read,
     _sources_of_count,
 )
@@ -414,11 +414,13 @@ def pushforward(d: Distribution, f: Any, fixed_args: Mapping[str, Any] | None = 
 # ---------------------------------------------------------------------------
 
 #: The engine controls the pushforward forwards to the call of its map when its
-#: caller set them, beside the rule the route selects and its exactness. The
-#: control ``include_inputs`` is not among them, since it would make the result
-#: the law of the map's inputs and outputs together.
+#: caller set them, beside the rule the route selects and its exactness. Both
+#: counts are among them, so a converter of the map's argument takes the
+#: caller's ``num_samples``. The control ``include_inputs`` is not, since it
+#: would make the result the law of the map's inputs and outputs together.
 _FORWARDED_CONTROLS = (
     "max_evaluations",
+    "num_samples",
     "workflow_kind",
     "method_options",
 )
@@ -534,7 +536,7 @@ class _EvaluationRules(_RegistryRoute):
         set_controls = call.operation._options
         return {name: set_controls[name] for name in self._forwarded if name in set_controls}
 
-    def _forwarded_count_sources(self, call: BoundCall) -> dict[str, tuple[_CountSource, ...]]:
+    def _forwarded_count_sources(self, call: BoundCall) -> dict[str, tuple[_CountReads, ...]]:
         """The records a read of each count by the call of the map is also noted in: those of the call's count of the same name.
 
         So a count the caller set on the operation and forwarded to the map is

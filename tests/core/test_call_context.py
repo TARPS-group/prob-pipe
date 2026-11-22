@@ -14,7 +14,6 @@ from probpipe.core._call_context import (
     _collecting_call_accumulators,
     _CountNotingControls,
     _CountReads,
-    _CountSource,
     _merge_noted_into,
     _note_count_read,
     _note_num_samples_used,
@@ -563,12 +562,6 @@ class TestCountReads:
         count_reads.note_read("max_evaluations", 3)
         assert count_reads.unread_given_counts() == {"num_samples": 5}
 
-    def test_a_source_notes_the_read_under_its_own_count_name(self):
-        count_reads = _CountReads("expectation", {"num_samples": 4})
-        _CountSource(count_reads, "num_samples").note_read(4)
-        assert count_reads.read_counts == {"num_samples": 4}
-        assert count_reads.unread_given_counts() == {}
-
     def test_a_pickled_record_keeps_its_counts_and_its_reads(self):
         count_reads = _CountReads("square", {"num_samples": 5})
         count_reads.note_read("max_evaluations", 256)
@@ -581,7 +574,7 @@ class TestCountReads:
         count_reads = _CountReads("mean", {"num_samples": 9, "max_evaluations": 3})
         controls = _CountNotingControls(
             {"num_samples": 9, "max_evaluations": 3, "raw": False},
-            {"num_samples": (_CountSource(count_reads, "num_samples"),)},
+            {"num_samples": (count_reads,)},
         )
         assert dict(controls.peek()) == {"num_samples": 9, "max_evaluations": 3, "raw": False}
         assert controls["raw"] is False
@@ -591,7 +584,7 @@ class TestCountReads:
 
     def test_comparing_noting_controls_reads_no_count(self):
         count_reads = _CountReads("mean", {"num_samples": 9})
-        sources = {"num_samples": (_CountSource(count_reads, "num_samples"),)}
+        sources = {"num_samples": (count_reads,)}
         first = _CountNotingControls({"num_samples": 9}, sources)
         assert first == _CountNotingControls({"num_samples": 9}, sources)
         assert first == {"num_samples": 9}
@@ -605,25 +598,17 @@ class TestCountReads:
         count_reads = _CountReads("mean", {"num_samples": 9})
         call_context = replace(
             current_call_context(),
-            count_sources=MappingProxyType(
-                {"num_samples": (_CountSource(count_reads, "num_samples"),)}
-            ),
+            count_sources=MappingProxyType({"num_samples": (count_reads,)}),
         )
         _merge_noted_into(call_context, (), (), ((count_reads.token, "num_samples", 9),))
         _merge_noted_into(call_context, (), (), (("another-token", "max_evaluations", 3),))
         assert count_reads.read_counts == {"num_samples": 9}
 
     def test_a_read_is_noted_in_every_record_of_its_chain(self):
-        own, upstream = _CountReads("map", {}), _CountReads("expectation", {"num_samples": 4})
-        chain = {
-            "max_evaluations": (
-                _CountSource(own, "max_evaluations"),
-                _CountSource(upstream, "num_samples"),
-            )
-        }
-        _note_count_read("max_evaluations", 4, chain)
+        own, upstream = _CountReads("map", {}), _CountReads("pushforward", {"max_evaluations": 4})
+        _note_count_read("max_evaluations", 4, {"max_evaluations": (own, upstream)})
         assert own.read_counts == {"max_evaluations": 4}
-        assert upstream.read_counts == {"num_samples": 4}
+        assert upstream.read_counts == {"max_evaluations": 4}
 
     def test_outside_every_call_a_read_is_noted_nowhere(self):
         assert current_call_context().count_sources == {}
