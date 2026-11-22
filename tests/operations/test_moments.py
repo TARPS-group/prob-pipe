@@ -20,6 +20,7 @@ import pytest
 from probpipe import (
     ApplicabilityError,
     Bernoulli,
+    DistributionBatch,
     InputSpec,
     Normal,
     NumericArray,
@@ -1751,3 +1752,14 @@ class TestTheCountsAnOperationReads:
         )
         with pytest.warns(UnusedControlWarning, match="mixture did not use max_evaluations=7"):
             mixture.using(max_evaluations=7)(kernel, mixing)
+
+    @pytest.mark.parametrize("executor", ["sequential", "thread", "process"])
+    def test_a_count_read_on_any_executor_is_read_by_the_call(self, executor):
+        laws = DistributionBatch(
+            [Normal("x", 0.0, 1.0), Normal("x", 1.0, 1.0)], "laws", label="laws"
+        )
+        options = {"executor_options": {"max_workers": 2}} if executor == "process" else {}
+        view = mean.using(num_samples=50, method="monte_carlo", executor=executor, **options)
+        with workflow_run(seed=0), _no_unused_count_warning():
+            result = view(laws)
+        assert result.provenance.metadata["evaluations"][0]["executor"] == executor

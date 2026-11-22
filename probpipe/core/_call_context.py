@@ -31,6 +31,7 @@ as its chunk, an ``EvaluationChunk``, holds its call's evaluation context.
 from __future__ import annotations
 
 import threading
+import uuid
 from collections.abc import Iterable, Iterator, Mapping
 from contextlib import contextmanager, nullcontext
 from contextvars import ContextVar
@@ -396,12 +397,10 @@ class _CountReads:
     with the program's other notes and noted again after every run, so a warm
     run, which traces nothing, notes the reads its trace made.
 
-    *Interim implementation detail:* a pickled record arrives in a worker
-    process with what was read so far, and a read noted there stays there.
-    The counts that govern a call's evaluation points are read before the
-    points are dispatched, by the routes, the lift's plan, and the converters
-    of the call's arguments, so no read of a count given to a call is made
-    only in a worker process today.
+    A pickled record arrives in a worker process as a copy with the same
+    token. A read noted there is also noted in the accumulators of the
+    worker's scope, which return with the evaluation points' outcomes, and
+    the calling process notes it again on the record that has its token.
 
     Parameters
     ----------
@@ -409,12 +408,25 @@ class _CountReads:
         The label of the called ``Function``, which the warning names.
     given_counts : Mapping of str to int
         The counts the call's view was given, by name.
+    token : str, optional
+        The record's identity, which a pickled copy keeps; a new one by
+        default.
+
+    Attributes
+    ----------
+    token : str
+        The record's identity, by which a read noted on a copy in a worker
+        process is noted again on the record when the worker's outcomes
+        return (:func:`_merge_noted_into`).
     """
 
-    def __init__(self, function_label: str, given_counts: Mapping[str, int]) -> None:
+    def __init__(
+        self, function_label: str, given_counts: Mapping[str, int], token: str | None = None
+    ) -> None:
         self._lock = threading.Lock()
         self.function_label = function_label
         self.given_counts: Mapping[str, int] = MappingProxyType(dict(given_counts))
+        self.token = uuid.uuid4().hex if token is None else token
         self._read_counts: dict[str, int] = {}
 
     @property
@@ -441,7 +453,7 @@ class _CountReads:
         """Pickle with the label, the given counts, and the counts read so far, and a lock of its own."""
         return (
             _unpickled_count_reads,
-            (self.function_label, dict(self.given_counts), dict(self.read_counts)),
+            (self.function_label, dict(self.given_counts), dict(self.read_counts), self.token),
         )
 
 
@@ -475,10 +487,13 @@ _CountSources = Mapping[str, tuple[_CountSource, ...]]
 
 
 def _unpickled_count_reads(
-    function_label: str, given_counts: Mapping[str, int], read_counts: Mapping[str, int]
+    function_label: str,
+    given_counts: Mapping[str, int],
+    read_counts: Mapping[str, int],
+    token: str,
 ) -> _CountReads:
     """The record that :meth:`_CountReads.__reduce__` pickled."""
-    count_reads = _CountReads(function_label, given_counts)
+    count_reads = _CountReads(function_label, given_counts, token)
     for count_name, count in read_counts.items():
         count_reads.note_read(count_name, count)
     return count_reads
@@ -499,10 +514,15 @@ def _note_count_read(
         The records to note the read in; by default those of the running call,
         and none outside every call.
     """
+    call_context = current_call_context()
     if count_sources is None:
-        count_sources = current_call_context().count_sources
+        count_sources = call_context.count_sources
     for count_source in count_sources.get(count_name, ()):
         count_source.note_read(count)
+        if call_context.num_samples_used is not None:
+            call_context.num_samples_used.note_count_read(
+                (count_source.count_reads.token, count_source.count_name, count)
+            )
 
 
 def _read_count(count_name: str) -> int:
@@ -561,6 +581,14 @@ class _CountNotingControls(Mapping[str, Any]):
     def peek(self) -> Mapping[str, Any]:
         """The controls as a read-only mapping whose lookups note nothing, for passing them on."""
         return self._controls
+
+    def __eq__(self, other: object) -> bool:
+        """Whether *other* holds the same controls; comparing reads no count."""
+        if isinstance(other, _CountNotingControls):
+            other = other.peek()
+        return isinstance(other, Mapping) and dict(self._controls) == dict(other)
+
+    __hash__ = None  # type: ignore[assignment]
 
 
 @dataclass(frozen=True)
@@ -1081,7 +1109,9 @@ class _NumSamplesUsed:
     """The numbers of Monte Carlo draws that the estimates of one call took, which its provenance reports as ``num_samples``.
 
     A route that estimates a value from draws notes their number here, through
-    :func:`_note_num_samples_used`. It differs from the ``num_samples``
+    :func:`_note_num_samples_used`. Each read of a count is noted here too, by
+    the token of the record it was noted in, so a read made in a worker
+    process returns with the outcomes of its evaluation points. It differs from the ``num_samples``
     control, which says how many draws an estimate should take: a call that ran
     no Monte Carlo estimate notes none, and the calls a formula makes may use
     their own counts.
@@ -1112,6 +1142,7 @@ class _NumSamplesUsed:
     def __init__(self, *, collects_calls: bool = False) -> None:
         self._lock = threading.Lock()
         self._num_samples_values: set[int] = set()
+        self._count_reads: set[tuple[str, str, int]] = set()
         self.collects_calls = collects_calls
 
     @property
@@ -1138,6 +1169,17 @@ class _NumSamplesUsed:
         """Note that one Monte Carlo estimate took *num_samples* draws."""
         with self._lock:
             self._num_samples_values.add(num_samples)
+
+    @property
+    def count_reads(self) -> frozenset[tuple[str, str, int]]:
+        """The count reads noted so far, each as the record's token, the count's name there, and its value."""
+        with self._lock:
+            return frozenset(self._count_reads)
+
+    def note_count_read(self, count_read: tuple[str, str, int]) -> None:
+        """Note a read of a count, as the record's token, the count's name there, and its value."""
+        with self._lock:
+            self._count_reads.add(count_read)
 
     def __reduce__(self) -> tuple[Any, ...]:
         """Pickle as a new, empty value with the same ``collects_calls`` and a lock of its own."""
@@ -1281,6 +1323,7 @@ def _collecting_call_accumulators(merge_rule: _MergeRule) -> Iterator[_CallConte
             enclosing_context,
             cast(_NumSamplesUsed, collecting_context.num_samples_used).num_samples_values,
             cast(_EvaluationLog, collecting_context.evaluation_log).set_records,
+            cast(_NumSamplesUsed, collecting_context.num_samples_used).count_reads,
         )
 
 
@@ -1288,14 +1331,31 @@ def _merge_noted_into(
     call_context: _CallContext,
     num_samples_values: Iterable[int],
     set_records: Iterable[_EvaluationSetRecord],
+    count_reads: Iterable[tuple[str, str, int]] = (),
 ) -> None:
-    """Add the numbers of draws and the sets of evaluation points a scope noted to *call_context*'s accumulators.
+    """Add the numbers of draws, the sets of evaluation points, and the count reads a scope noted to *call_context*'s accumulators.
 
-    A context without accumulators, as a ``check``'s, takes none.
+    A context without accumulators, as a ``check``'s, takes none. A count read
+    is also noted again on the record of *call_context*'s count sources that
+    has its token, so a read made on a copy of the record in a worker process
+    reaches the record itself.
     """
+    count_reads = tuple(count_reads)
+    if count_reads:
+        records_by_token = {
+            count_source.count_reads.token: count_source.count_reads
+            for count_sources in call_context.count_sources.values()
+            for count_source in count_sources
+        }
+        for token, count_name, count in count_reads:
+            count_reads_record = records_by_token.get(token)
+            if count_reads_record is not None:
+                count_reads_record.note_read(count_name, count)
     if call_context.num_samples_used is not None:
         for num_samples in num_samples_values:
             call_context.num_samples_used.note(num_samples)
+        for count_read in count_reads:
+            call_context.num_samples_used.note_count_read(count_read)
     if call_context.evaluation_log is not None:
         for set_record in set_records:
             call_context.evaluation_log.record(set_record)

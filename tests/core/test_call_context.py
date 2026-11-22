@@ -3,6 +3,7 @@
 import contextvars
 import pickle
 import threading
+from dataclasses import replace
 from types import MappingProxyType
 
 import jax.numpy as jnp
@@ -14,6 +15,7 @@ from probpipe.core._call_context import (
     _CountNotingControls,
     _CountReads,
     _CountSource,
+    _merge_noted_into,
     _note_count_read,
     _note_num_samples_used,
     _NumSamplesUsed,
@@ -585,6 +587,30 @@ class TestCountReads:
         assert controls["raw"] is False
         assert count_reads.read_counts == {}
         assert controls["num_samples"] == 9
+        assert count_reads.read_counts == {"num_samples": 9}
+
+    def test_comparing_noting_controls_reads_no_count(self):
+        count_reads = _CountReads("mean", {"num_samples": 9})
+        sources = {"num_samples": (_CountSource(count_reads, "num_samples"),)}
+        first = _CountNotingControls({"num_samples": 9}, sources)
+        assert first == _CountNotingControls({"num_samples": 9}, sources)
+        assert first == {"num_samples": 9}
+        assert count_reads.read_counts == {}
+
+    def test_a_pickled_record_keeps_its_token(self):
+        count_reads = _CountReads("square", {"num_samples": 5})
+        assert pickle.loads(pickle.dumps(count_reads)).token == count_reads.token
+
+    def test_a_merged_read_is_noted_on_the_record_with_its_token(self):
+        count_reads = _CountReads("mean", {"num_samples": 9})
+        call_context = replace(
+            current_call_context(),
+            count_sources=MappingProxyType(
+                {"num_samples": (_CountSource(count_reads, "num_samples"),)}
+            ),
+        )
+        _merge_noted_into(call_context, (), (), ((count_reads.token, "num_samples", 9),))
+        _merge_noted_into(call_context, (), (), (("another-token", "max_evaluations", 3),))
         assert count_reads.read_counts == {"num_samples": 9}
 
     def test_a_read_is_noted_in_every_record_of_its_chain(self):
