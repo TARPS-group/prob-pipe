@@ -11,8 +11,11 @@ import pytest
 from probpipe import Function, NumericArrayBatch, config, function
 from probpipe.core._call_context import (
     _collecting_call_accumulators,
+    _CountReads,
+    _CountSource,
     _note_num_samples_used,
     _NumSamplesUsed,
+    _read_count,
     _under_call_context,
     current_call_context,
 )
@@ -541,3 +544,30 @@ class TestTheSessionSnapshot:
         body(1.0)
         assert seen == [1024]
         assert config.sampling.num_samples == 11
+
+
+class TestCountReads:
+    """The record of the counts a call was given and read."""
+
+    def test_the_unread_given_counts_follow_the_order_of_the_two_counts(self):
+        count_reads = _CountReads("square", {"num_samples": 5, "max_evaluations": 3})
+        assert list(count_reads.unread_given_counts()) == ["max_evaluations", "num_samples"]
+        count_reads.note_read("max_evaluations", 3)
+        assert count_reads.unread_given_counts() == {"num_samples": 5}
+
+    def test_a_source_notes_the_read_under_its_own_count_name(self):
+        count_reads = _CountReads("expectation", {"num_samples": 4})
+        _CountSource(count_reads, "num_samples").note_read(4)
+        assert count_reads.read_counts == {"num_samples": 4}
+        assert count_reads.unread_given_counts() == {}
+
+    def test_a_pickled_record_keeps_its_counts_and_its_reads(self):
+        count_reads = _CountReads("square", {"num_samples": 5})
+        count_reads.note_read("max_evaluations", 256)
+        restored = pickle.loads(pickle.dumps(count_reads))
+        assert restored.function_label == "square"
+        assert restored.given_counts == {"num_samples": 5}
+        assert restored.read_counts == {"max_evaluations": 256}
+
+    def test_outside_every_call_a_read_is_noted_nowhere(self):
+        assert _read_count("num_samples", {"num_samples": 9}) == 9

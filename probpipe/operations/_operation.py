@@ -80,7 +80,7 @@ from typing import Any, ClassVar, Protocol, cast, runtime_checkable
 
 from .._messages import unknown_names
 from ..core._array_backend import _event_shape_of, _is_numeric_leaf, _numpy_dtype_of
-from ..core._call_context import _note_num_samples_used
+from ..core._call_context import _note_num_samples_used, _read_count
 from ..core._catalog import EntrySummary, SupportsRegistryCataloging, registry_catalog
 from ..core._dispatch import BaseDispatchRegistry, Feasibility, MethodInfo, ResolutionError
 from ..core._expression import Expression, Named
@@ -1280,7 +1280,7 @@ class _GivenCandidate:
             law, binding_exact = self._bound_law(call)
             operands = {**call.operands, subject_name: law}
             bound = values_to_bound_arguments(call.operation.signature, operands)
-            operation = call.operation.using(**{**call.controls, "exact_only": True})
+            operation = call.operation._forwarding({**call.controls, "exact_only": True})
             report = operation.check(*bound.args, **bound.kwargs)
             if report.feasible is not True:
                 return report
@@ -1299,7 +1299,7 @@ class _GivenCandidate:
         controls = (
             {**call.controls, "exact_only": True} if self._exact_only else dict(call.controls)
         )
-        result = call.operation.using(**controls)(*bound.args, **bound.kwargs)
+        result = call.operation._forwarding(controls)(*bound.args, **bound.kwargs)
         if self._exact_only:
             exact = binding_exact
         else:
@@ -2349,7 +2349,7 @@ def _can_sample(call: BoundCall, result: OutputSpec | None) -> Feasibility:
 
 def _monte_carlo_draws(call: BoundCall, operation_kind: str) -> Any:
     """Workflow-owned draws of the law, recording the call's ``num_samples`` count."""
-    count = call.controls["num_samples"]
+    count = _read_count("num_samples", call.controls)
     draws = _workflow_draws(
         call.operands["d"],
         (count,),

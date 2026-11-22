@@ -65,8 +65,10 @@ import numpy as np
 from ..core._batch import Batch, BatchSpec, _flat_batch_spec
 from ..core._call_context import (
     _collecting_call_accumulators,
+    _CountSource,
     _note_num_samples_used,
     _NumSamplesUsed,
+    _source_of_count,
 )
 from ..core._dispatch import (
     Feasibility,
@@ -1213,6 +1215,11 @@ class _PushforwardMean(_EvaluationRules):
     def _forwarded_controls(self, call: BoundCall) -> dict[str, Any]:
         """The controls the caller set, with the call's ``num_samples`` as the map's ``max_evaluations``."""
         return super()._forwarded_controls(call) | {"max_evaluations": call.controls["num_samples"]}
+
+    def _forwarded_count_sources(self, call: BoundCall) -> dict[str, _CountSource | None]:
+        """Where the call's ``num_samples`` is read, for both counts of the map, since it spends it as the map's ``max_evaluations``."""
+        num_samples_source = _source_of_count("num_samples")
+        return {"max_evaluations": num_samples_source, "num_samples": num_samples_source}
 
     @property
     def condition(self) -> str:

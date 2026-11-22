@@ -26,6 +26,7 @@ from probpipe import (
     NumericRecordBatch,
     Record,
     RecordSpec,
+    UnusedControlWarning,
     condition_on,
     conditional_distribution,
     config,
@@ -1619,3 +1620,65 @@ class TestASummaryBindsWhereADrawBinds:
         predictive = condition_on((likelihood & prior), mean(posterior))
         # The posterior mean of mu is 2, and the kernel's mean is mu in each coordinate.
         np.testing.assert_allclose(np.asarray(mean(predictive)), [2.0, 2.0, 2.0], rtol=1e-6)
+
+
+def _unused_count_messages(record: Any) -> list[str]:
+    return [
+        str(entry.message) for entry in record if issubclass(entry.category, UnusedControlWarning)
+    ]
+
+
+class TestTheCountsAnOperationReads:
+    """An operation's call warns for each count its ``using`` view set that nothing it ran read."""
+
+    def test_pushforward_reads_max_evaluations_so_num_samples_warns(self):
+        with workflow_run(seed=0), pytest.warns(UnusedControlWarning) as record:
+            result = pushforward.using(num_samples=10)(Sampler("s"), lambda v: v**2)
+        assert _unused_count_messages(record) == [
+            "pushforward did not use num_samples=10, because the call evaluates a function at "
+            f"draws of a law, which max_evaluations={config.sampling.max_evaluations} counts. "
+            "Set max_evaluations=10 instead"
+        ]
+        assert result.num_atoms == config.sampling.max_evaluations
+
+    def test_pushforward_reads_the_max_evaluations_it_forwards_to_the_map(self):
+        with workflow_run(seed=0):
+            result = pushforward.using(max_evaluations=10)(Sampler("s"), lambda v: v**2)
+        assert result.num_atoms == 10
+
+    def test_expectation_spends_num_samples_so_max_evaluations_warns(self):
+        law = Sampler("s")
+        with workflow_run(seed=0), pytest.warns(UnusedControlWarning) as record:
+            expectation.using(max_evaluations=4)(law, lambda v: v**2)
+        assert _unused_count_messages(record) == [
+            "expectation did not use max_evaluations=4, because the call takes Monte Carlo "
+            f"draws, which num_samples={config.sampling.num_samples} counts. "
+            "Set num_samples=4 instead"
+        ]
+        assert law.shapes == [(config.sampling.num_samples,)]
+
+    def test_expectation_reads_the_num_samples_it_spends(self):
+        law = Sampler("s")
+        with workflow_run(seed=0):
+            expectation.using(num_samples=4)(law, lambda v: v**2)
+        assert law.shapes == [(4,)]
+
+    def test_an_exact_route_reads_no_count(self):
+        with pytest.warns(UnusedControlWarning) as record:
+            mean.using(num_samples=500)(Gaussian("g", 2.0))
+        assert _unused_count_messages(record) == [
+            "mean did not use num_samples=500, because the call took no Monte Carlo draws"
+        ]
+
+    def test_a_count_the_formula_reads_is_read_by_the_derived_call(self):
+        law = Sampler("s")
+        standard_deviation.using(num_samples=21)(law)
+        assert law.shapes == [(21,)]
+
+    def test_a_derived_call_whose_formula_reads_no_count_warns_once_under_its_own_name(self):
+        with pytest.warns(UnusedControlWarning) as record:
+            standard_deviation.using(num_samples=21)(Gaussian("g", 2.0))
+        assert _unused_count_messages(record) == [
+            "standard_deviation did not use num_samples=21, because the call took no Monte "
+            "Carlo draws"
+        ]

@@ -2144,6 +2144,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A count a call does not use warns.** A call whose `using` view sets
+  `max_evaluations` or `num_samples` that nothing the call runs reads warns
+  once with the new `UnusedControlWarning`, and says which count to set
+  instead when the call read the other one. Before,
+  `pushforward.using(num_samples=10)(x, square)` returned 256 draws without a
+  word. Now it warns that `pushforward did not use num_samples=10` and says to
+  set `max_evaluations=10` instead. A count set at construction, in a `config`
+  block, or as the session's value never warns. Turn the warning into an error
+  with `warnings.simplefilter("error", probpipe.UnusedControlWarning)`.
+
 - **Monte Carlo marginals.** `marginal(d, paths)` estimates a standalone
   marginal from joint samples when no exact marginal is available. Set the
   count with `marginal.using(num_samples=4096)(d, paths)`. The empirical result

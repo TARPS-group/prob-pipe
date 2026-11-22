@@ -12,6 +12,9 @@ Provides:
     and :func:`_open_call_context`, which runs one call in its own context;
   - :class:`_ExecutionChoice`, the executor a call chose and its options, and
     :class:`_NamedExecutorUse`, whether a named executor ran anything;
+  - :class:`_CountReads` and :class:`_CountSource`, which of a call's two
+    counts the code it runs read, with :func:`_read_count`,
+    :func:`_note_count_read`, and :func:`_source_of_count`;
   - :class:`_NumSamplesUsed` and :class:`_EvaluationLog`, the call's two
     accumulators: the numbers of Monte Carlo draws its estimates took, and the
     sets of evaluation points it ran, with :func:`_collecting_call_accumulators`
@@ -57,6 +60,12 @@ _NO_CONFIG_BLOCKS: Mapping[str, Mapping[str, Any]] = MappingProxyType({})
 _NO_CONTROLS: Mapping[str, Any] = MappingProxyType({})
 _NO_SESSION_CONFIG_VALUES: Mapping[str, Mapping[str, Any]] = MappingProxyType({})
 _NO_JAX_SETTINGS: Mapping[str, Any] = MappingProxyType({})
+
+#: The two count controls, ``max_evaluations`` and ``num_samples``, which a
+#: derived route passes down and whose reads a call notes.
+_COUNT_CONTROLS = ("max_evaluations", "num_samples")
+
+_NO_COUNT_SOURCES: Mapping[str, _CountSource] = MappingProxyType({})
 
 #: The JAX settings that change what a computation returns, which a root call
 #: holds fixed and a worker process applies before it unpickles any work.
@@ -364,6 +373,137 @@ class _NamedExecutorUse:
             self._enclosing.note_ran_elsewhere()
 
 
+class _CountReads:
+    """Which of one call's two counts the code that runs for the call read, and the counts its view was given.
+
+    A count is *given* to a call when the ``using`` view the call runs on sets
+    it. A count is *read* when code that runs for the call looks its value up
+    to decide what the call computes: a lift's plan reads ``max_evaluations``,
+    and a Monte Carlo route or a converter that draws reads ``num_samples``.
+    The read of a count that a derived route passed down, or that a route
+    forwarded to the map it calls, is a read by the call that passed or
+    forwarded it, which the reading call finds through its
+    :class:`_CountSource`. A call that succeeds warns for each count it was
+    given and did not read.
+
+    Every call creates one when it opens. The calls that read on its behalf
+    share it, as worker threads do, so its contents are guarded by a lock. A
+    pickled one arrives in a worker process with what was read so far, and a
+    read noted there stays there.
+
+    Parameters
+    ----------
+    function_label : str
+        The label of the called ``Function``, which the warning names.
+    given_counts : Mapping of str to int
+        The counts the call's view was given, by name.
+    """
+
+    def __init__(self, function_label: str, given_counts: Mapping[str, int]) -> None:
+        self._lock = threading.Lock()
+        self.function_label = function_label
+        self.given_counts: Mapping[str, int] = MappingProxyType(dict(given_counts))
+        self._read_counts: dict[str, int] = {}
+
+    @property
+    def read_counts(self) -> Mapping[str, int]:
+        """The counts read so far, each with the value read, by name."""
+        with self._lock:
+            return MappingProxyType(dict(self._read_counts))
+
+    def note_read(self, count_name: str, count: int) -> None:
+        """Note that code running for the call read the count *count_name*, whose value is *count*."""
+        with self._lock:
+            self._read_counts.setdefault(count_name, count)
+
+    def unread_given_counts(self) -> dict[str, int]:
+        """The given counts that nothing read, by name, in the order of the two counts."""
+        with self._lock:
+            return {
+                count_name: self.given_counts[count_name]
+                for count_name in _COUNT_CONTROLS
+                if count_name in self.given_counts and count_name not in self._read_counts
+            }
+
+    def __reduce__(self) -> tuple[Any, ...]:
+        """Pickle with the label, the given counts, and the counts read so far, and a lock of its own."""
+        return (
+            _unpickled_count_reads,
+            (self.function_label, dict(self.given_counts), dict(self.read_counts)),
+        )
+
+
+@dataclass(frozen=True)
+class _CountSource:
+    """Where a read of one of a call's counts is noted: a call's record, and the count's name there.
+
+    The name differs from the count read where a route spends one count as
+    another, as ``expectation`` spends its ``num_samples`` as the
+    ``max_evaluations`` of the map it lifts.
+
+    Attributes
+    ----------
+    count_reads : _CountReads
+        The record of the call whose count it is.
+    count_name : str
+        The count's name in that call, ``max_evaluations`` or ``num_samples``.
+    """
+
+    count_reads: _CountReads
+    count_name: str
+
+    def note_read(self, count: int) -> None:
+        """Note in the record that the count, whose value is *count*, was read."""
+        self.count_reads.note_read(self.count_name, count)
+
+
+def _unpickled_count_reads(
+    function_label: str, given_counts: Mapping[str, int], read_counts: Mapping[str, int]
+) -> _CountReads:
+    """The record that :meth:`_CountReads.__reduce__` pickled."""
+    count_reads = _CountReads(function_label, given_counts)
+    for count_name, count in read_counts.items():
+        count_reads.note_read(count_name, count)
+    return count_reads
+
+
+def _read_count(count_name: str, controls: Mapping[str, Any] | None = None) -> int:
+    """The running call's count *count_name*, noting the read in the record its source names.
+
+    Parameters
+    ----------
+    count_name : {"max_evaluations", "num_samples"}
+        The count to read.
+    controls : Mapping of str to Any, optional
+        The running call's resolved controls, where the caller holds them;
+        the call context's ``resolved_controls`` by default.
+
+    Returns
+    -------
+    int
+        The count's value.
+    """
+    count = (current_call_context().resolved_controls if controls is None else controls)[count_name]
+    _note_count_read(count_name, count)
+    return count
+
+
+def _note_count_read(count_name: str, count: int) -> None:
+    """Note that the running call read its count *count_name*, whose value *count* the caller holds.
+
+    The read is noted in the record that the count's source names, and
+    nowhere outside every call.
+    """
+    count_source = current_call_context().count_sources.get(count_name)
+    if count_source is not None:
+        count_source.note_read(count)
+
+
+def _source_of_count(count_name: str) -> _CountSource | None:
+    """Where a read of the running call's count *count_name* is noted, which a route forwards with it."""
+    return current_call_context().count_sources.get(count_name)
+
+
 @dataclass(frozen=True)
 class _CallContext:
     """The per-call state that the code a call runs reads, wherever it runs.
@@ -481,6 +621,15 @@ class _CallContext:
     forbids_workflow_randomness : bool
         Whether a workflow-owned draw is forbidden in this evaluation, carried
         into every executor worker of an embedded call.
+    count_reads : _CountReads or None
+        The running call's own record of the counts it was given and read,
+        which it warns from when it succeeds. ``None`` outside every call.
+    count_sources : Mapping[str, _CountSource]
+        Where a read of each of the running call's two counts is noted, by
+        count name: the call's own record, or, for a count a derived route
+        passed down or a route forwarded, the record of the call that passed
+        or forwarded it. A child call derives its own. Empty outside every
+        call.
     """
 
     config_blocks: Mapping[str, Mapping[str, Any]] = _NO_CONFIG_BLOCKS
@@ -496,6 +645,8 @@ class _CallContext:
     jax_settings: Mapping[str, Any] = _NO_JAX_SETTINGS
     embedded_calls: _EmbeddedCallState | None = None
     forbids_workflow_randomness: bool = False
+    count_reads: _CountReads | None = None
+    count_sources: Mapping[str, _CountSource] = _NO_COUNT_SOURCES
 
     def with_config_block(self, config_values: Mapping[str, Mapping[str, Any]]) -> _CallContext:
         """This context under one more ``config`` block, which sets *config_values*.
@@ -613,6 +764,8 @@ class _CallContext:
         execution_choice: _ExecutionChoice = _AUTOMATIC_SELECTION,
         session_config_values: Mapping[str, Mapping[str, Any]] | None = None,
         jax_settings: Mapping[str, Any] | None = None,
+        count_reads: _CountReads | None = None,
+        count_sources: Mapping[str, _CountSource] | None = None,
     ) -> _CallContext:
         """The context of a call opened in this context, which it derives and does not install.
 
@@ -644,6 +797,12 @@ class _CallContext:
         jax_settings : Mapping of str to Any, optional
             The JAX settings :func:`_jax_settings_snapshot` took, given only for
             a root call.
+        count_reads : _CountReads, optional
+            The call's own record of the counts it was given and read; none by
+            default.
+        count_sources : Mapping of str to _CountSource, optional
+            Where a read of each of the call's counts is noted, by count name;
+            none by default.
 
         Returns
         -------
@@ -675,6 +834,12 @@ class _CallContext:
             ),
             jax_settings=(
                 self.jax_settings if jax_settings is None else MappingProxyType(dict(jax_settings))
+            ),
+            count_reads=count_reads,
+            count_sources=(
+                _NO_COUNT_SOURCES
+                if count_sources is None
+                else MappingProxyType(dict(count_sources))
             ),
         )
 

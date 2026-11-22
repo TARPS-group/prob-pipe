@@ -50,6 +50,7 @@ from ..core._batch import Batch, BatchSpec, _flat_batch_spec
 from ..core._call_context import (
     _jax_tracing_active,
     _jax_transformation_active,
+    _note_count_read,
     _NumSamplesUsed,
     current_call_context,
 )
@@ -1259,13 +1260,21 @@ def _lifted_call_stochastic_plan(
     resolved_controls: Mapping[str, Any],
     route_name: str | None,
 ) -> _plan.StochasticPlan | None:
-    """The plan of the laws a lifted call draws from, which enumerates every group unless *route_name* samples."""
-    return _plan.build_stochastic_plan(
+    """The plan of the laws a lifted call draws from, which enumerates every group unless *route_name* samples.
+
+    A call that lifts a law has a plan, which its ``max_evaluations`` bounds,
+    so the read of the count is noted; a call that lifts no law has none.
+    """
+    max_evaluations = resolved_controls["max_evaluations"]
+    stochastic_plan = _plan.build_stochastic_plan(
         argument_values,
         broadcast_plan,
-        resolved_controls["max_evaluations"],
+        max_evaluations,
         enumerate_every_group=route_name != "sampling_lift",
     )
+    if stochastic_plan is not None:
+        _note_count_read("max_evaluations", max_evaluations)
+    return stochastic_plan
 
 
 def _lifted_point_evaluator(

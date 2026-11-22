@@ -23,6 +23,7 @@ import jax
 
 from .._messages import unknown_names
 from ..core._batch import Batch, BatchSpec
+from ..core._call_context import _COUNT_CONTROLS, _CountSource, _source_of_count
 from ..core._dispatch import Feasibility, ResolutionError
 from ..core._execution_claims import TRACING_ERRORS, spec_stand_in
 from ..core._record_batch import _batch_over
@@ -515,6 +516,15 @@ class _EvaluationRules(_RegistryRoute):
         set_controls = call.operation._options
         return {name: set_controls[name] for name in self._forwarded if name in set_controls}
 
+    def _forwarded_count_sources(self, call: BoundCall) -> dict[str, _CountSource | None]:
+        """Where a read of each count by the call of the map is noted: where the call's count of the same name is.
+
+        So a count the caller set on the operation and forwarded to the map is
+        read when the map's call reads it, and the operation's call learns how
+        many times the map was evaluated even when the caller set no count.
+        """
+        return {count_name: _source_of_count(count_name) for count_name in _COUNT_CONTROLS}
+
     def probe(
         self, call: BoundCall, result: OutputSpec | None, *, method: str | None, exact_only: bool
     ) -> Feasibility:
@@ -563,6 +573,13 @@ class _EvaluationRules(_RegistryRoute):
                 controls["exact_only"] = True
             if method is not None:
                 controls["method"] = method
+            # The kernel applies the forwarded counts each time its inputs are
+            # bound, so the call has read them.
+            count_sources = self._forwarded_count_sources(call)
+            for count_name in controls.keys() & set(_COUNT_CONTROLS):
+                count_source = count_sources.get(count_name)
+                if count_source is not None:
+                    count_source.note_read(controls[count_name])
             return _PushforwardKernel(
                 call.operands["d"],
                 _as_function(call.operands["f"]),
@@ -574,7 +591,8 @@ class _EvaluationRules(_RegistryRoute):
         forwarded.update(exact_only=exact_only, include_inputs=False)
         if method is not None:
             forwarded["method"] = method
-        return _call_at(mapped.using(**forwarded), mapped, parameter, d, fixed)
+        forwarding_map = mapped._forwarding(forwarded, self._forwarded_count_sources(call))
+        return _call_at(forwarding_map, mapped, parameter, d, fixed)
 
 
 def _mapped_sample(self: Any, given: Any, key: Any, sample_shape: tuple[int, ...] = ()) -> Any:
@@ -691,7 +709,8 @@ class _PushforwardKernel(ConditionalDistribution):
 
     def _finish(self, source: Any, controls: Any, *, check: bool = False) -> Any:
         """Push the bound source forward, retaining a kernel for partial inputs."""
-        operation = pushforward.using(**controls)
+        # The call that built the kernel noted the reads of its counts already.
+        operation = pushforward._forwarding(controls, count_sources={})
         return (
             operation.check(source, self._map, self._fixed)
             if check
