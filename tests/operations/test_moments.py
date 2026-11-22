@@ -18,6 +18,7 @@ import pytest
 from probpipe import (
     ApplicabilityError,
     Bernoulli,
+    DistributionBatch,
     InputSpec,
     Normal,
     NumericArray,
@@ -555,23 +556,70 @@ class TestCrossCovariance:
 
     def test_a_law_and_its_part_take_the_columns_of_the_part(self):
         law = _correlated_record()
+        x, y = np.asarray(law["x"].raw.atoms.raw), np.asarray(law["y"].raw.atoms.raw)
         np.testing.assert_allclose(
-            np.asarray(cov(law, law["y"])), np.asarray(cov(law))[:, 2:], rtol=1e-6
+            np.asarray(cov(law, law["y"])), _biased_cross_cov(np.hstack([x, y]), y), rtol=1e-5
+        )
+
+    def test_nested_and_overlapping_paths_take_their_own_coordinates(self):
+        rng = np.random.default_rng(4)
+        a, b, c = rng.normal(size=(30, 2)), rng.normal(size=(30,)), rng.normal(size=(30, 3))
+        law = EmpiricalDistribution(
+            NumericRecordBatch(
+                {"a": jnp.asarray(a), "g": {"b": jnp.asarray(b), "c": jnp.asarray(c)}},
+                level_names="draw",
+            )
+        )
+        group = np.hstack([b[:, None], c])
+        np.testing.assert_allclose(
+            np.asarray(cov(law["g/c"], law["a"])), _biased_cross_cov(c, a), rtol=1e-5
+        )
+        np.testing.assert_allclose(
+            np.asarray(cov(law["g"], law["g/c"])), _biased_cross_cov(group, c), rtol=1e-5
         )
 
     def test_a_rename_and_a_relabeled_copy_read_the_coordinates_they_were_made_from(self):
         law = _correlated_record()
-        expected = np.asarray(cov(law["y"], law["x"]))
+        x, y = np.asarray(law["x"].raw.atoms.raw), np.asarray(law["y"].raw.atoms.raw)
+        expected = _biased_cross_cov(y, x)
         renamed = cov(law["y"], law.rename(x="u")["u"])
         relabeled = cov(law.with_label("copy")["y"], law["x"])
         assert _route(renamed) == _route(relabeled) == "coupled_marginals"
-        np.testing.assert_allclose(np.asarray(renamed), expected)
-        np.testing.assert_allclose(np.asarray(relabeled), expected)
+        np.testing.assert_allclose(np.asarray(renamed), expected, rtol=1e-5)
+        np.testing.assert_allclose(np.asarray(relabeled), expected, rtol=1e-5)
+
+    def test_exact_only_keeps_coupled_marginals_of_an_exact_law(self):
+        law = _correlated_record()
+        block = cov.using(exact_only=True)(law["y"], law["x"])
+        assert _route(block) == "coupled_marginals"
+
+    def test_coupled_marginals_of_a_law_that_only_samples_are_estimated_from_its_draws(self):
+        joint = _dependent_joint()
+        with workflow_run(seed=0):
+            block = cov.using(num_samples=_DRAWS)(joint["y"], joint["mu"])
+        assert _route(block) == "coupled_marginals"
+        assert block.provenance.metadata["exact"] is False
+        assert block.provenance.metadata["num_samples"] == _DRAWS
+        # Cov(mu + 1, mu) = Var(mu) = 1. Observed across seeds 0-5 with 4000
+        # draws: errors 0.003-0.065.
+        np.testing.assert_allclose(np.asarray(block), [[1.0]], atol=0.15)
+
+    def test_a_batch_element_reads_its_stored_law(self):
+        first, second = Normal("a", 0.0, 1.0), Normal("a", 1.0, 2.0)
+        laws = DistributionBatch([first, second], level_names="k")
+        np.testing.assert_allclose(np.asarray(cov(laws[0], first)), [[1.0]])
+        np.testing.assert_allclose(np.asarray(cov(laws[0], laws[1])), [[0.0]])
+
+    def test_two_batches_of_laws_pair_their_elements(self):
+        laws = DistributionBatch([Normal("a", 0.0, 1.0), Normal("a", 1.0, 2.0)], level_names="k")
+        np.testing.assert_allclose(np.asarray(cov(laws, laws)).ravel(), [1.0, 4.0])
+        np.testing.assert_allclose(np.asarray(cov(Normal("g", 0.0, 1.0), laws)).ravel(), [0.0, 0.0])
 
     def test_coupled_marginals_of_a_gaussian_joint_are_exact(self):
         joint = Normal("a", 0.0, 1.0) & Normal("b", 0.0, 2.0)
         whole_and_part = cov(joint, joint["b"])
         assert _route(whole_and_part) == "coupled_marginals"
+        assert whole_and_part.provenance.metadata["exact"] is True
         np.testing.assert_allclose(np.asarray(whole_and_part), [[0.0], [4.0]])
 
     def test_the_same_law_twice_is_its_covariance(self):
@@ -591,8 +639,14 @@ class TestCrossCovariance:
     def test_laws_that_share_a_factor_but_are_drawn_independently_are_refused(self):
         a = Normal("a", 0.0, 1.0)
         joint = a & Normal("b", 0.0, 2.0)
-        with pytest.raises(ResolutionError, match="both hold the law"):
+        with pytest.raises(ResolutionError, match="both depend on the law over 'a'"):
             cov(joint["a"], a)
+
+    def test_parts_of_two_joints_that_share_a_factor_are_refused(self):
+        a = Normal("a", 0.0, 1.0)
+        first, second = a & Normal("b", 0.0, 1.0), a & Normal("c", 0.0, 1.0)
+        with pytest.raises(ResolutionError, match="both depend on the law over 'a'"):
+            cov(first["b"], second["c"])
 
     def test_a_transform_and_its_empirical_base_take_the_exact_lift(self):
         import tensorflow_probability.substrates.jax.bijectors as tfb
@@ -645,8 +699,7 @@ class TestCrossCovariance:
 
     def test_the_label_names_both_draws(self):
         law = _correlated_record()
-        label = cov(law["y"], law["x"]).label
-        assert label.startswith("ℂ[y ~ ") and ", x ~ " in label
+        assert cov(law["y"], law["x"]).label == f"ℂ[y ~ {law.label}, x ~ {law.label}]"
 
     def test_the_second_law_requires_a_numeric_event(self):
         with pytest.raises(ApplicabilityError, match="numeric value"):
@@ -657,7 +710,7 @@ class TestCrossCovariance:
         joint = a & Normal("b", 0.0, 2.0)
         report = cov.check(joint["a"], a)
         assert report.selected.feasible is False
-        assert "both hold the law" in report.selected.description
+        assert "both depend on the law over 'a'" in report.selected.description
 
 
 class TestQuantile:

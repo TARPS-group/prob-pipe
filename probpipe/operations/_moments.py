@@ -62,7 +62,7 @@ records.
 from __future__ import annotations
 
 import inspect
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from contextlib import suppress
 from dataclasses import dataclass
 from math import prod
@@ -118,7 +118,7 @@ from ..distributions._capabilities import (
 from ..distributions._distribution import Distribution, DistributionSpec
 from ..distributions._empirical import EmpiricalDistribution
 from ..distributions._factored import _raw_record
-from ..distributions._merge import _coupled_part_pairs, _shown
+from ..distributions._merge import _coupled_part_pairs
 from ..distributions._views import (
     CoupledMarginal,
     _coordinate_range,
@@ -130,6 +130,7 @@ from ..functions._call import ApplicabilityError, presented_arguments
 from ..functions._descendants import _distribution_root
 from ..functions._resolution import PointReport, RouteOutcome, check_point, selected, settled
 from ..functions._result import SAMPLE_LEVEL
+from ..functions._rules import _FORWARDED_CONTROLS
 from ..values import Function, FunctionSpec
 from ._operation import (
     BoundCall,
@@ -325,9 +326,13 @@ def _cov_result(d1: DistributionSpec, d2: DistributionSpec | None) -> OutputSpec
     if None in sizes:
         return OutputSpec(**{name: None})
     rows, columns = sizes[0], sizes[-1]
+    return OutputSpec(**{name: NumericArraySpec((rows, columns), _cov_dtype(events))})
+
+
+def _cov_dtype(events: Sequence[TermSpec]) -> Any:
+    """The floating dtype every leaf of *events* shares, or None when they differ or are unset."""
     dtypes = {_floating(leaf.dtype) for event in events for leaf in _array_leaves(event)}
-    dtype = dtypes.pop() if len(dtypes) == 1 else None
-    return OutputSpec(**{name: NumericArraySpec((rows, columns), dtype)})
+    return dtypes.pop() if len(dtypes) == 1 else None
 
 
 def _quantile_result(d: DistributionSpec, q: TermSpec) -> OutputSpec:
@@ -1132,7 +1137,11 @@ def standard_deviation(d: Distribution):
     return _root(variance.using(raw=True)(d))
 
 
-@operation(result=_cov_result, applicability_checks=(_numeric_events,))
+@operation(
+    result=_cov_result,
+    applicability_checks=(_numeric_events,),
+    roles={"d2": (DistributionSpec,)},
+)
 def cov(d1: Distribution, d2: Distribution | None = None):
     """The covariance of the flattened draw of ``X1 ~ d1``, or the cross-covariance of ``X1`` and ``X2 ~ d2``.
 
@@ -1146,8 +1155,8 @@ def cov(d1: Distribution, d2: Distribution | None = None):
     as two coupled marginals ``d["y"]`` and ``d["x"]``, are drawn together, and
     two unrelated laws are drawn independently, so their block is zero. It is
     the block of rows ``X1`` and columns ``X2`` of the covariance of the two
-    draws taken together, as ``xarray.cov(a, b)`` is, and not the covariance
-    of the stacked draws that ``numpy.cov(x, y)`` returns. An omitted *d2*,
+    draws taken together, which is the off-diagonal block of the matrix that
+    ``numpy.cov`` returns for the stacked draws. An omitted *d2*,
     or ``d2`` that is *d1* itself, gives the covariance of *d1*.
 
     Two laws whose draws are coordinates of one law's draws, as coupled
@@ -1288,8 +1297,12 @@ def _read_coordinates(law: Distribution) -> _CoordinatesIn | None:
     if copied is not None:
         made_from, renames = copied
         parent = _coordinates_in_root(made_from)
-        if parent is None:
-            return None
+        if parent is None or renames.keeps_paths:
+            return parent
+        if isinstance(made_from.event_spec.term_spec, BatchSpec):
+            # A law over a batch has no paths below its output, so a rename
+            # moves only that output's name and keeps every coordinate.
+            return parent
         order = renames._coordinate_order
         if order is None:
             return parent
@@ -1376,7 +1389,7 @@ class _CoupledMarginals(_DelegatingRoute):
             return Feasibility(False, _ONE_LAW)
         first, second = (_coordinates_in_root(law) for law in laws)
         if first is None or second is None or first.root is not second.root:
-            return Feasibility(False, "d1 and d2 do not read coordinates of one law")
+            return Feasibility(False, "d1 and d2 are not parts of one law")
         joint = _joint_selection(first.root, {*first.indices, *second.indices})
         if isinstance(joint, CoupledMarginal):
             in_joint = {index: position for position, index in enumerate(joint._coordinates())}
@@ -1445,20 +1458,20 @@ class _CoupledMarginals(_DelegatingRoute):
         )
 
 
-def _shared_part(d1: Distribution, d2: Distribution) -> tuple[Distribution, Distribution] | None:
-    """A law shared by the root ancestors of *d1* and *d2*, with the root that holds it, or None.
+def _shared_part(d1: Distribution, d2: Distribution) -> Distribution | None:
+    """A law that the root ancestors of *d1* and *d2* share, or None.
 
     The root ancestors share a law when a factor of one, at any depth, has
     the root ancestor of a factor of the other, as a merge reads coupling.
+    The law returned is the smaller of the two coupled factors: the one that
+    is not a whole root ancestor, when one of them is.
     """
     roots = (_distribution_root(d1), _distribution_root(d2))
     pairs = _coupled_part_pairs(*roots)
     if not pairs:
         return None
     first_part, second_part, _ = pairs[0]
-    shared = second_part if first_part is roots[0] else first_part
-    holder = roots[0] if shared is not roots[0] else roots[1]
-    return shared, holder
+    return second_part if first_part is roots[0] else first_part
 
 
 def _independent_check(call: BoundCall, result: OutputSpec | None) -> Feasibility:
@@ -1472,16 +1485,15 @@ def _independent_check(call: BoundCall, result: OutputSpec | None) -> Feasibilit
     if laws is None:
         return Feasibility(False, _ONE_LAW)
     d1, d2 = laws
-    root = _distribution_root(d1)
-    if root is _distribution_root(d2):
-        return Feasibility(False, f"d1 and d2 are drawn together from {_shown(root)}")
+    if _distribution_root(d1) is _distribution_root(d2):
+        return Feasibility(False, "d1 and d2 are drawn together")
     shared = _shared_part(d1, d2)
     if shared is not None:
-        law, holder = shared
         return Feasibility(
             False,
-            f"d1 and d2 both hold the law {_shown(law)}, but they are drawn independently. "
-            f"Take both from one law, as coupled marginals of {_shown(holder)}",
+            f"d1 and d2 both depend on the law over "
+            f"{', '.join(repr(name) for name in shared.event_spec.outputs)}, but they are "
+            f"drawn independently. Index both from one joint law that holds them",
             actionable=True,
         )
     for name, law in (("d1", d1), ("d2", d2)):
@@ -1495,12 +1507,11 @@ def _independent_cov(call: BoundCall, result: OutputSpec | None) -> Any:
     d1, d2 = call.operands["d1"], call.operands["d2"]
     events = (d1.event_spec.term_spec, d2.event_spec.term_spec)
     rows, columns = (cast(int, _flat_size(event)) for event in events)
-    dtypes = {_floating(leaf.dtype) for event in events for leaf in _array_leaves(event)}
-    dtype = dtypes.pop() if len(dtypes) == 1 and None not in dtypes else jnp.result_type(float)
-    return jnp.zeros((rows, columns), dtype=dtype)
+    dtype = _cov_dtype(events)
+    return jnp.zeros((rows, columns), dtype=jnp.result_type(float) if dtype is None else dtype)
 
 
-def _pair_of_draws(d1, d2) -> dict[str, Any]:  # type: ignore[no-untyped-def]
+def _pair_of_draws(d1, d2) -> dict[str, Any]:
     """The record of the two draws, under the names ``d1`` and ``d2``.
 
     The parameters are unannotated, so a law passed to either is lifted and
@@ -1511,6 +1522,38 @@ def _pair_of_draws(d1, d2) -> dict[str, Any]:  # type: ignore[no-untyped-def]
 
 #: The map whose lift over two laws draws them as a lift draws them, which ``joint_lift`` calls.
 _PAIR_OF_DRAWS = function(_pair_of_draws, traceable=True)
+
+
+#: The controls a route that lifts a map forwards to it, besides the
+#: ``max_evaluations`` that the call's ``num_samples`` gives.
+_LIFT_FORWARDED = tuple(name for name in _FORWARDED_CONTROLS if name != "max_evaluations")
+
+
+def _lift_report(rule: Feasibility, exact_only: bool, deferred: str) -> Feasibility:
+    """The report of a route that lifts a map by *rule* and then runs a summary on the law, deferred to the run.
+
+    Without *exact_only*, an exact rule leaves the route's exactness open,
+    since the summary's route is chosen only once the law exists.
+    """
+    if rule.feasible is not True:
+        return rule
+    exact = rule.exact if exact_only or rule.exact is False else None
+    return PointReport(True, method=rule.method_name, exact=exact, deferred=(deferred,))
+
+
+def _steps_exactness(*steps: Any) -> bool | None:
+    """The exactness of a result computed in *steps*: exact when each step's provenance records it."""
+    recorded = tuple(_recorded_exactness(step) for step in steps)
+    if False in recorded:
+        return False
+    return True if all(step is True for step in recorded) else None
+
+
+def _noting_lifted_draws(law: Any, call: BoundCall) -> None:
+    """Record the call's ``num_samples`` when the sampling lift drew *law*."""
+    provenance = getattr(law, "provenance", None)
+    if provenance is not None and provenance.metadata.get("route") == "sampling_lift":
+        _note_num_samples_used(call.controls["num_samples"])
 
 
 class _JointLift(_DelegatingRoute):
@@ -1539,18 +1582,15 @@ class _JointLift(_DelegatingRoute):
 
     @staticmethod
     def _map(call: BoundCall, exact_only: bool) -> Function:
-        """The pairing map under the call's controls, with ``num_samples`` as its ``max_evaluations``."""
+        """The pairing map under the controls the caller set, with ``num_samples`` as its ``max_evaluations``."""
         set_controls = call.operation._options
-        forwarded = {
-            name: set_controls[name]
-            for name in ("workflow_kind", "method_options", "executor", "executor_options")
-            if name in set_controls
-        }
-        return _PAIR_OF_DRAWS.using(
-            **forwarded,
+        forwarded = {name: set_controls[name] for name in _LIFT_FORWARDED if name in set_controls}
+        forwarded.update(
             exact_only=exact_only,
+            include_inputs=False,
             max_evaluations=call.controls["num_samples"],
         )
+        return _PAIR_OF_DRAWS.using(**forwarded)
 
     def probe(
         self, call: BoundCall, result: OutputSpec | None, *, method: str | None, exact_only: bool
@@ -1563,14 +1603,10 @@ class _JointLift(_DelegatingRoute):
         if _distribution_root(d1) is not _distribution_root(d2):
             return Feasibility(False, "d1 and d2 are not drawn together")
         rule = self._map(call, exact_only).check(d1, d2).selected
-        if rule is None or rule.feasible is not True:
-            return rule if rule is not None else Feasibility(False, "no evaluation rule applies")
-        exact = rule.exact if exact_only or rule.exact is False else None
-        return PointReport(
-            True,
-            method=rule.method_name,
-            exact=exact,
-            deferred=("the covariance of the joint law is checked when it runs",),
+        if rule is None:
+            return Feasibility(False, "no evaluation rule draws d1 and d2 together")
+        return _lift_report(
+            rule, exact_only, "the covariance of the joint law is checked when it runs"
         )
 
     def run(
@@ -1598,15 +1634,13 @@ class _JointLift(_DelegatingRoute):
         """
         d1, d2 = call.operands["d1"], call.operands["d2"]
         joint = self._map(call, exact_only)(d1, d2)
-        provenance = getattr(joint, "provenance", None)
-        if provenance is not None and provenance.metadata.get("route") == "sampling_lift":
-            _note_num_samples_used(call.controls["num_samples"])
-        joint_cov = cov.using(exact_only=exact_only)(joint)
+        _noting_lifted_draws(joint, call)
+        joint_cov = cov.using(exact_only=exact_only, num_samples=call.controls["num_samples"])(
+            joint
+        )
         rows = cast(int, _flat_size(joint.event_spec.term_spec.children["d1"]))
         dense = jnp.asarray(joint_cov.raw)
-        steps = (_recorded_exactness(joint), _recorded_exactness(joint_cov))
-        exact = False if False in steps else (True if steps == (True, True) else None)
-        return RouteOutcome(dense[:rows, rows:], exact)
+        return RouteOutcome(dense[:rows, rows:], _steps_exactness(joint, joint_cov))
 
 
 cov.capability_route(
@@ -1710,7 +1744,7 @@ class _PushforwardMean(_EvaluationRules):
 
     #: The controls the run forwards to the call of the map, besides the
     #: ``max_evaluations`` that the call's ``num_samples`` gives.
-    _forwarded = tuple(name for name in _EvaluationRules._forwarded if name != "max_evaluations")
+    _forwarded = _LIFT_FORWARDED
 
     def __init__(self) -> None:
         super().__init__("pushforward_mean")
@@ -1732,28 +1766,16 @@ class _PushforwardMean(_EvaluationRules):
     ) -> Feasibility:
         """The rule's report, with the mean of the law it builds deferred to the run."""
         rule = super().probe(call, result, method=method, exact_only=exact_only)
-        if rule.feasible is not True:
-            return rule
-        exact = rule.exact if exact_only or rule.exact is False else None
-        return PointReport(
-            True,
-            method=rule.method_name,
-            exact=exact,
-            deferred=("the mean of the pushforward is checked when it runs",),
-        )
+        return _lift_report(rule, exact_only, "the mean of the pushforward is checked when it runs")
 
     def run(
         self, call: BoundCall, result: OutputSpec | None, *, method: str | None, exact_only: bool
     ) -> Any:
         """The mean of the pushforward law the selected rule returns, with the exactness of both steps."""
         law = super().run(call, result, method=method, exact_only=exact_only)
-        provenance = getattr(law, "provenance", None)
-        if provenance is not None and provenance.metadata.get("route") == "sampling_lift":
-            _note_num_samples_used(call.controls["num_samples"])
+        _noting_lifted_draws(law, call)
         averaged = mean(law)
-        steps = (_recorded_exactness(law), _recorded_exactness(averaged))
-        exact = False if False in steps else (True if steps == (True, True) else None)
-        return RouteOutcome(averaged.raw, exact)
+        return RouteOutcome(averaged.raw, _steps_exactness(law, averaged))
 
 
 def _recorded_exactness(term: Any) -> bool | None:
@@ -1882,7 +1904,7 @@ def _moment_expression(summary: str) -> Callable[[Any], Expression]:
 
 
 def _cov_expression(d1: Any, d2: Any) -> Expression:
-    """The expression ``ℂ[draw]`` of one law's covariance, or ``ℂ[draw, draw]`` of two laws' (II.4)."""
+    """The expression ``ℂ[draw]`` of one law's covariance, or ``ℂ[draw, draw]`` of two laws'."""
     if d2 is None or d2 is d1:
         return Summary("Cov", draw_of(d1))
     return Summary("Cov", draw_of(d1), draw_of(d2))

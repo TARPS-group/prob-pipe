@@ -155,7 +155,7 @@ def _coupled_part_pairs(
 
     The parts of each side are the side and every factor at any depth, as
     :func:`_coupling_parts` lists them, and two parts are coupled when they
-    have one root ancestor (III.7).
+    have one root ancestor.
 
     Parameters
     ----------
