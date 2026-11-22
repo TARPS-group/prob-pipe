@@ -1282,21 +1282,28 @@ class TestTheIntegrandReceivesDraws:
 
     @pytest.mark.parametrize("method", [None, "empirical_enumeration", "sampling_lift"])
     @pytest.mark.parametrize(
-        "law",
-        [_record_empirical(), _grouped_empirical(), _grouped_empirical()["z"]],
-        ids=["record", "group", "view_of_the_group"],
+        ("law", "paths"),
+        [
+            (_record_empirical(), ["b", "a"]),
+            (_grouped_empirical(), ["z/y", "z/x", "a"]),
+            (_grouped_empirical()["z"], ["y", "x"]),
+            (_grouped_empirical().rename({"a": "q"}), ["z/y", "z/x", "q"]),
+            (_grouped_empirical()[["z", "a"]].rename({"a": "q"}), ["z/y", "z/x", "q"]),
+        ],
+        ids=["record", "group", "view_of_the_group", "renamed", "renamed_view"],
     )
-    def test_a_record_atom_reaches_the_integrand_in_the_declared_order(self, law, method):
-        declared = list(law.event_spec.term_spec)
+    def test_a_record_atom_reaches_the_integrand_in_the_declared_order(self, law, paths, method):
+        # A record iterates over its leaf paths, so each list holds the leaves
+        # of a nested group in their declared order too.
         received: list[list[str]] = []
 
         def first(r):
             received.append(list(r))
-            return r[declared[0]]
+            return r[paths[0]]
 
         with workflow_run(seed=0):
             expectation.using(method=method)(law, first)
-        assert received and all(paths == declared for paths in received)
+        assert received and all(seen == paths for seen in received)
 
     def test_a_function_declaring_the_order_accepts_the_atom_on_both_routes(self):
         law = _record_empirical()
