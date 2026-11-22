@@ -986,6 +986,24 @@ def _unread_count_message(
     governed its work. Its fix sets the other count instead, or, when the
     call was given the other count too, removes the unread one.
 
+    Parameters
+    ----------
+    function_label : str
+        The label of the called ``Function``.
+    count_name : {"max_evaluations", "num_samples"}
+        The count the call was given and did not read.
+    count : int
+        Its given value.
+    read_counts : Mapping of str to int
+        The counts the call read, each with the value read, by name.
+    given_counts : Mapping of str to int
+        The counts the call was given, by name.
+
+    Returns
+    -------
+    str
+        The message.
+
     Examples
     --------
     >>> _unread_count_message("expectation", "max_evaluations", 4, {"num_samples": 1024}, {})
@@ -1015,6 +1033,11 @@ def _unread_count_message(
 
 def _warn_unread_counts(count_reads: _CountReads) -> None:
     """Warn once for each count the call's view was given that no code running for the call read.
+
+    Parameters
+    ----------
+    count_reads : _CountReads
+        The call's record of the counts it was given and read.
 
     Warns
     -----
