@@ -1262,8 +1262,12 @@ def _lifted_call_stochastic_plan(
 ) -> _plan.StochasticPlan | None:
     """The plan of the laws a lifted call draws from, which enumerates every group unless *route_name* samples.
 
-    A call that lifts a law has a plan, which its ``max_evaluations`` bounds,
-    so the read of the count is noted; a call that lifts no law has none.
+    A call that lifts a law has a plan, which its ``max_evaluations`` bounds.
+    The read of the count is noted when the route is a rule that evaluates
+    the function at the plan's draws or atoms, the sampling lift or the
+    empirical enumeration; a rule that realizes the law another way, such as
+    an exact rule for a linear map, does not read it, and a call that lifts no
+    law has no plan.
     """
     max_evaluations = resolved_controls["max_evaluations"]
     stochastic_plan = _plan.build_stochastic_plan(
@@ -1272,7 +1276,7 @@ def _lifted_call_stochastic_plan(
         max_evaluations,
         enumerate_every_group=route_name != "sampling_lift",
     )
-    if stochastic_plan is not None:
+    if stochastic_plan is not None and route_name in _rules._ENGINE_RULES:
         _note_count_read("max_evaluations", max_evaluations)
     return stochastic_plan
 

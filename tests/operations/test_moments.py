@@ -1763,3 +1763,9 @@ class TestTheCountsAnOperationReads:
         with workflow_run(seed=0), _no_unused_count_warning():
             result = view(laws)
         assert result.provenance.metadata["evaluations"][0]["executor"] == executor
+
+    def test_an_exact_rule_reads_no_max_evaluations(self, exact_to_sampler):
+        unused = "pushforward did not use max_evaluations=10"
+        with workflow_run(seed=0), pytest.warns(UnusedControlWarning, match=unused):
+            result = pushforward.using(max_evaluations=10)(Gaussian("g"), lambda x: x)
+        assert result.provenance.metadata["method"] == "exact_to_sampler"
