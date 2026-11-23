@@ -350,7 +350,9 @@ class TestPairedNumericSweeps:
             return a + (b["x"] if record else b)
 
         mapped = Function(body, label="sum", executor=executor)(a, b)
-        assert len(calls) == 2
+        # One probe trace, one trace that sizes the map's memory, and one
+        # mapped trace, rather than one call per cell.
+        assert len(calls) == 3
         sequential = Function(body, label="sum", traceable=False, executor="sequential")(a, b)
         np.testing.assert_array_equal(np.asarray(mapped), 3 * a.as_jax())
         np.testing.assert_array_equal(np.asarray(mapped), np.asarray(sequential))

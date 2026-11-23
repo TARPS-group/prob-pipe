@@ -5,7 +5,10 @@ inside a call of a ``Function``, with the call's context open and a key broker
 of its own, through the function evaluate_at_points runs a set with, ``_evaluated_outputs``.
 """
 
+import json
 import os
+import subprocess
+import sys
 import threading
 import traceback
 import warnings
@@ -38,11 +41,13 @@ from probpipe import (
     sample,
     workflow_run,
 )
+from probpipe.core import _executors
 from probpipe.core._call_context import (
     _note_num_samples_used,
     _under_call_context,
     current_call_context,
 )
+from probpipe.core._compilation import _working_memory_bytes
 from probpipe.core._execution_claims import ExecutionClaims
 from probpipe.core._executors import _PROCESS_POOLS, _evaluated_outputs, _run_on_executor
 
@@ -181,9 +186,12 @@ class TestNamingAnExecutor:
             "Name the executor the options are for, such as executor='thread'"
         )
 
-    def test_jax_refuses_a_batch_size_until_compiled_lifting(self):
+    def test_jax_refuses_an_option_it_does_not_read(self):
         with (
-            pytest.raises(ValueError, match="Its options are none"),
+            pytest.raises(
+                ValueError,
+                match=r"executor 'jax' does not read the option 'batch_size'\. Its options are chunk_size",
+            ),
             requester_call(requester(executor="jax", executor_options={"batch_size": 8})),
         ):
             pass
@@ -816,3 +824,275 @@ class TestEvaluateAtPoints:
         )
         assert stacked_outputs.dtype == object
         assert stacked_outputs.tolist() == [(1.0, 2.0), (5.0, 2.0), (9.0, 2.0), (13.0, 2.0)]
+
+
+def _traceable_set(fn, varying, requester_controls=None):
+    """The stacked outputs of a traceable set of *fn* over *varying*, and the call's record of it."""
+    with (
+        workflow_run(seed=0),
+        requester_call(requester(**(requester_controls or {}))) as call_context,
+    ):
+        outputs = _evaluated_outputs(
+            EvaluationPoints(
+                fn,
+                varying=varying,
+                origin="simulate",
+                claims=ExecutionClaims(traceable=True),
+            ),
+            stacked=True,
+        )
+        return outputs, call_context.evaluation_log.set_records[-1]
+
+
+def _sine_of_each_entry(x):
+    return jnp.sin(0.37 * x)
+
+
+@pytest.fixture
+def chunked_maps(monkeypatch):
+    """The number of evaluation points in each chunk of every map ``lax.map`` runs in chunks."""
+    points_per_chunk: list[int] = []
+    chunked_map = jax.lax.map
+
+    def recording_chunked_map(f, xs, *, batch_size=None):
+        points_per_chunk.append(batch_size)
+        return chunked_map(f, xs, batch_size=batch_size)
+
+    monkeypatch.setattr(jax.lax, "map", recording_chunked_map)
+    return points_per_chunk
+
+
+@pytest.fixture
+def compiled_sets(monkeypatch):
+    """Each set of evaluation points whose map ``jax`` compiled in the set's program store."""
+    compiled: list[EvaluationPoints] = []
+    program_store_of = _executors._program_store_of
+
+    def recording_program_store_of(owner):
+        compiled.append(owner)
+        return program_store_of(owner)
+
+    monkeypatch.setattr(_executors, "_program_store_of", recording_program_store_of)
+    return compiled
+
+
+_ENTRIES_PER_POINT = 1000
+_POINTS = np.linspace(-1.0, 1.0, 12 * _ENTRIES_PER_POINT, dtype=np.float32).reshape(12, -1)
+# One evaluation of _sine_of_each_entry holds its 4,000-byte input, then
+# 0.37 * x and its sine together.
+_POINT_WORKING_MEMORY_BYTES = 3 * 4 * _ENTRIES_PER_POINT
+
+
+class TestTheJaxExecutorBoundsTheMemoryOfItsMap:
+    def test_one_point_s_working_memory_is_read_from_its_trace(self):
+        assert (
+            _working_memory_bytes(
+                lambda point: _sine_of_each_entry(point["x"]),
+                {"x": jax.ShapeDtypeStruct((_ENTRIES_PER_POINT,), jnp.float32)},
+            )
+            == _POINT_WORKING_MEMORY_BYTES
+        )
+
+    def test_a_set_within_the_budget_is_mapped_at_once_and_not_compiled(
+        self, chunked_maps, compiled_sets
+    ):
+        outputs, set_record = _traceable_set(_sine_of_each_entry, {"x": _POINTS})
+        assert (chunked_maps, compiled_sets) == ([], [])
+        assert (set_record.executor_name, set_record.executor_options) == ("jax", {})
+        np.testing.assert_allclose(outputs, np.sin(0.37 * _POINTS), rtol=1e-6)
+
+    def test_a_set_over_the_budget_is_compiled_in_chunks_that_fit_it(
+        self, monkeypatch, chunked_maps, compiled_sets
+    ):
+        budget = 5 * _POINT_WORKING_MEMORY_BYTES + 1
+        monkeypatch.setattr(_executors, "_JAX_MEMORY_BUDGET_BYTES", budget)
+        outputs, _ = _traceable_set(_sine_of_each_entry, {"x": _POINTS})
+        assert chunked_maps == [5]
+        assert len(compiled_sets) == 1
+        np.testing.assert_allclose(outputs, np.sin(0.37 * _POINTS), rtol=1e-6)
+
+    def test_a_point_larger_than_the_budget_is_mapped_one_at_a_time(
+        self, monkeypatch, chunked_maps
+    ):
+        monkeypatch.setattr(_executors, "_JAX_MEMORY_BUDGET_BYTES", 10)
+        _traceable_set(_sine_of_each_entry, {"x": _POINTS})
+        assert chunked_maps == [1]
+
+    def test_chunk_size_sets_the_chunks_and_compiles_whatever_the_memory(
+        self, chunked_maps, compiled_sets
+    ):
+        outputs, set_record = _traceable_set(
+            _sine_of_each_entry,
+            {"x": _POINTS},
+            requester_controls={"executor_options": {"chunk_size": 4}},
+        )
+        assert chunked_maps == [4]
+        assert len(compiled_sets) == 1
+        assert set_record.executor_options == {"chunk_size": 4}
+        np.testing.assert_allclose(outputs, np.sin(0.37 * _POINTS), rtol=1e-6)
+
+    def test_a_chunk_size_of_every_point_compiles_one_map(self, chunked_maps, compiled_sets):
+        _traceable_set(
+            _sine_of_each_entry,
+            {"x": _POINTS},
+            requester_controls={"executor_options": {"chunk_size": 50}},
+        )
+        assert chunked_maps == []
+        assert len(compiled_sets) == 1
+
+    @pytest.mark.parametrize("chunk_size", [None, 1, 5, 12])
+    def test_the_chunks_change_no_draw(self, chunk_size):
+        keys = jax.random.split(jax.random.key(3), 12)
+        controls = None if chunk_size is None else {"executor_options": {"chunk_size": chunk_size}}
+        outputs, _ = _traceable_set(
+            lambda key: jax.random.normal(key, (3,)), {"key": keys}, controls
+        )
+        np.testing.assert_allclose(
+            outputs, jax.vmap(lambda key: jax.random.normal(key, (3,)))(keys), rtol=1e-6
+        )
+
+    @pytest.mark.parametrize(
+        ("chunk_size", "error", "message"),
+        [
+            (0, ValueError, "chunk_size"),
+            (2.5, TypeError, "chunk_size"),
+        ],
+    )
+    def test_a_chunk_size_that_is_not_a_positive_integer_raises(self, chunk_size, error, message):
+        with pytest.raises(error, match=message):
+            _traceable_set(
+                _sine_of_each_entry,
+                {"x": _POINTS},
+                requester_controls={"executor_options": {"chunk_size": chunk_size}},
+            )
+
+    def test_an_opaque_function_inside_a_chunked_map_runs_on_the_call_s_executor(
+        self, monkeypatch, chunked_maps
+    ):
+        monkeypatch.setattr(_executors, "_JAX_MEMORY_BUDGET_BYTES", 10)
+        scalar = NumericArraySpec((), dtype="float32")
+        hosted_values = []
+
+        def add_one_on_the_host(x):
+            hosted_values.append(np.asarray(x).copy())
+            return np.asarray(x, dtype="float32") + np.float32(1)
+
+        opaque_add_one = function(add_one_on_the_host, output_spec=scalar, traceable=False)
+        outputs, _ = _traceable_set(
+            lambda x: 2.0 * opaque_add_one(x),
+            {"x": np.arange(4.0, dtype=np.float32)},
+            requester_controls={"executor": "sequential"},
+        )
+        assert chunked_maps == [1]
+        np.testing.assert_allclose(outputs, [2.0, 4.0, 6.0, 8.0])
+        assert sorted(float(np.sum(value)) for value in hosted_values) == [0.0, 1.0, 2.0, 3.0]
+
+
+class TestTheOptionsOfJax:
+    def test_options_without_an_executor_reach_jax_on_the_function_s_own_call(self):
+        _, set_record = _traceable_set(
+            _sine_of_each_entry,
+            {"x": _POINTS},
+            requester_controls={"executor_options": {"chunk_size": 3}},
+        )
+        assert (set_record.executor_name, set_record.executor_options) == (
+            "jax",
+            {"chunk_size": 3},
+        )
+
+    def test_options_named_with_jax_reach_it(self):
+        _, set_record = _traceable_set(
+            _sine_of_each_entry,
+            {"x": _POINTS},
+            requester_controls={"executor": "jax", "executor_options": {"chunk_size": 3}},
+        )
+        assert set_record.executor_options == {"chunk_size": 3}
+
+    def test_options_named_with_another_executor_do_not_reach_jax(self):
+        _, set_record = _traceable_set(
+            _sine_of_each_entry,
+            {"x": _POINTS},
+            requester_controls={"executor": "thread", "executor_options": {"chunk_size": 3}},
+        )
+        assert (set_record.executor_name, set_record.executor_options) == ("jax", {})
+
+    def test_an_option_jax_does_not_read_raises_on_the_function_s_own_call(self):
+        with pytest.raises(ValueError) as raised:
+            _traceable_set(
+                _sine_of_each_entry,
+                {"x": _POINTS},
+                requester_controls={"executor_options": {"max_workers": 2}},
+            )
+        assert str(raised.value) == (
+            "executor 'jax', chosen automatically since the call names no executor, "
+            "does not read the option 'max_workers'. Its options are chunk_size. "
+            "Name the executor the options are for, such as executor='thread'"
+        )
+
+
+# A map of 4,000 evaluations of the issue's function, each of which holds
+# three arrays of 200,000 float32 entries, 2.4 MB, at once. One uncompiled
+# jax.vmap of every point holds about 9.6 GB.
+_HEAVY_MAP_SCRIPT = """
+import json, resource, sys, time
+import jax, jax.numpy as jnp
+from probpipe import evaluate_at_points, function, workflow_run
+
+def peak_resident_bytes():
+    peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    return peak if sys.platform == "darwin" else peak * 1024
+
+grid = jnp.linspace(0.0, 1.0, 200_000)
+
+def one_evaluation(x):
+    return jnp.mean(jnp.sin(x * grid) ** 2 + jnp.cos(x * grid))
+
+heavy = function(one_evaluation, traceable=True)
+jax.block_until_ready(jax.vmap(one_evaluation)(jnp.zeros(2)))
+resident_before = peak_resident_bytes()
+points = jnp.linspace(-1.0, 1.0, 4000)
+start = time.perf_counter()
+with workflow_run(seed=0):
+    jax.block_until_ready(
+        evaluate_at_points(
+            heavy, varying={"x": points}, shared={}, origin="heavy",
+            output_spec=heavy.output_spec, stacked=True,
+        )
+    )
+seconds_per_point = (time.perf_counter() - start) / 4000
+growth_bytes = peak_resident_bytes() - resident_before
+few_points = jnp.linspace(-1.0, 1.0, 200)
+start = time.perf_counter()
+jax.block_until_ready(jax.vmap(one_evaluation)(few_points))
+uncompiled_seconds_per_point = (time.perf_counter() - start) / 200
+print(json.dumps({
+    "growth_bytes": growth_bytes,
+    "seconds_per_point": seconds_per_point,
+    "uncompiled_seconds_per_point": uncompiled_seconds_per_point,
+}))
+"""
+
+
+class TestAHeavyMap:
+    @pytest.fixture(scope="class")
+    def heavy_map(self):
+        """The issue's map of 4,000 heavy evaluations, measured in a process of its own."""
+        completed = subprocess.run(
+            [sys.executable, "-c", _HEAVY_MAP_SCRIPT],
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=600,
+        )
+        return json.loads(completed.stdout.strip().splitlines()[-1])
+
+    def test_its_memory_does_not_grow_with_the_number_of_points(self, heavy_map):
+        # Observed growth of the peak resident memory: about 0.2 GB on this
+        # branch, against 5.7 GB for one uncompiled jax.vmap of every point.
+        assert heavy_map["growth_bytes"] < 2**30
+
+    def test_it_runs_faster_per_point_than_an_uncompiled_map_of_a_few_points(self, heavy_map):
+        # Observed per point: 0.25 ms in compiled chunks against 1.4 ms for an
+        # uncompiled jax.vmap of 200 points; one uncompiled jax.vmap of all
+        # 4,000 points took 2.4 ms per point, slowed by its memory.
+        assert heavy_map["seconds_per_point"] < 0.5 * heavy_map["uncompiled_seconds_per_point"]

@@ -647,8 +647,9 @@ class TestMappedBatchValuedLifts:
                 law = Function(trajectory, **controls, max_evaluations=50)(source)
                 totals = Function(total, **controls, max_evaluations=50)(law)
             if executor == "jax":
-                # One probe trace and one mapped trace for each lift.
-                assert calls.count("first") <= 2 and calls.count("second") <= 2
+                # For each lift, one probe trace, one trace that sizes the map's
+                # memory, and one mapped trace.
+                assert calls.count("first") <= 3 and calls.count("second") <= 3
                 assert law.provenance.metadata["evaluations"][0]["executor"] == "jax"
                 assert totals.provenance.metadata["evaluations"][0]["executor"] == "jax"
             else:

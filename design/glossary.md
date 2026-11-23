@@ -92,6 +92,7 @@ The terms of art of the reference, in alphabetical order. Each entry defines its
 - **unresolved**: the outcome of a feasibility check whose required declarations are not yet available (II.7).
 - **value type**: the spec from which a term's paths and outputs are read: a law's or kernel's `event_spec.term_spec`, a function's `output_spec.term_spec`, a batch's `element_spec.term_spec`, or a record's or base value's own `spec`; it has no attribute of its own (II.2).
 - **view**: a tracked term that refers into a container's storage instead of copying it, such as a record field, a batch element, a sub-batch, or a marginal batch `b[path]` (B4, II.4). A law's `d[paths]` is a coupled marginal, not a view.
+- **working memory**: the most bytes that the arrays one evaluation of a traceable callable computes from its arguments occupy at once while it runs uncompiled, read from its trace; the `jax` executor compiles a map in chunks when the map's working memory exceeds its budget (V.9).
 
 ## Canonical names
 

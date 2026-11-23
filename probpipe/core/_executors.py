@@ -48,6 +48,7 @@ from ._call_context import (
     current_call_context,
 )
 from ._catalog import registry_catalog
+from ._compilation import _program_store_of, _working_memory_bytes
 from ._dispatch import (
     Feasibility,
     MethodInfo,
@@ -85,6 +86,10 @@ __all__ = [
     "evaluate_at_points",
     "executor_registry",
 ]
+
+#: The most bytes the ``jax`` executor's uncompiled map may hold at once. A set
+#: whose working memory exceeds it is compiled and mapped in chunks that fit it.
+_JAX_MEMORY_BUDGET_BYTES = 256 * 2**20
 
 
 class EvaluationExecutor(UnaryDispatchMethod):
@@ -440,7 +445,7 @@ def _evaluated_outputs(
         evaluation_points, execution_choice
     )
     if stacked and isinstance(executor, _JaxExecutor):
-        return _mapped_outputs_or_error(evaluation_points)
+        return _mapped_outputs_or_error(evaluation_points, executor_options)
     evaluation_outcomes = _run_on_executor(evaluation_points, executor, executor_options)
     return _outputs_of(
         evaluation_points,
@@ -594,14 +599,16 @@ def _run_on_executor(
     return evaluation_outcomes
 
 
-def _mapped_outputs_or_error(evaluation_points: EvaluationPoints) -> Any:
+def _mapped_outputs_or_error(
+    evaluation_points: EvaluationPoints, executor_options: Mapping[str, Any]
+) -> Any:
     """The outputs of a set that ``jax`` maps, kept whole, recorded as :func:`_run_on_executor` records a run.
 
     A map that raised, or whose output does not conform to the output spec,
     fails every evaluation point, and the call raises :class:`EvaluationError`.
     """
     try:
-        stacked_output, lossy_casts = _mapped_outputs(evaluation_points)
+        stacked_output, lossy_casts = _mapped_outputs(evaluation_points, **executor_options)
     except _MappingFailure as raised_failure:
         mapping_failure = raised_failure
     else:
@@ -613,14 +620,20 @@ def _mapped_outputs_or_error(evaluation_points: EvaluationPoints) -> Any:
         _record_set_run(
             evaluation_points,
             "jax",
-            {},
+            executor_options,
             failed_point_indices=tuple(range(len(evaluation_points))),
             lossy_casts=frozenset(),
         )
         raise _evaluation_error(
             evaluation_points, failures, (None,) * len(evaluation_points), "jax.vmap"
         ) from mapping_failure.error
-    _record_set_run(evaluation_points, "jax", {}, failed_point_indices=(), lossy_casts=lossy_casts)
+    _record_set_run(
+        evaluation_points,
+        "jax",
+        executor_options,
+        failed_point_indices=(),
+        lossy_casts=lossy_casts,
+    )
     return stacked_output
 
 
@@ -656,7 +669,13 @@ def _record_set_run(
 
 
 class _JaxExecutor(EvaluationExecutor):
-    """Compile a traceable callable over every evaluation point with one ``jax.vmap``."""
+    """Map a traceable callable over the evaluation points with JAX, compiled and in chunks when memory requires.
+
+    A set whose working memory fits :data:`_JAX_MEMORY_BUDGET_BYTES` is
+    mapped at once with an uncompiled ``jax.vmap``, and a larger one is
+    compiled and mapped in chunks that fit it (:func:`_mapped_outputs`). The
+    option ``chunk_size`` sets the chunks instead.
+    """
 
     @property
     def name(self) -> str:
@@ -668,9 +687,14 @@ class _JaxExecutor(EvaluationExecutor):
 
     @property
     def description(self) -> str:
-        return "Map a traceable callable over every evaluation point with jax.vmap."
+        return (
+            "Map a traceable callable over the evaluation points with jax.vmap, compiled and in "
+            "chunks when the map would hold too much memory."
+        )
 
-    def check(self, evaluation_points: EvaluationPoints, /) -> Feasibility:
+    def check(
+        self, evaluation_points: EvaluationPoints, /, *, chunk_size: int | None = None
+    ) -> Feasibility:
         if not evaluation_points.traceable:
             untraceable_reason = evaluation_points._untraceable_reason
             return Feasibility(
@@ -692,9 +716,11 @@ class _JaxExecutor(EvaluationExecutor):
             )
         return Feasibility(feasible=True)
 
-    def execute(self, evaluation_points: EvaluationPoints, /) -> EvaluationOutcomes:
+    def execute(
+        self, evaluation_points: EvaluationPoints, /, *, chunk_size: int | None = None
+    ) -> EvaluationOutcomes:
         try:
-            stacked_output, lossy_casts = _mapped_outputs(evaluation_points)
+            stacked_output, lossy_casts = _mapped_outputs(evaluation_points, chunk_size=chunk_size)
         except _MappingFailure as mapping_failure:
             return _assembled_outcomes(0, mapping_failure.point_failures(evaluation_points))
         return _assembled_outcomes(
@@ -919,11 +945,13 @@ def _selected_executor(
 ) -> _ExecutorSelection:
     """The executor that runs *evaluation_points* under *execution_choice*, by V.9's rules, with no warning.
 
-    ``jax`` compiles a traceable callable whatever the choice names. Otherwise
-    a named executor runs the set when it can; when it cannot, the set falls
-    back to automatic selection, or, when the executor was named for the
-    set's callable, the selection records the refusal. Options given without
-    an executor go to the executor automatic selection picks.
+    ``jax`` maps a traceable callable whatever the choice names, with the
+    options named with it, or the call's own options when the choice names
+    no executor, and never the options named with another executor.
+    Otherwise a named executor runs the set when it can; when it cannot, the
+    set falls back to automatic selection, or, when the executor was named
+    for the set's callable, the selection records the refusal. Options given
+    without an executor go to the executor automatic selection picks.
 
     Parameters
     ----------
@@ -948,7 +976,21 @@ def _selected_executor(
     jax_executor = executor_registry.get_method("jax")
     jax_feasibility = jax_executor.check(evaluation_points)
     if jax_feasibility.feasible:
-        return _ExecutorSelection(jax_executor)
+        if execution_choice.names_executor():
+            # Options named with another executor belong to it (rule 4).
+            jax_options = (
+                execution_choice.executor_options
+                if execution_choice.executor_name == jax_executor.name
+                else {}
+            )
+        else:
+            jax_options = _automatic_options(execution_choice)
+        _check_executor_reads_options(
+            jax_executor,
+            jax_options,
+            chosen_automatically=not execution_choice.names_executor(),
+        )
+        return _ExecutorSelection(jax_executor, dict(jax_options))
     rejected = [_executor_info(jax_executor, jax_feasibility)]
     if execution_choice.names_executor():
         named_executor = _requested_executor(cast(str, execution_choice.executor_name))
@@ -973,12 +1015,15 @@ def _selected_executor(
             rejected=tuple(rejected),
             fallback_reason=named_feasibility.description,
         )
-    automatic_options = (
-        execution_choice.executor_options if execution_choice.source == "own" else {}
-    )
+    automatic_options = _automatic_options(execution_choice)
     selected_executor = _automatically_selected_executor(evaluation_points)
     _check_executor_reads_options(selected_executor, automatic_options, chosen_automatically=True)
     return _ExecutorSelection(selected_executor, dict(automatic_options), tuple(rejected))
+
+
+def _automatic_options(execution_choice: _ExecutionChoice) -> Mapping[str, Any]:
+    """The options the executor that automatic selection picks receives: the call's own, never inherited ones (rule 2)."""
+    return execution_choice.executor_options if execution_choice.source == "own" else {}
 
 
 def _executor_info(executor: EvaluationExecutor, feasibility: Feasibility) -> MethodInfo:
@@ -1298,24 +1343,78 @@ class _MappingFailure(Exception):
 
 
 def _mapped_outputs(
-    evaluation_points: EvaluationPoints,
+    evaluation_points: EvaluationPoints, *, chunk_size: int | None = None
 ) -> tuple[Any, frozenset[tuple[str, str]]]:
-    """The callable mapped over every evaluation point with ``jax.vmap``, checked once against the output spec.
+    """The callable mapped over every evaluation point with JAX, checked once against the output spec.
 
-    It returns the outputs stacked on a leading axis, with the pairs of dtype
-    names of each cast to a declared dtype that lost precision. A map that
-    raised, or whose output does not conform, raises :class:`_MappingFailure`,
-    except a false ``traceable=True`` claim, whose error reaches the caller as
-    itself.
+    A ``jax.vmap`` over N evaluation points holds N copies of every array one
+    evaluation computes. When that fits :data:`_JAX_MEMORY_BUDGET_BYTES`, as
+    :func:`_budgeted_chunk_size` reads it, the set is mapped at once with an
+    uncompiled ``jax.vmap``, which costs no compilation. Otherwise the map is
+    compiled in the set's program store and runs with ``lax.map``, in chunks
+    of as many evaluation points as fit the budget. A *chunk_size* sets the
+    chunks instead, and compiles the map whatever its working memory; one of
+    at least N compiles a ``jax.vmap`` of every evaluation point. Each
+    evaluation point receives its own arguments, so the chunks change no
+    result beyond rounding.
+
+    A map that raised, or whose output does not conform, raises
+    :class:`_MappingFailure`, except a false ``traceable=True`` claim, whose
+    error reaches the caller as itself.
+
+    Parameters
+    ----------
+    evaluation_points : EvaluationPoints
+        The set of evaluation points of a traceable callable.
+    chunk_size : int or None, optional
+        The number of evaluation points in a chunk; ``None`` reads it from
+        the memory budget.
+
+    Returns
+    -------
+    tuple of (Any, frozenset of (str, str))
+        The outputs stacked on a leading axis of evaluation points, and the
+        pairs of dtype names of each cast to a declared dtype that lost
+        precision.
+
+    Raises
+    ------
+    TypeError
+        If *chunk_size* is not an integer.
+    ValueError
+        If *chunk_size* is less than 1.
     """
+    if chunk_size is not None:
+        _checked_count(chunk_size, "chunk_size")
     shared_payload = evaluation_points.shared_payload()
+    num_points = len(evaluation_points)
+    varying_arguments = dict(evaluation_points._varying)
 
-    def evaluate_one_point(varying_arguments: Mapping[str, Any]) -> Any:
-        return shared_payload.fn(**shared_payload.shared_arguments, **varying_arguments)
+    def evaluate_one_point(point_arguments: Mapping[str, Any]) -> Any:
+        return shared_payload.fn(**shared_payload.shared_arguments, **point_arguments)
+
+    def map_in_chunks(points_per_chunk: int, stacked_arguments: Mapping[str, Any]) -> Any:
+        if points_per_chunk >= num_points:
+            return jax.vmap(evaluate_one_point)(stacked_arguments)
+        return jax.lax.map(evaluate_one_point, stacked_arguments, batch_size=points_per_chunk)
 
     try:
         with evaluation_points._point_scopes.mapped_scope():
-            stacked_output = jax.vmap(evaluate_one_point)(dict(evaluation_points._varying))
+            points_per_chunk = (
+                _budgeted_chunk_size(evaluate_one_point, varying_arguments, num_points)
+                if chunk_size is None
+                else chunk_size
+            )
+            if points_per_chunk is None:
+                stacked_output = jax.vmap(evaluate_one_point)(varying_arguments)
+            else:
+                stacked_output = _program_store_of(evaluation_points).run(
+                    "mapped_in_chunks",
+                    map_in_chunks,
+                    jax.vmap(evaluate_one_point),
+                    varying_arguments,
+                    static_options=points_per_chunk,
+                )
     except FalseTraceableClaimError:
         # A false claim is an error of the callable's declaration, not of any
         # evaluation point, so it reaches the caller as itself.
@@ -1331,6 +1430,54 @@ def _mapped_outputs(
         )
     except _InvalidPointOutput as invalid_output:
         raise _MappingFailure("invalid", invalid_output.check_error) from invalid_output
+
+
+def _budgeted_chunk_size(
+    evaluate_one_point: Callable[[Mapping[str, Any]], Any],
+    varying_arguments: Mapping[str, Any],
+    num_points: int,
+) -> int | None:
+    """The number of evaluation points in a chunk that keeps a map within the memory budget, or ``None`` when the whole map fits.
+
+    One evaluation point is traced at stand-ins of its arguments, without
+    running it, and its working memory read by :func:`_working_memory_bytes`.
+    A map of *num_points* evaluation points holds about *num_points* times as
+    much. When that is at most :data:`_JAX_MEMORY_BUDGET_BYTES`, the whole
+    map fits; otherwise a chunk holds as many evaluation points as fit the
+    budget, and at least one. A callable that does not trace alone at one
+    evaluation point's arguments is mapped whole, so the map raises its error.
+
+    Parameters
+    ----------
+    evaluate_one_point : Callable
+        The evaluation of one point, a function of its varying arguments.
+    varying_arguments : Mapping of str to Any
+        Each varying argument, stacked on a leading axis of evaluation points.
+    num_points : int
+        The number of evaluation points.
+
+    Returns
+    -------
+    int or None
+        The number of evaluation points in a chunk, or ``None`` when every
+        evaluation point fits in one map.
+    """
+    point_working_memory_bytes = _working_memory_bytes(
+        evaluate_one_point, jax.tree.map(_row_stand_in, varying_arguments)
+    )
+    if point_working_memory_bytes is None or (
+        num_points * point_working_memory_bytes <= _JAX_MEMORY_BUDGET_BYTES
+    ):
+        return None
+    return max(1, _JAX_MEMORY_BUDGET_BYTES // max(point_working_memory_bytes, 1))
+
+
+def _row_stand_in(column: Any) -> jax.ShapeDtypeStruct:
+    """The abstract stand-in of one row of *column*: its shape without the leading axis, its dtype, and its weak type."""
+    abstract_column = jax.typeof(column)
+    return jax.ShapeDtypeStruct(
+        abstract_column.shape[1:], abstract_column.dtype, weak_type=abstract_column.weak_type
+    )
 
 
 def _mapped_inline(

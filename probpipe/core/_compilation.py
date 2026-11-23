@@ -14,7 +14,9 @@ Provides:
     programs of one owner that run user or route code, each compiled under
     the static settings of the call that runs it;
   - :class:`_StaticSettings` and :func:`_static_settings_in_effect`, those
-    settings.
+    settings;
+  - :func:`_working_memory_bytes`, the memory one run of a JAX program holds
+    at once, which decides whether a map is compiled in chunks.
 """
 
 from __future__ import annotations
@@ -31,6 +33,7 @@ from typing import Any, NamedTuple, cast
 
 import jax
 import numpy as np
+from jax._src import core as jax_core
 
 from ._call_context import (
     _TRACED_CALL_TOKEN,
@@ -44,6 +47,7 @@ from ._call_context import (
     _under_call_context,
     current_call_context,
 )
+from ._execution_claims import _global_random_states, _restore_global_random_states
 from ._immutable import transient_memo
 from .config import _static_config_values_in_effect
 
@@ -505,6 +509,112 @@ def _static_settings_in_effect() -> _StaticSettings:
     )
 
 
+def _working_memory_bytes(fn: Callable[..., Any], *abstract_arguments: Any) -> int | None:
+    """The most bytes the arrays *fn* computes from its arguments occupy at once while one uncompiled run holds them.
+
+    *fn* is traced once with ``jax.make_jaxpr`` at *abstract_arguments*,
+    without running it, and the bytes are read from the traced program by
+    :func:`_jaxpr_working_memory_bytes`. A map over N arguments of this
+    structure holds about N times as much. The trace emits no warning, and
+    NumPy's and Python's global random generators are put back to their
+    states before it, so the trace changes nothing that the run it sizes
+    would not.
+
+    Parameters
+    ----------
+    fn : Callable
+        The computation.
+    *abstract_arguments : Any
+        Its arguments, as trees of arrays or of ``jax.ShapeDtypeStruct``.
+
+    Returns
+    -------
+    int or None
+        The bytes, or ``None`` when *fn* does not trace at these arguments.
+
+    Examples
+    --------
+    One evaluation of ``sum(sin(x * grid))`` at a scalar ``x`` holds ``x``,
+    then ``x * grid`` and ``sin(x * grid)`` together, while the captured
+    ``grid``, which a map over ``x`` shares, is not counted:
+
+    >>> import jax, jax.numpy as jnp
+    >>> grid = jnp.linspace(0.0, 1.0, 1000)  # float32, 4,000 bytes
+    >>> _working_memory_bytes(
+    ...     lambda x: jnp.sum(jnp.sin(x * grid)), jax.ShapeDtypeStruct((), jnp.float32)
+    ... )
+    8004
+    """
+    random_states = _global_random_states()
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            traced_program = jax.make_jaxpr(fn)(*abstract_arguments)
+    except Exception:
+        return None
+    finally:
+        _restore_global_random_states(random_states)
+    return _jaxpr_working_memory_bytes(traced_program.jaxpr)
+
+
+def _jaxpr_working_memory_bytes(jaxpr: Any) -> int:
+    """The most bytes that the values *jaxpr* computes from its inputs occupy at once while it runs uncompiled.
+
+    The inputs are held throughout. Each equation that reads a value computed
+    from an input adds its outputs, and a value is released after the last
+    equation that reads it, as an uncompiled run releases it. An equation
+    that runs a program of its own, such as the body of a ``lax.scan`` or a
+    ``jax.jit`` that *jaxpr* calls, holds that program's working memory
+    beyond its inputs while it runs. Values computed from constants alone,
+    such as an array a callable captures, are not counted.
+
+    Parameters
+    ----------
+    jaxpr : jax.extend.core.Jaxpr
+        The program, without its constants.
+
+    Returns
+    -------
+    int
+        The peak number of bytes.
+    """
+    computed_from_inputs = set(jaxpr.invars)
+    last_reading_equation: dict[Any, int] = {}
+    for equation_index, equation in enumerate(jaxpr.eqns):
+        for operand in _variables(equation.invars):
+            last_reading_equation[operand] = equation_index
+    for result in _variables(jaxpr.outvars):
+        last_reading_equation[result] = len(jaxpr.eqns)
+    held_bytes = sum(_value_bytes(input_value) for input_value in jaxpr.invars)
+    peak_bytes = held_bytes
+    for equation_index, equation in enumerate(jaxpr.eqns):
+        operands = _variables(equation.invars)
+        if not any(operand in computed_from_inputs for operand in operands):
+            continue
+        inner_bytes = max(
+            (
+                _jaxpr_working_memory_bytes(inner_jaxpr)
+                - sum(_value_bytes(inner_input) for inner_input in inner_jaxpr.invars)
+                for inner_jaxpr in jax_core.jaxprs_in_params(equation.params)
+            ),
+            default=0,
+        )
+        results = [
+            result for result in equation.outvars if not isinstance(result, jax_core.DropVar)
+        ]
+        computed_from_inputs.update(results)
+        held_bytes += sum(_value_bytes(result) for result in results)
+        peak_bytes = max(peak_bytes, held_bytes + inner_bytes)
+        for value in set(operands) | set(results):
+            if (
+                value in computed_from_inputs
+                and value not in jaxpr.invars
+                and last_reading_equation.get(value, -1) <= equation_index
+            ):
+                held_bytes -= _value_bytes(value)
+    return peak_bytes
+
+
 # ---------------------------------------------------------------------------
 # Private helpers
 # ---------------------------------------------------------------------------
@@ -680,3 +790,17 @@ def _varying_note_message(note_description: str, kept_value: Any, traced_value: 
         f"internal error: a compiled JAX program noted {note_description} {traced_value!r} "
         f"on one trace but {kept_value!r} on an earlier one. Please report this"
     )
+
+
+def _variables(operands: Iterable[Any]) -> list[Any]:
+    """The variables among a jaxpr equation's *operands*, leaving out its literals."""
+    return [operand for operand in operands if not isinstance(operand, jax_core.Literal)]
+
+
+def _value_bytes(value: Any) -> int:
+    """The bytes an array value of a jaxpr occupies, by its shape and dtype; 0 for any other value."""
+    try:
+        abstract_value = value.aval
+        return int(np.prod(abstract_value.shape)) * np.dtype(abstract_value.dtype).itemsize
+    except (AttributeError, TypeError):
+        return 0

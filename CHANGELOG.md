@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed (breaking)
 
+- **`executor_options` given without an executor go to `jax`.** Before,
+  options given without an executor to a function that JAX can trace were
+  ignored. Now they go to `jax`, which reads `chunk_size` and raises
+  `ValueError` for any other option, such as `max_workers`. Name the executor
+  the options are for, as `executor="thread"`, or remove them.
+
 - **Exact conditional operations.** With `given=`, an exact operation exposed
   by exact conditioning precedes approximate routes, including sampling through
   a registry. Conditional delegation reuses the bound law within the call and
@@ -3442,6 +3448,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   pushforward eagerly when its last required input is bound.
 
 ### Changed
+
+- **A traceable function mapped over many points no longer runs out of memory.**
+  A lifted call, a sweep, or `evaluate_at_points` maps a function that JAX can
+  trace with one `jax.vmap`, which holds one copy of every array the function
+  computes for each point at once. Before, a function that builds large
+  arrays, such as a simulator over a long time series, needed memory that grew
+  with the number of points until the machine swapped. Now the `jax` executor
+  reads how much one evaluation holds from its trace, and when the whole map
+  would hold more than 256 MiB, it compiles the map and runs it in chunks that
+  fit. Over 4,000 points of a function that builds arrays of 200,000 entries,
+  the peak memory falls from 7.5 GB to 0.7 GB and the time from 6.5 s to 1.2 s.
+  The option `chunk_size` sets the chunks instead, as in
+  `simulate.using(executor_options={"chunk_size": 50})`. The chunks change no
+  result beyond the last bit of rounding.
 
 - **Tutorials 1 to 4 are revised and shown on the site again.** They follow one
   analysis of the moose counts:
