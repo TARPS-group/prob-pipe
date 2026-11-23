@@ -827,7 +827,7 @@ class TestEvaluateAtPoints:
 
 
 def _traceable_set(fn, varying, requester_controls=None):
-    """The stacked outputs of a traceable set of *fn* over *varying*, and the call's record of it."""
+    """The stacked outputs of a traceable set of *fn* over *varying*, and the call's records of every set it ran."""
     with (
         workflow_run(seed=0),
         requester_call(requester(**(requester_controls or {}))) as call_context,
@@ -841,7 +841,7 @@ def _traceable_set(fn, varying, requester_controls=None):
             ),
             stacked=True,
         )
-        return outputs, call_context.evaluation_log.set_records[-1]
+        return outputs, call_context.evaluation_log.set_records
 
 
 def _sine_of_each_entry(x):
@@ -884,7 +884,7 @@ _POINT_WORKING_MEMORY_BYTES = 3 * 4 * _ENTRIES_PER_POINT
 
 
 class TestTheJaxExecutorBoundsTheMemoryOfItsMap:
-    def test_one_point_s_working_memory_is_read_from_its_trace(self):
+    def test_the_working_memory_of_one_point_is_read_from_its_trace(self):
         assert (
             _working_memory_bytes(
                 lambda point: _sine_of_each_entry(point["x"]),
@@ -896,9 +896,9 @@ class TestTheJaxExecutorBoundsTheMemoryOfItsMap:
     def test_a_set_within_the_budget_is_mapped_at_once_and_not_compiled(
         self, chunked_maps, compiled_sets
     ):
-        outputs, set_record = _traceable_set(_sine_of_each_entry, {"x": _POINTS})
+        outputs, set_records = _traceable_set(_sine_of_each_entry, {"x": _POINTS})
         assert (chunked_maps, compiled_sets) == ([], [])
-        assert (set_record.executor_name, set_record.executor_options) == ("jax", {})
+        assert (set_records[-1].executor_name, set_records[-1].executor_options) == ("jax", {})
         np.testing.assert_allclose(outputs, np.sin(0.37 * _POINTS), rtol=1e-6)
 
     def test_a_set_over_the_budget_is_compiled_in_chunks_that_fit_it(
@@ -921,14 +921,14 @@ class TestTheJaxExecutorBoundsTheMemoryOfItsMap:
     def test_chunk_size_sets_the_chunks_and_compiles_whatever_the_memory(
         self, chunked_maps, compiled_sets
     ):
-        outputs, set_record = _traceable_set(
+        outputs, set_records = _traceable_set(
             _sine_of_each_entry,
             {"x": _POINTS},
             requester_controls={"executor_options": {"chunk_size": 4}},
         )
         assert chunked_maps == [4]
         assert len(compiled_sets) == 1
-        assert set_record.executor_options == {"chunk_size": 4}
+        assert set_records[-1].executor_options == {"chunk_size": 4}
         np.testing.assert_allclose(outputs, np.sin(0.37 * _POINTS), rtol=1e-6)
 
     def test_a_chunk_size_of_every_point_compiles_one_map(self, chunked_maps, compiled_sets):
@@ -966,57 +966,61 @@ class TestTheJaxExecutorBoundsTheMemoryOfItsMap:
                 requester_controls={"executor_options": {"chunk_size": chunk_size}},
             )
 
-    def test_an_opaque_function_inside_a_chunked_map_runs_on_the_call_s_executor(
+    def test_an_opaque_function_inside_a_chunked_map_runs_on_the_calls_executor(
         self, monkeypatch, chunked_maps
     ):
         monkeypatch.setattr(_executors, "_JAX_MEMORY_BUDGET_BYTES", 10)
         scalar = NumericArraySpec((), dtype="float32")
-        hosted_values = []
 
         def add_one_on_the_host(x):
-            hosted_values.append(np.asarray(x).copy())
             return np.asarray(x, dtype="float32") + np.float32(1)
 
-        opaque_add_one = function(add_one_on_the_host, output_spec=scalar, traceable=False)
-        outputs, _ = _traceable_set(
+        opaque_add_one = function(
+            add_one_on_the_host, output_spec=scalar, traceable=False, label="add_one"
+        )
+        outputs, set_records = _traceable_set(
             lambda x: 2.0 * opaque_add_one(x),
             {"x": np.arange(4.0, dtype=np.float32)},
-            requester_controls={"executor": "sequential"},
+            requester_controls={"executor": "thread"},
         )
         assert chunked_maps == [1]
         np.testing.assert_allclose(outputs, [2.0, 4.0, 6.0, 8.0])
-        assert sorted(float(np.sum(value)) for value in hosted_values) == [0.0, 1.0, 2.0, 3.0]
+        # One host call per chunk of one point, each on the executor the call
+        # named rather than on sequential, which automatic selection picks.
+        embedded_records = [record for record in set_records if record.origin == "add_one"]
+        assert [record.executor_name for record in embedded_records] == ["thread"] * 4
+        assert sum(record.num_evaluation_points for record in embedded_records) == 4
 
 
 class TestTheOptionsOfJax:
-    def test_options_without_an_executor_reach_jax_on_the_function_s_own_call(self):
-        _, set_record = _traceable_set(
+    def test_options_without_an_executor_go_to_jax_on_a_functions_own_call(self):
+        _, set_records = _traceable_set(
             _sine_of_each_entry,
             {"x": _POINTS},
             requester_controls={"executor_options": {"chunk_size": 3}},
         )
-        assert (set_record.executor_name, set_record.executor_options) == (
+        assert (set_records[-1].executor_name, set_records[-1].executor_options) == (
             "jax",
             {"chunk_size": 3},
         )
 
-    def test_options_named_with_jax_reach_it(self):
-        _, set_record = _traceable_set(
+    def test_options_named_with_jax_go_to_it(self):
+        _, set_records = _traceable_set(
             _sine_of_each_entry,
             {"x": _POINTS},
             requester_controls={"executor": "jax", "executor_options": {"chunk_size": 3}},
         )
-        assert set_record.executor_options == {"chunk_size": 3}
+        assert set_records[-1].executor_options == {"chunk_size": 3}
 
-    def test_options_named_with_another_executor_do_not_reach_jax(self):
-        _, set_record = _traceable_set(
+    def test_options_named_with_another_executor_do_not_go_to_jax(self):
+        _, set_records = _traceable_set(
             _sine_of_each_entry,
             {"x": _POINTS},
             requester_controls={"executor": "thread", "executor_options": {"chunk_size": 3}},
         )
-        assert (set_record.executor_name, set_record.executor_options) == ("jax", {})
+        assert (set_records[-1].executor_name, set_records[-1].executor_options) == ("jax", {})
 
-    def test_an_option_jax_does_not_read_raises_on_the_function_s_own_call(self):
+    def test_an_option_jax_does_not_read_raises_on_a_functions_own_call(self):
         with pytest.raises(ValueError) as raised:
             _traceable_set(
                 _sine_of_each_entry,
