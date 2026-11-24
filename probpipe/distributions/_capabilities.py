@@ -192,6 +192,11 @@ class SupportsExpectation(Protocol):
     inspect, so a law that is exact only for special maps does not claim the
     capability; the ``expectation`` operation estimates such a law's
     expectation through a registered method instead.
+
+    ``f`` receives each value in its raw form, so a record value is the nested
+    mapping of its raw leaves. The order of that mapping's keys carries no
+    meaning, since ``jax.vmap`` sorts them, and the ``expectation`` operation
+    presents the value to the integrand as a ``Record`` in the declared order.
     """
 
     def _expectation(self, f: Callable[[Any], Array]) -> Array: ...

@@ -4526,6 +4526,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **The covariance of a field of shape `(0,)` is an empty array.** Before,
   `cov(law["e"])` for such a field raised `TypeError` from a floating-point
   index. Now it returns a `(0, 0)` array.
+- **`expectation` presents a record draw in the law's declared order on every
+  route.** Before, the closed form over held record draws, such as an
+  `EmpiricalDistribution` or a view of one, gave the integrand each draw with
+  its fields sorted alphabetically. An integrand that read the fields by
+  position, such as `lambda r: list(r.values())[0]`, therefore returned the
+  expectation of another field. A `Function` that declares the fields in the
+  law's order raised `ValueError` when the integrand called it, and an
+  operation integrand such as `log_prob` raised `ApplicabilityError`. Now the
+  integrand receives the fields in the law's declared order, as the sampling
+  and enumeration routes give them.
 
 - Operations with `given=` use the actual fidelity of input binding and
   normalization when selecting a route and reporting the result.
