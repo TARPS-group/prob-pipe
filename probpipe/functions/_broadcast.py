@@ -35,7 +35,7 @@ from ..core._record_batch import (
     _MappedBatchColumns,
     _stacked_batches,
 )
-from ..core._record_spec import RecordSpec, _layout_record_mapping
+from ..core._record_spec import RecordSpec
 from ..core._spec_base import NumericArraySpec
 from ..core._specs import OutputSpec, _has_record_outputs, _root_output_name
 from ..core.config import WorkflowKind, _checked_count
@@ -44,6 +44,7 @@ from ..core.provenance import Provenance
 from ..core.record import Record
 from ..core.tracked import TrackedTerm
 from ..custom_types import Array, PRNGKey
+from ..distributions._distribution import _value_at_declared_kind
 from ..distributions._empirical import EmpiricalDistribution
 from ..distributions._factored import _raw_record
 from ..values._binding import FunctionInputRef, input_ref_value, replace_input_refs
@@ -963,8 +964,8 @@ def mapped_draw_body(
             return _batch_at(row, events[ref], ref.label)
         if ref in record_draws:
             # JAX maps a dict with its keys sorted, so the draw is laid out in
-            # the event's order again before it is a record.
-            return Record(_layout_record_mapping(record_draws[ref], row), label=ref.label)
+            # the declared order again before it is a record.
+            return _value_at_declared_kind(record_draws[ref], ref.label, row)
         return row
 
     def one_draw(lifted_rows: tuple[Any, ...]) -> Any:

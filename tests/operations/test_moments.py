@@ -30,6 +30,7 @@ from probpipe import (
     conditional_distribution,
     config,
     factor,
+    function,
     log_prob,
     replay_run,
     sample,
@@ -164,6 +165,20 @@ class _Ramp(Distribution, SupportsSampling):
         if self.record:
             return {"x": index, "y": 2.0 * index}
         return jnp.stack([index, 2.0 * index], axis=-1)
+
+
+def _grouped_empirical() -> EmpiricalDistribution:
+    """Three equally weighted atoms whose group ``z`` and its leaves are declared out of alphabetical order."""
+    atoms = NumericRecordBatch(
+        {
+            "z": {"y": jnp.array([1.0, 2.0, 3.0]), "x": jnp.array([0.0, 1.0, 2.0])},
+            "a": jnp.array([2.0, 1.0, 3.0]),
+        },
+        "row",
+        element=RecordSpec(z=RecordSpec(y=(), x=()), a=()),
+        label="rows",
+    )
+    return EmpiricalDistribution(atoms, label="post")
 
 
 def _record_empirical() -> EmpiricalDistribution:
@@ -1264,6 +1279,47 @@ class TestTheIntegrandReceivesDraws:
         # The atoms give 2 + 3, 1 + 1, and 3 + 5, whose mean is 5.
         assert _value(closed) == pytest.approx(_value(enumerated)) == pytest.approx(5.0)
         assert received and all(issubclass(kind, Record) for kind in received)
+
+    @pytest.mark.parametrize("method", [None, "empirical_enumeration", "sampling_lift"])
+    @pytest.mark.parametrize(
+        ("law", "paths"),
+        [
+            (_record_empirical(), ["b", "a"]),
+            (_grouped_empirical(), ["z/y", "z/x", "a"]),
+            (_grouped_empirical()["z"], ["y", "x"]),
+            (_grouped_empirical().rename({"a": "q"}), ["z/y", "z/x", "q"]),
+            (_grouped_empirical()[["z", "a"]].rename({"a": "q"}), ["z/y", "z/x", "q"]),
+        ],
+        ids=["record", "group", "view_of_the_group", "renamed", "renamed_view"],
+    )
+    def test_a_record_atom_reaches_the_integrand_in_the_declared_order(self, law, paths, method):
+        # A record iterates over its leaf paths, so each list holds the leaves
+        # of a nested group in their declared order too.
+        received: list[list[str]] = []
+
+        def first(r):
+            received.append(list(r))
+            return r[paths[0]]
+
+        with workflow_run(seed=0):
+            expectation.using(method=method)(law, first)
+        assert received and all(seen == paths for seen in received)
+
+    def test_a_function_declaring_the_order_accepts_the_atom_on_both_routes(self):
+        law = _record_empirical()
+
+        @function(input_spec={"r": RecordSpec(b=(2,), a=())}, traceable=True)
+        def total(r):
+            return r["a"] + jnp.sum(r["b"])
+
+        def squared_total(r):
+            return total(r) ** 2
+
+        closed = expectation(law, squared_total)
+        enumerated = expectation.using(method="empirical_enumeration")(law, squared_total)
+        assert closed.provenance.metadata["route"] == "closed_form"
+        # The totals are 5, 2, and 8, whose squares have mean 31.
+        assert _value(closed) == pytest.approx(_value(enumerated)) == pytest.approx(31.0)
 
 
 class TestFixedArgumentsOfExpectation:
