@@ -48,6 +48,7 @@ except ImportError:
 
 from ..core._batch import Batch, BatchSpec, _flat_batch_spec
 from ..core._call_context import (
+    _CountNotingControls,
     _jax_tracing_active,
     _jax_transformation_active,
     _note_count_read,
@@ -2115,14 +2116,16 @@ def _run_registered_rule(
     The rule returns the result over raw forms, and the return step wraps it at
     its kind under the call's result label and gives it *expression*, the
     function applied to draws of its inputs, with provenance recording the
-    function, its inputs, and the rule.
+    function, its inputs, and the rule. The rule receives the call's controls
+    as a mapping that notes a lookup of a count as the call's read of it, as an
+    operation's route does, so a rule that uses ``max_evaluations`` reads it.
     """
     result = route.rule.execute(
         function,
         route.operand,
         parameter=route.parameter,
         fixed_args=route.fixed_args,
-        controls=route.controls,
+        controls=_CountNotingControls(route.controls),
     )
     controls, diagnostics = _recipe.provenance_recipe_fields(None)
     provenance = Provenance.create(

@@ -1769,3 +1769,76 @@ class TestTheCountsAnOperationReads:
         with workflow_run(seed=0), pytest.warns(UnusedControlWarning, match=unused):
             result = pushforward.using(max_evaluations=10)(Gaussian("g"), lambda x: x)
         assert result.provenance.metadata["method"] == "exact_to_sampler"
+
+    def test_a_registered_rule_that_looks_up_max_evaluations_reads_it(self, counting_rule):
+        square = Function(lambda x: x**2, label="square")
+        with workflow_run(seed=0), _no_unused_count_warning():
+            direct = square.using(method="counting_rule", max_evaluations=13)(Gaussian("g"))
+            pushed = pushforward.using(method="counting_rule", max_evaluations=13)(
+                Gaussian("g"), square
+            )
+        assert direct.num_atoms == pushed.num_atoms == 13
+
+    def test_a_registered_rule_that_ignores_num_samples_leaves_it_unread(self, counting_rule):
+        square = Function(lambda x: x**2, label="square")
+        with workflow_run(seed=0), pytest.warns(UnusedControlWarning, match="num_samples=7"):
+            square.using(method="counting_rule", num_samples=7)(Gaussian("g"))
+
+    def test_a_pushforward_kernel_does_not_warn_about_its_maps_own_count(self):
+        kernel = conditional_distribution(
+            lambda mu: Normal("y", mu, 1.0), given_spec={"mu": REAL}, label="kernel"
+        )
+        double = Function(lambda y: 2 * y, label="double")
+        with workflow_run(seed=0), _no_unused_count_warning():
+            pushed = pushforward(kernel, double.using(max_evaluations=9))
+            bound = condition_on(pushed, {"mu": 1.0})
+            draws = sample(pushed, (3,), given={"mu": 1.0})
+        assert bound.num_atoms == 9
+        assert jnp.shape(jnp.asarray(draws)) == (3,)
+
+    def test_a_maps_own_count_is_named_when_the_operations_count_is_unread(self):
+        double = Function(lambda y: 2 * y, label="double")
+        with workflow_run(seed=0), pytest.warns(UnusedControlWarning) as record:
+            result = pushforward.using(num_samples=13)(
+                Gaussian("g"), double.using(max_evaluations=9)
+            )
+        assert result.num_atoms == 9
+        assert _unused_count_messages(record) == [
+            "pushforward did not use num_samples=13, because the call evaluated a function at "
+            "draws of a distribution, which max_evaluations=9 counts. "
+            "Set max_evaluations=13 instead"
+        ]
+
+
+class _CountingRule(BinaryDispatchMethod):
+    """An approximate rule whose pushforward has as many atoms as the call's ``max_evaluations``."""
+
+    name = "counting_rule"
+    exact = False
+    priority = 90
+
+    def supported_types(self) -> tuple[tuple[type, ...], tuple[type, ...]]:
+        return ((Function,), (Distribution,))
+
+    def check(self, f: Any, operand: Any, /, **call: Any) -> Feasibility:
+        return Feasibility(True)
+
+    def execute(self, f: Any, operand: Any, /, **call: Any) -> Any:
+        count = call["controls"]["max_evaluations"]
+        return EmpiricalDistribution(jnp.arange(float(count)), output_name="y")
+
+
+@pytest.fixture
+def counting_rule(monkeypatch):
+    """The evaluation rules, for one test, with a registered rule that looks up ``max_evaluations``."""
+    registry = type(_rules.evaluation_rule_registry)()
+    for rule in (
+        _rules._SamplingLift(),
+        _rules._ElementwiseSweep(),
+        _rules._EmpiricalEnumeration(),
+        _CountingRule(),
+    ):
+        registry.register(rule)
+    monkeypatch.setattr(_rules, "evaluation_rule_registry", registry)
+    (route,) = [r for r in pushforward.routes if r.name == "evaluation_rules"]
+    monkeypatch.setattr(route, "registry", registry)

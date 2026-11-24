@@ -49,6 +49,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from ..core._batch import Batch
+from ..core._call_context import _CountNotingControls
 from ..core._catalog import registry_catalog
 from ..core._dispatch import (
     BinaryDispatchMethod,
@@ -111,6 +112,9 @@ def _run_by_name(
     The engine realizes the rules this module registers, so naming one runs it
     there, under the forwarded controls.
     """
+    # The controls are passed on, not read, so a read-tracking mapping is peeked.
+    if isinstance(controls, _CountNotingControls):
+        controls = controls.peek()
     # An unset control is None, which would reset the map's own setting.
     forwarded = {
         name: controls[name]
