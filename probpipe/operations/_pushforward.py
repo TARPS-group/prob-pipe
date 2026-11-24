@@ -456,9 +456,7 @@ def _draw_map(
         if "max_evaluations" in f._given_counts
         else {}
     )
-    each_draw_f = (
-        f._forwarding(given_max_evaluations, count_sources={}) if given_max_evaluations else f
-    )
+    each_draw_f = f._without_given_counts(["max_evaluations"])
     target = each_draw_f.using(exact_only=True) if direct and exact_only else each_draw_f
     call = target if direct else each_draw_f.apply
     constants = dict(fixed)
@@ -668,6 +666,11 @@ class _PushforwardKernel(ConditionalDistribution):
 
     def __init__(self, source: Any, f: Function, fixed: Any, controls: Any) -> None:
         parameter = _bound_parameter(f, fixed)
+        # Inferring the output at an abstract value evaluates the map on the
+        # kernel's behalf, as each conditional draw does, so neither warns
+        # about a count the map's using gave for the bound pushforward's lift.
+        f_at_abstract_value = f._without_given_counts()
+        f_at_each_draw = f._without_given_counts(["max_evaluations"])
         event = f.output_spec
         if event is None or event.term_spec is None:
             stand_in = spec_stand_in(source.event_spec.term_spec)
@@ -678,7 +681,7 @@ class _PushforwardKernel(ConditionalDistribution):
                     nonlocal inferred
                     if isinstance(source.event_spec.term_spec, RecordSpec):
                         value = Record(value, event_template=source.event_spec.term_spec)
-                    output = _call_at(f.apply, f, parameter, value, fixed)
+                    output = _call_at(f_at_abstract_value.apply, f, parameter, value, fixed)
                     inferred = _spec_of(output)
                     return ()
 
@@ -701,7 +704,7 @@ class _PushforwardKernel(ConditionalDistribution):
         batch_event = isinstance(source.event_spec.term_spec, BatchSpec)
         self._sample_map = Function(
             lambda draw: _call_at(
-                f.apply, f, parameter, draw["value"] if batch_event else draw, fixed
+                f_at_each_draw.apply, f, parameter, draw["value"] if batch_event else draw, fixed
             ),
             input_spec={
                 "draw": RecordSpec(value=source.event_spec.term_spec)

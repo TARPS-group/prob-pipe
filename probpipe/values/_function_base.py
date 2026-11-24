@@ -17,7 +17,7 @@ import inspect
 import keyword
 import os
 import warnings
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from contextlib import AbstractContextManager, contextmanager, nullcontext
 from dataclasses import dataclass, replace
 from functools import partial, wraps
@@ -1676,11 +1676,12 @@ class Function(TrackedTerm, Annotated):
         of the view never warns about them. A read of a count by the view's
         call is also noted in the records *count_sources* names, so the call
         that forwarded the count learns whether it was read. A count that
-        *controls* leaves unset keeps the view's own value, so its read is
-        noted in those records only when neither the view's ``using`` nor the
-        first of those calls was given that count: the value read is then no
-        given value, and the note only tells that call which count governed
-        its work.
+        *controls* leaves unset keeps the view's own value, whether its
+        ``using`` or its construction set it, so its read is noted in those
+        records only when the first of those calls was not given that count:
+        the value read is then no value that call was given, and the note only
+        tells that call which count governed its work, which its warning
+        about the other count names.
 
         Parameters
         ----------
@@ -1706,15 +1707,39 @@ class Function(TrackedTerm, Annotated):
         forwarded_count_sources = {
             count_name: sources
             for count_name, sources in count_sources.items()
-            if sources
-            and count_name not in given_counts
-            and (count_name in controls or count_name not in sources[0].given_counts)
+            if sources and (count_name in controls or count_name not in sources[0].given_counts)
         }
         object.__setattr__(forwarding_view, "_given_counts", frozenset(given_counts))
         object.__setattr__(
             forwarding_view, "_forwarded_count_sources", MappingProxyType(forwarded_count_sources)
         )
         return forwarding_view
+
+    def _without_given_counts(self, count_names: Iterable[str] = _COUNT_CONTROLS) -> Self:
+        """This view with the counts among *count_names* that its ``using`` set kept as values but no longer given.
+
+        A call that ProbPipe makes on the view's behalf, such as one
+        evaluation of a map at an abstract value to infer its output, or at one
+        draw of a lift whose plan reads the view's ``max_evaluations``, runs on
+        this view, so it never warns about a count the user's own call of the
+        view reads.
+
+        Parameters
+        ----------
+        count_names : iterable of str, optional
+            The counts to keep but no longer give; both counts by default.
+
+        Returns
+        -------
+        Self
+            The view, or a copy whose ``using`` gave none of *count_names*.
+        """
+        given = {
+            count_name: self._options[count_name]
+            for count_name in count_names
+            if count_name in self._given_counts
+        }
+        return self._forwarding(given, count_sources={}) if given else self
 
     def _inheriting(self, passed_controls: Mapping[str, Any]) -> Self:
         """This view under the controls a derived route passes down.
