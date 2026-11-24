@@ -12,6 +12,10 @@ Provides:
     and :func:`_open_call_context`, which runs one call in its own context;
   - :class:`_ExecutionChoice`, the executor a call chose and its options, and
     :class:`_NamedExecutorUse`, whether a named executor ran anything;
+  - :class:`_CountReads` and :class:`_CountSource`, which of a call's two
+    counts the code it runs read, with :class:`_CountNotingControls`,
+    :func:`_note_count_read`, :func:`_read_count`, and
+    :func:`_sources_of_count`;
   - :class:`_NumSamplesUsed` and :class:`_EvaluationLog`, the call's two
     accumulators: the numbers of Monte Carlo draws its estimates took, and the
     sets of evaluation points it ran, with :func:`_collecting_call_accumulators`
@@ -27,6 +31,7 @@ as its chunk, an ``EvaluationChunk``, holds its call's evaluation context.
 from __future__ import annotations
 
 import threading
+import uuid
 from collections.abc import Iterable, Iterator, Mapping
 from contextlib import contextmanager, nullcontext
 from contextvars import ContextVar
@@ -57,6 +62,12 @@ _NO_CONFIG_BLOCKS: Mapping[str, Mapping[str, Any]] = MappingProxyType({})
 _NO_CONTROLS: Mapping[str, Any] = MappingProxyType({})
 _NO_SESSION_CONFIG_VALUES: Mapping[str, Mapping[str, Any]] = MappingProxyType({})
 _NO_JAX_SETTINGS: Mapping[str, Any] = MappingProxyType({})
+
+#: The two count controls, ``max_evaluations`` and ``num_samples``, which a
+#: derived route passes down and whose reads a call notes.
+_COUNT_CONTROLS = ("max_evaluations", "num_samples")
+
+_NO_COUNT_SOURCES: Mapping[str, tuple[_CountSource, ...]] = MappingProxyType({})
 
 #: The JAX settings that change what a computation returns, which a root call
 #: holds fixed and a worker process applies before it unpickles any work.
@@ -364,6 +375,222 @@ class _NamedExecutorUse:
             self._enclosing.note_ran_elsewhere()
 
 
+class _CountReads:
+    """Which of one call's two counts the code that runs for the call read, and the counts its view was given.
+
+    A count is *given* to a call when the ``using`` view the call runs on sets
+    it. A count is *read* when code that runs for the call looks its value up
+    to decide what the call computes: a lift over a distribution plans its
+    draws from ``max_evaluations``, and a Monte Carlo route or a converter
+    that draws takes ``num_samples`` draws. A call that succeeds warns for
+    each count it was given and did not read.
+
+    Every call creates one when it opens, and every read of the call's count
+    is noted in it. A read of a count that a derived route passed down, or
+    that a route forwarded to the function it calls, is also noted in the
+    record of the call that passed or forwarded it, which the reading call's
+    :class:`_CountSource` chain names. The calls that read on a call's behalf
+    share its record, as worker threads do, so its contents are guarded by a
+    lock.
+
+    A read made while the program store traces a compiled JAX program is kept
+    with the program's other notes and noted again after every run, so a warm
+    run, which traces nothing, notes the reads its trace made.
+
+    A pickled record arrives in a worker process as a copy with the same
+    token. A read noted there is also noted in the accumulators of the
+    worker's scope, which return with the evaluation points' outcomes, and
+    the calling process notes it again on the record that has its token.
+
+    Parameters
+    ----------
+    function_label : str
+        The label of the called ``Function``, which the warning names.
+    given_counts : Mapping of str to int
+        The counts the call's view was given, by name.
+    token : str, optional
+        The record's identity, which a pickled copy keeps; a new one by
+        default.
+
+    Attributes
+    ----------
+    token : str
+        The record's identity, by which a read noted on a copy in a worker
+        process is noted again on the record when the worker's outcomes
+        return (:func:`_merge_noted_into`).
+    """
+
+    def __init__(
+        self, function_label: str, given_counts: Mapping[str, int], token: str | None = None
+    ) -> None:
+        self._lock = threading.Lock()
+        self.function_label = function_label
+        self.given_counts: Mapping[str, int] = MappingProxyType(dict(given_counts))
+        self.token = uuid.uuid4().hex if token is None else token
+        self._read_counts: dict[str, int] = {}
+
+    @property
+    def read_counts(self) -> Mapping[str, int]:
+        """The counts read so far, each with the value first read, by name."""
+        with self._lock:
+            return MappingProxyType(dict(self._read_counts))
+
+    def note_read(self, count_name: str, count: int) -> None:
+        """Note that code running for the call read the count *count_name*, whose value is *count*."""
+        with self._lock:
+            self._read_counts.setdefault(count_name, count)
+
+    def unread_given_counts(self) -> dict[str, int]:
+        """The given counts that nothing read, by name, in the order of the two counts."""
+        with self._lock:
+            return {
+                count_name: self.given_counts[count_name]
+                for count_name in _COUNT_CONTROLS
+                if count_name in self.given_counts and count_name not in self._read_counts
+            }
+
+    def __reduce__(self) -> tuple[Any, ...]:
+        """Pickle with the label, the given counts, and the counts read so far, and a lock of its own."""
+        return (
+            _unpickled_count_reads,
+            (self.function_label, dict(self.given_counts), dict(self.read_counts), self.token),
+        )
+
+
+@dataclass(frozen=True)
+class _CountSource:
+    """One record a read of a call's count is noted in, and the count's name there.
+
+    The name differs from the count read where a route spends one count as
+    the other, as ``expectation`` spends its ``num_samples`` as the
+    ``max_evaluations`` of the map it lifts.
+
+    Attributes
+    ----------
+    count_reads : _CountReads
+        The record of the call whose count it is.
+    count_name : str
+        The count's name in that call, ``max_evaluations`` or ``num_samples``.
+    """
+
+    count_reads: _CountReads
+    count_name: str
+
+    def note_read(self, count: int) -> None:
+        """Note in the record that the count, whose value is *count*, was read."""
+        self.count_reads.note_read(self.count_name, count)
+
+
+#: The records a read of each of a call's counts is noted in, by count name:
+#: the call's own first, then those of the calls that passed or forwarded it.
+_CountSources = Mapping[str, tuple[_CountSource, ...]]
+
+
+def _unpickled_count_reads(
+    function_label: str,
+    given_counts: Mapping[str, int],
+    read_counts: Mapping[str, int],
+    token: str,
+) -> _CountReads:
+    """The record that :meth:`_CountReads.__reduce__` pickled."""
+    count_reads = _CountReads(function_label, given_counts, token)
+    for count_name, count in read_counts.items():
+        count_reads.note_read(count_name, count)
+    return count_reads
+
+
+def _note_count_read(
+    count_name: str, count: int, count_sources: _CountSources | None = None
+) -> None:
+    """Note a read of the count *count_name*, whose value *count* the caller holds.
+
+    Parameters
+    ----------
+    count_name : {"max_evaluations", "num_samples"}
+        The count read.
+    count : int
+        Its value.
+    count_sources : Mapping of str to tuple of _CountSource, optional
+        The records to note the read in; by default those of the running call,
+        and none outside every call.
+    """
+    call_context = current_call_context()
+    if count_sources is None:
+        count_sources = call_context.count_sources
+    for count_source in count_sources.get(count_name, ()):
+        count_source.note_read(count)
+        if call_context.num_samples_used is not None:
+            call_context.num_samples_used.note_count_read(
+                (count_source.count_reads.token, count_source.count_name, count)
+            )
+
+
+def _read_count(count_name: str) -> int:
+    """The running call's resolved count *count_name*, with the read noted."""
+    count = current_call_context().resolved_controls[count_name]
+    _note_count_read(count_name, count)
+    return count
+
+
+def _sources_of_count(count_name: str) -> tuple[_CountSource, ...]:
+    """The records a read of the running call's count *count_name* is noted in, which a route forwards with it."""
+    return current_call_context().count_sources.get(count_name, ())
+
+
+class _CountNotingControls(Mapping[str, Any]):
+    """A call's resolved controls, which note each lookup of a count as a read of it.
+
+    A route reads its call's controls here, as ``call.controls``, so looking
+    up ``num_samples`` or ``max_evaluations`` notes the read in the records
+    of the call that built it, whatever thread the route runs in. Code that
+    copies the controls to pass them on, rather than to read them, copies
+    :meth:`peek`, which notes nothing.
+
+    Parameters
+    ----------
+    controls : Mapping of str to Any
+        The resolved controls.
+    count_sources : Mapping of str to tuple of _CountSource, optional
+        The records a read is noted in; by default those of the running call
+        when this is built.
+    """
+
+    def __init__(
+        self, controls: Mapping[str, Any], count_sources: _CountSources | None = None
+    ) -> None:
+        self._controls = MappingProxyType(dict(controls))
+        self._count_sources = (
+            current_call_context().count_sources if count_sources is None else count_sources
+        )
+
+    def __getitem__(self, control_name: str) -> Any:
+        value = self._controls[control_name]
+        if control_name in _COUNT_CONTROLS:
+            _note_count_read(control_name, value, self._count_sources)
+        return value
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self._controls)
+
+    def __len__(self) -> int:
+        return len(self._controls)
+
+    def __repr__(self) -> str:
+        return f"{type(self).__name__}({dict(self._controls)!r})"
+
+    def peek(self) -> Mapping[str, Any]:
+        """The controls as a read-only mapping whose lookups note nothing, for passing them on."""
+        return self._controls
+
+    def __eq__(self, other: object) -> bool:
+        """Whether *other* holds the same controls; comparing reads no count."""
+        if isinstance(other, _CountNotingControls):
+            other = other.peek()
+        return isinstance(other, Mapping) and dict(self._controls) == dict(other)
+
+    __hash__ = None  # type: ignore[assignment]
+
+
 @dataclass(frozen=True)
 class _CallContext:
     """The per-call state that the code a call runs reads, wherever it runs.
@@ -481,6 +708,15 @@ class _CallContext:
     forbids_workflow_randomness : bool
         Whether a workflow-owned draw is forbidden in this evaluation, carried
         into every executor worker of an embedded call.
+    count_reads : _CountReads or None
+        The running call's own record of the counts it was given and read,
+        which it warns from when it succeeds. ``None`` outside every call.
+    count_sources : Mapping[str, tuple of _CountSource]
+        The records a read of each of the running call's two counts is noted
+        in, by count name: the call's own record first, then, for a count a
+        derived route passed down or a route forwarded, the records of the call
+        that passed or forwarded it. A child call derives its own. Empty
+        outside every call.
     """
 
     config_blocks: Mapping[str, Mapping[str, Any]] = _NO_CONFIG_BLOCKS
@@ -496,6 +732,8 @@ class _CallContext:
     jax_settings: Mapping[str, Any] = _NO_JAX_SETTINGS
     embedded_calls: _EmbeddedCallState | None = None
     forbids_workflow_randomness: bool = False
+    count_reads: _CountReads | None = None
+    count_sources: Mapping[str, tuple[_CountSource, ...]] = _NO_COUNT_SOURCES
 
     def with_config_block(self, config_values: Mapping[str, Mapping[str, Any]]) -> _CallContext:
         """This context under one more ``config`` block, which sets *config_values*.
@@ -536,6 +774,33 @@ class _CallContext:
         if passed_controls is not None:
             passed_controls = MappingProxyType(dict(passed_controls))
         return replace(self, passed_controls=passed_controls)
+
+    def with_count_reads_recorded_in(self, recorder: _CountReads) -> _CallContext:
+        """This context with *recorder* among the records a read of each of the running call's counts is noted in.
+
+        The program store records the reads a trace makes this way, to note
+        them again after every run of the traced JAX program.
+
+        Parameters
+        ----------
+        recorder : _CountReads
+            The record that also notes each read, under the count's own name.
+
+        Returns
+        -------
+        _CallContext
+            A copy whose ``count_sources`` end each count's records with
+            *recorder*.
+        """
+        return replace(
+            self,
+            count_sources=MappingProxyType(
+                {
+                    count_name: (*count_sources, _CountSource(recorder, count_name))
+                    for count_name, count_sources in self.count_sources.items()
+                }
+            ),
+        )
 
     def with_fresh_call_accumulators(self, *, collects_calls: bool = False) -> _CallContext:
         """This context with a new, empty ``num_samples_used`` and ``evaluation_log``.
@@ -613,6 +878,8 @@ class _CallContext:
         execution_choice: _ExecutionChoice = _AUTOMATIC_SELECTION,
         session_config_values: Mapping[str, Mapping[str, Any]] | None = None,
         jax_settings: Mapping[str, Any] | None = None,
+        count_reads: _CountReads | None = None,
+        count_sources: Mapping[str, tuple[_CountSource, ...]] | None = None,
     ) -> _CallContext:
         """The context of a call opened in this context, which it derives and does not install.
 
@@ -644,6 +911,12 @@ class _CallContext:
         jax_settings : Mapping of str to Any, optional
             The JAX settings :func:`_jax_settings_snapshot` took, given only for
             a root call.
+        count_reads : _CountReads, optional
+            The call's own record of the counts it was given and read; none by
+            default.
+        count_sources : Mapping of str to tuple of _CountSource, optional
+            The records a read of each of the call's counts is noted in, by
+            count name; none by default.
 
         Returns
         -------
@@ -675,6 +948,12 @@ class _CallContext:
             ),
             jax_settings=(
                 self.jax_settings if jax_settings is None else MappingProxyType(dict(jax_settings))
+            ),
+            count_reads=count_reads,
+            count_sources=(
+                _NO_COUNT_SOURCES
+                if count_sources is None
+                else MappingProxyType(dict(count_sources))
             ),
         )
 
@@ -830,7 +1109,9 @@ class _NumSamplesUsed:
     """The numbers of Monte Carlo draws that the estimates of one call took, which its provenance reports as ``num_samples``.
 
     A route that estimates a value from draws notes their number here, through
-    :func:`_note_num_samples_used`. It differs from the ``num_samples``
+    :func:`_note_num_samples_used`. Each read of a count is noted here too, by
+    the token of the record it was noted in, so a read made in a worker
+    process returns with the outcomes of its evaluation points. It differs from the ``num_samples``
     control, which says how many draws an estimate should take: a call that ran
     no Monte Carlo estimate notes none, and the calls a formula makes may use
     their own counts.
@@ -861,6 +1142,7 @@ class _NumSamplesUsed:
     def __init__(self, *, collects_calls: bool = False) -> None:
         self._lock = threading.Lock()
         self._num_samples_values: set[int] = set()
+        self._count_reads: set[tuple[str, str, int]] = set()
         self.collects_calls = collects_calls
 
     @property
@@ -887,6 +1169,17 @@ class _NumSamplesUsed:
         """Note that one Monte Carlo estimate took *num_samples* draws."""
         with self._lock:
             self._num_samples_values.add(num_samples)
+
+    @property
+    def count_reads(self) -> frozenset[tuple[str, str, int]]:
+        """The count reads noted so far, each as the record's token, the count's name there, and its value."""
+        with self._lock:
+            return frozenset(self._count_reads)
+
+    def note_count_read(self, count_read: tuple[str, str, int]) -> None:
+        """Note a read of a count, as the record's token, the count's name there, and its value."""
+        with self._lock:
+            self._count_reads.add(count_read)
 
     def __reduce__(self) -> tuple[Any, ...]:
         """Pickle as a new, empty value with the same ``collects_calls`` and a lock of its own."""
@@ -1030,6 +1323,7 @@ def _collecting_call_accumulators(merge_rule: _MergeRule) -> Iterator[_CallConte
             enclosing_context,
             cast(_NumSamplesUsed, collecting_context.num_samples_used).num_samples_values,
             cast(_EvaluationLog, collecting_context.evaluation_log).set_records,
+            cast(_NumSamplesUsed, collecting_context.num_samples_used).count_reads,
         )
 
 
@@ -1037,14 +1331,31 @@ def _merge_noted_into(
     call_context: _CallContext,
     num_samples_values: Iterable[int],
     set_records: Iterable[_EvaluationSetRecord],
+    count_reads: Iterable[tuple[str, str, int]] = (),
 ) -> None:
-    """Add the numbers of draws and the sets of evaluation points a scope noted to *call_context*'s accumulators.
+    """Add the numbers of draws, the sets of evaluation points, and the count reads a scope noted to *call_context*'s accumulators.
 
-    A context without accumulators, as a ``check``'s, takes none.
+    A context without accumulators, as a ``check``'s, takes none. A count read
+    is also noted again on the record of *call_context*'s count sources that
+    has its token, so a read made on a copy of the record in a worker process
+    reaches the record itself.
     """
+    count_reads = tuple(count_reads)
+    if count_reads:
+        records_by_token = {
+            count_source.count_reads.token: count_source.count_reads
+            for count_sources in call_context.count_sources.values()
+            for count_source in count_sources
+        }
+        for token, count_name, count in count_reads:
+            count_reads_record = records_by_token.get(token)
+            if count_reads_record is not None:
+                count_reads_record.note_read(count_name, count)
     if call_context.num_samples_used is not None:
         for num_samples in num_samples_values:
             call_context.num_samples_used.note(num_samples)
+        for count_read in count_reads:
+            call_context.num_samples_used.note_count_read(count_read)
     if call_context.evaluation_log is not None:
         for set_record in set_records:
             call_context.evaluation_log.record(set_record)

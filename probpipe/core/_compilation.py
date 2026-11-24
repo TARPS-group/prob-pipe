@@ -34,10 +34,12 @@ import numpy as np
 
 from ._call_context import (
     _TRACED_CALL_TOKEN,
+    _CountReads,
     _EvaluationLog,
     _EvaluationSetRecord,
     _jax_transformation_active,
     _merge_noted_into,
+    _note_count_read,
     _NumSamplesUsed,
     _open_call_context,
     _UnclassifiedSettingError,
@@ -362,7 +364,12 @@ class _ProgramStore:
             static_options: Hashable,
             static_settings: _StaticSettings,
         ) -> Any:
-            traced_context = current_call_context().with_static_settings(static_settings)
+            trace_count_reads = _CountReads("trace", {})
+            traced_context = (
+                current_call_context()
+                .with_static_settings(static_settings)
+                .with_count_reads_recorded_in(trace_count_reads)
+            )
             token_scope = _TRACED_CALL_TOKEN.set(call_token)
             try:
                 with (
@@ -382,6 +389,7 @@ class _ProgramStore:
                     tuple(
                         (warning.category, str(warning.message)) for warning in captured_warnings
                     ),
+                    tuple(sorted(trace_count_reads.read_counts.items())),
                 )
             )
             return body_output
@@ -547,15 +555,24 @@ class _TraceNotes:
         recorded.
     warnings : tuple of (warning class, str), optional
         Warnings emitted while tracing, replayed once after every successful run.
+    count_reads : tuple of (str, int), optional
+        The running call's counts the trace read, each with its value, noted
+        again on the running call after every run.
     """
 
     num_samples_values: frozenset[int]
     set_records: tuple[_EvaluationSetRecord, ...]
     warnings: tuple[tuple[type[Warning], str], ...] = ()
+    count_reads: tuple[tuple[str, int], ...] = ()
 
     def is_empty(self) -> bool:
         """Whether the trace noted nothing."""
-        return not self.num_samples_values and not self.set_records and not self.warnings
+        return (
+            not self.num_samples_values
+            and not self.set_records
+            and not self.warnings
+            and not self.count_reads
+        )
 
 
 class _VaryingTraceNotesError(RuntimeError):
@@ -609,6 +626,9 @@ class _StoreEntry:
             self._trace_notes = replace(
                 self._trace_notes,
                 warnings=tuple(dict.fromkeys((*self._trace_notes.warnings, *trace_notes.warnings))),
+                count_reads=tuple(
+                    sorted(set(self._trace_notes.count_reads) | set(trace_notes.count_reads))
+                ),
             )
 
     def apply_trace_notes(self) -> None:
@@ -619,6 +639,8 @@ class _StoreEntry:
         _merge_noted_into(
             current_call_context(), trace_notes.num_samples_values, trace_notes.set_records
         )
+        for count_name, count in trace_notes.count_reads:
+            _note_count_read(count_name, count)
         for category, message in trace_notes.warnings:
             warnings.warn(message, category, stacklevel=3)
 

@@ -22,6 +22,7 @@ from probpipe import (
     OutputSpec,
     ResolutionError,
     SupportsMean,
+    UnusedControlWarning,
     WorkflowKind,
     config,
     function,
@@ -504,9 +505,13 @@ class TestTheCountOfALift:
     """``max_evaluations`` bounds the evaluations of a lift, and ``num_samples`` plays no part."""
 
     @pytest.mark.parametrize("num_samples", [1, 5000])
-    def test_a_sampled_lift_follows_max_evaluations_and_ignores_num_samples(self, num_samples):
+    def test_a_sampled_lift_follows_max_evaluations_and_warns_about_num_samples(self, num_samples):
         identity = Function(_identity, label="identity", executor="sequential")
-        with workflow_run(seed=0):
+        unused = f"identity did not use num_samples={num_samples}"
+        with (
+            workflow_run(seed=0),
+            pytest.warns(UnusedControlWarning, match=unused),
+        ):
             law = identity.using(max_evaluations=9, num_samples=num_samples)(standard_normal())
         assert law.num_atoms == 9
         assert law.provenance.metadata["max_evaluations"] == 9
@@ -524,7 +529,7 @@ class TestTheCountOfALift:
         law = EmpiricalDistribution(jnp.arange(6.0), output_name="x")
         identity = Function(_identity, label="identity", executor="sequential")
         with workflow_run(seed=0):
-            pushed = identity.using(max_evaluations=max_evaluations, num_samples=1)(law)
+            pushed = identity.using(max_evaluations=max_evaluations)(law)
         assert pushed.provenance.metadata["route"] == route
         assert pushed.num_atoms == atoms
 
@@ -539,7 +544,7 @@ class TestTheCountOfALift:
         added = Function(add, label="add", traceable=False, executor="sequential")
         a = EmpiricalDistribution(jnp.arange(4.0), output_name="a")
         with workflow_run(seed=0):
-            law = added.using(max_evaluations=10, num_samples=3)(a, standard_normal("b"))
+            law = added.using(max_evaluations=10)(a, standard_normal("b"))
         assert law.num_atoms == len(calls) == 8
 
     @pytest.mark.parametrize("max_evaluations", [5, 6, 7, 13, 24])

@@ -621,7 +621,9 @@ class _FiniteMixtureKernel(_PushforwardKernel):
 
     def _finish(self, source: Any, controls: Any, *, check: bool = False) -> Any:
         """Enumerate the mixing atoms after the remaining inputs have been bound."""
-        operation = _mixture.mixture.using(**controls)
+        # The bound mixture is the kernel's own work, not a call the caller
+        # gave counts to, so it never warns about them.
+        operation = _mixture.mixture._forwarding(controls, count_sources={})
         return operation.check(source, self._mixing) if check else operation(source, self._mixing)
 
 

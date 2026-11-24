@@ -54,6 +54,7 @@ from probpipe import (
     VonMisesFisher,
     Wishart,
     boolean,
+    config,
     expectation,
     greater_than,
     integer_interval,
@@ -730,7 +731,8 @@ class TestDerivedLabels:
     )
     def test_an_expectation_is_labeled_over_its_law(self, make_operand, f, label):
         law = make_operand()
-        result = expectation.using(num_samples=3)(law, f)
+        with config.sampling.using(num_samples=3):
+            result = expectation(law, f)
         assert result.label == label
 
 

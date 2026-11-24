@@ -167,7 +167,7 @@ def _sample_count(options: dict[str, Any]) -> int:
     ValueError
         If the count is not positive.
     """
-    value = options.get("num_samples", _num_samples_in_effect())
+    value = options["num_samples"] if "num_samples" in options else _num_samples_in_effect()
     if isinstance(value, bool):
         raise TypeError(f"num_samples must be an integer, got {value!r}")
     try:

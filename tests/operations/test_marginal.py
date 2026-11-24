@@ -17,6 +17,7 @@ from probpipe import (
     NumericArraySpec,
     OpaqueSpec,
     RecordSpec,
+    UnusedControlWarning,
     condition_on,
     conditional_distribution,
     replay_run,
@@ -425,7 +426,9 @@ class TestMonteCarloMarginal:
             label="kernel",
         )
         with workflow_run(seed=0):
-            result = marginal.using(num_samples=7)(kernel, "a", given={"mu": 2.0})
+            # The conditioned law's exact marginal takes no draws.
+            with pytest.warns(UnusedControlWarning, match="marginal did not use num_samples=7"):
+                result = marginal.using(num_samples=7)(kernel, "a", given={"mu": 2.0})
             conditioned = marginal(condition_on(kernel, {"mu": 2.0}), "a")
             exact = marginal.using(exact_only=True)(kernel, "a", given={"mu": 2.0})
             sampled = marginal.using(method="monte_carlo", num_samples=7)(

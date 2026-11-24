@@ -17,7 +17,7 @@ import inspect
 import keyword
 import os
 import warnings
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from contextlib import AbstractContextManager, contextmanager, nullcontext
 from dataclasses import dataclass, replace
 from functools import partial, wraps
@@ -31,11 +31,15 @@ from .._messages import label_given_first, unknown_names
 from ..core._array_backend import _is_numeric_leaf
 from ..core._call_context import (
     _AUTOMATIC_SELECTION,
+    _COUNT_CONTROLS,
     _CallContext,
+    _CountReads,
+    _CountSource,
     _ExecutionChoice,
     _jax_settings_snapshot,
     _NamedExecutorUse,
     _open_call_context,
+    _sources_of_count,
     _under_call_context,
     current_call_context,
 )
@@ -81,6 +85,20 @@ if TYPE_CHECKING:
 
 #: A warning about a user's call skips the frames inside the package, so it points at the call.
 _WARNING_SKIP_PREFIXES = (os.path.dirname(os.path.dirname(__file__)) + os.sep,)
+
+
+class UnusedControlWarning(UserWarning):
+    """A control given to a call through ``using`` changed nothing the call did.
+
+    A call that succeeds warns once for each count, ``max_evaluations`` or
+    ``num_samples``, that its ``using`` view set and that no code running for
+    the call read. A count set when the ``Function`` was constructed, or by a
+    ``config`` block or the session, is a default for every call and never
+    warns. To make the warning an error::
+
+        import warnings
+        warnings.simplefilter("error", probpipe.UnusedControlWarning)
+    """
 
 
 @dataclass(frozen=True, init=False)
@@ -765,9 +783,6 @@ _DEFAULTED_BY_NONE = frozenset(
 #: and whose home in a call is its executor choice, not its resolved controls.
 _EXECUTION_CHOICE_CONTROLS = frozenset({"executor", "executor_options"})
 
-#: The two count controls, which a derived route passes down.
-_PASSED_COUNT_CONTROLS = ("max_evaluations", "num_samples")
-
 
 @contextmanager
 def _passing_controls_to_formula_calls(
@@ -802,7 +817,9 @@ def _in_child_call_context(
     :meth:`~probpipe.core._call_context._CallContext.child_for_call` derives,
     which holds the view's resolved controls, for the extent of the call. A
     root call also takes the snapshot of the session's values that its
-    evaluation points read.
+    evaluation points read. A ``__call__`` or an ``apply`` that succeeds then
+    warns for each count its view was given that nothing read
+    (:func:`_warn_unread_counts`).
     """
 
     def decorate(entry_method: Callable[..., Any]) -> Callable[..., Any]:
@@ -816,10 +833,16 @@ def _in_child_call_context(
                 else self._inheriting(parent_context.passed_controls)
             )
             child_context = _child_context_for_call(
-                function_view, parent_context, entry_method_name=entry_method_name
+                function_view,
+                parent_context,
+                entry_method_name=entry_method_name,
+                uninherited_view=self,
             )
             with _open_call_context(child_context, entry_method_name=entry_method_name):
-                return entry_method(function_view, *args, **kwargs)
+                call_result = entry_method(function_view, *args, **kwargs)
+            if entry_method_name != "check" and child_context.count_reads is not None:
+                _warn_unread_counts(child_context.count_reads)
+            return call_result
 
         return run_in_child_call_context
 
@@ -831,12 +854,15 @@ def _child_context_for_call(
     parent_context: _CallContext,
     *,
     entry_method_name: Literal["__call__", "apply", "check"],
+    uninherited_view: Function | None = None,
 ) -> _CallContext:
     """The context of a call of *function_view* opened in *parent_context*, which it does not install.
 
     It holds the view's resolved controls, without ``executor`` and
-    ``executor_options``, and its executor choice; a root call also takes the
-    session's values and the JAX settings as they read now.
+    ``executor_options``, its executor choice, and the call's record of the
+    counts it was given and read, with where each count's reads are noted
+    (:func:`_count_reads_and_sources`); a root call also takes the session's
+    values and the JAX settings as they read now.
 
     Parameters
     ----------
@@ -846,6 +872,10 @@ def _child_context_for_call(
         The context the call is opened in.
     entry_method_name : {"__call__", "apply", "check"}
         The ``Function`` method that opens the call.
+    uninherited_view : Function, optional
+        The view before it took the counts an enclosing derived route passes
+        down, which tells a count the view sets itself from a passed one;
+        *function_view* by default.
 
     Returns
     -------
@@ -858,6 +888,11 @@ def _child_context_for_call(
         As :func:`_resolve_execution_choice` raises.
     """
     is_root_call = parent_context.call_depth == 0
+    count_reads, count_sources = _count_reads_and_sources(
+        function_view if uninherited_view is None else uninherited_view,
+        parent_context,
+        entry_method_name,
+    )
     return parent_context.child_for_call(
         entry_method_name=entry_method_name,
         function_label=function_view.label,
@@ -869,7 +904,160 @@ def _child_context_for_call(
         execution_choice=_resolve_execution_choice(function_view, parent_context),
         session_config_values=config._session_values_snapshot() if is_root_call else None,
         jax_settings=_jax_settings_snapshot() if is_root_call else None,
+        count_reads=count_reads,
+        count_sources=count_sources,
     )
+
+
+def _count_reads_and_sources(
+    function_view: Function,
+    parent_context: _CallContext,
+    entry_method_name: Literal["__call__", "apply", "check"],
+) -> tuple[_CountReads, dict[str, tuple[_CountSource, ...]]]:
+    """The record of a call of *function_view* opened in *parent_context*, and the records each count's reads are noted in.
+
+    The record holds the counts the view's ``using`` gave it, and every read
+    of the call's counts is noted in it. A read is also noted in the records of
+    the call the count came from, by the first rule that applies:
+
+    1. for a count a route forwarded to the view (:meth:`Function._forwarding`),
+       the records it forwarded with the count;
+    2. for a count the view sets itself, by ``using`` or at construction, none;
+    3. for a count an enclosing derived route passes down, the records
+       *parent_context* notes its read in;
+    4. otherwise none.
+
+    A ``check`` runs nothing, so a read it makes is noted in its own record
+    alone and never counts as a read by another call.
+
+    Parameters
+    ----------
+    function_view : Function
+        The view the call runs on, before it takes the counts a derived route
+        passes down.
+    parent_context : _CallContext
+        The context the call is opened in.
+    entry_method_name : {"__call__", "apply", "check"}
+        The ``Function`` method that opens the call.
+
+    Returns
+    -------
+    tuple of (_CountReads, dict of str to tuple of _CountSource)
+        The call's record, and the records of each count by name, the call's
+        own first.
+    """
+    count_reads = _CountReads(
+        function_view.label,
+        {
+            count_name: function_view._options[count_name]
+            for count_name in function_view._given_counts
+        },
+    )
+    passed_controls = parent_context.passed_controls
+    count_sources: dict[str, tuple[_CountSource, ...]] = {}
+    for count_name in _COUNT_CONTROLS:
+        own_source = _CountSource(count_reads, count_name)
+        if entry_method_name == "check":
+            upstream_sources: tuple[_CountSource, ...] = ()
+        elif count_name in function_view._forwarded_count_sources:
+            upstream_sources = function_view._forwarded_count_sources[count_name]
+        elif (
+            count_name not in function_view._options
+            and passed_controls is not None
+            and passed_controls[count_name] is not None
+        ):
+            upstream_sources = parent_context.count_sources.get(count_name, ())
+        else:
+            upstream_sources = ()
+        count_sources[count_name] = (own_source, *upstream_sources)
+    return count_reads, count_sources
+
+
+def _unread_count_message(
+    function_label: str,
+    count_name: str,
+    count: int,
+    read_counts: Mapping[str, int],
+    given_counts: Mapping[str, int],
+) -> str:
+    """The message of the warning that the call of *function_label* did not use its count *count_name*.
+
+    A call that read the other count names that count and its value as what
+    governed its work. Its fix sets the other count instead, or, when the
+    call was given the other count too, removes the unread one.
+
+    Parameters
+    ----------
+    function_label : str
+        The label of the called ``Function``.
+    count_name : {"max_evaluations", "num_samples"}
+        The count the call was given and did not read.
+    count : int
+        Its given value.
+    read_counts : Mapping of str to int
+        The counts the call read, each with the value read, by name.
+    given_counts : Mapping of str to int
+        The counts the call was given, by name.
+
+    Returns
+    -------
+    str
+        The message.
+
+    Examples
+    --------
+    >>> _unread_count_message("expectation", "max_evaluations", 4, {"num_samples": 1024}, {})
+    'expectation did not use max_evaluations=4, because the call took Monte Carlo draws, which num_samples=1024 counts. Set num_samples=4 instead'
+    >>> _unread_count_message("mean", "num_samples", 500, {}, {"num_samples": 500})
+    'mean did not use num_samples=500, because the call took no Monte Carlo draws'
+    """
+    unused = f"{function_label} did not use {count_name}={count}"
+    if count_name == "num_samples":
+        other_count_name = "max_evaluations"
+        governed_work = "the call evaluated a function at draws of a distribution"
+        no_work = "the call took no Monte Carlo draws"
+    else:
+        other_count_name = "num_samples"
+        governed_work = "the call took Monte Carlo draws"
+        no_work = "the call evaluated no function at draws of a distribution"
+    if other_count_name not in read_counts:
+        return f"{unused}, because {no_work}"
+    reason = (
+        f"{unused}, because {governed_work}, which "
+        f"{other_count_name}={read_counts[other_count_name]} counts"
+    )
+    if other_count_name in given_counts:
+        return f"{reason}. Remove {count_name}={count} from using"
+    return f"{reason}. Set {other_count_name}={count} instead"
+
+
+def _warn_unread_counts(count_reads: _CountReads) -> None:
+    """Warn once for each count the call's view was given that no code running for the call read.
+
+    Parameters
+    ----------
+    count_reads : _CountReads
+        The call's record of the counts it was given and read.
+
+    Warns
+    -----
+    UnusedControlWarning
+        For each unread given count, with :func:`_unread_count_message`.
+    """
+    read_counts = count_reads.read_counts
+    for count_name, count in count_reads.unread_given_counts().items():
+        warnings.warn(
+            _unread_count_message(
+                count_reads.function_label,
+                count_name,
+                count,
+                read_counts,
+                count_reads.given_counts,
+            ),
+            UnusedControlWarning,
+            stacklevel=2,
+            skip_file_prefixes=_WARNING_SKIP_PREFIXES,
+        )
 
 
 def _resolve_execution_choice(
@@ -1103,7 +1291,9 @@ class Function(TrackedTerm, Annotated):
 
         A call inside a derived operation's formula also takes the
         ``exact_only``, ``max_evaluations``, and ``num_samples`` that the
-        derived route passes down (VI.0).
+        derived route passes down (VI.0). A count set here is a default for
+        every call, so a call that does not read it does not warn, as one
+        whose ``using`` view set it does.
 
     Raises
     ------
@@ -1179,6 +1369,13 @@ class Function(TrackedTerm, Annotated):
     #: as on an operation, whose work runs many callables and so has no one
     #: automatically selected executor that would take them.
     _options_need_named_executor: ClassVar[bool] = False
+    #: The counts this view's ``using`` set, which a call of the view warns
+    #: about when no code running for the call reads them.
+    _given_counts: frozenset[str] = frozenset()
+    #: The records a read of each count by a call of this view is also noted
+    #: in, by count name, for a view a route built with :meth:`_forwarding`:
+    #: those of the call whose count it is.
+    _forwarded_count_sources: Mapping[str, tuple[_CountSource, ...]] = MappingProxyType({})
 
     def __new__(cls, *args: Any, **kwargs: Any) -> Self:
         # The constructor's arguments are checked here, before ``__init__`` binds
@@ -1415,7 +1612,9 @@ class Function(TrackedTerm, Annotated):
         A control given as None resets to its framework default, whatever the
         constructor or an earlier view set. Raises TypeError for unknown
         controls, including construction metadata and seed. Invalid control
-        values raise the same errors as construction.
+        values raise the same errors as construction. A call of the copy warns
+        with ``UnusedControlWarning`` for each count set here that nothing the
+        call runs reads.
 
         Parameters
         ----------
@@ -1450,9 +1649,103 @@ class Function(TrackedTerm, Annotated):
         validated_controls = _set_controls(
             self._control_defaults(), kept_controls, control_revisions, self.signature
         )
+        given_counts = set(self._given_counts)
+        forwarded_count_sources = dict(self._forwarded_count_sources)
+        for count_name in controls.keys() & set(_COUNT_CONTROLS):
+            forwarded_count_sources.pop(count_name, None)
+            if controls[count_name] is None:
+                given_counts.discard(count_name)
+            else:
+                given_counts.add(count_name)
         revised_view = self._shallow_copy()
         object.__setattr__(revised_view, "_options", MappingProxyType(validated_controls))
+        object.__setattr__(revised_view, "_given_counts", frozenset(given_counts))
+        object.__setattr__(
+            revised_view, "_forwarded_count_sources", MappingProxyType(forwarded_count_sources)
+        )
         return revised_view
+
+    def _forwarding(
+        self,
+        controls: Mapping[str, Any],
+        count_sources: Mapping[str, tuple[_CountSource, ...]] | None = None,
+    ) -> Self:
+        """This view with *controls* set as :meth:`using` sets them, for a route that forwards its own call's controls.
+
+        A route that calls a function on its call's behalf, as ``pushforward``
+        calls its map, forwards the controls its own call was given or
+        resolved. The counts among them are not given to the view, so a call
+        of the view never warns about them. A read of a count by the view's
+        call is also noted in the records *count_sources* names, so the call
+        that forwarded the count learns whether it was read. A count that
+        *controls* leaves unset keeps the view's own value, whether its
+        ``using`` or its construction set it, so its read is noted in those
+        records only when the first of those calls was not given that count:
+        the value read is then no value that call was given, and the note only
+        tells that call which count governed its work, which its warning
+        about the other count names.
+
+        Parameters
+        ----------
+        controls : Mapping of str to Any
+            The forwarded controls, by name.
+        count_sources : Mapping of str to tuple of _CountSource, optional
+            The records a read of each count is also noted in, by count name,
+            with an empty tuple or an absent name for a count whose reads only
+            the view's own call notes. By default, the records a read of the
+            running call's count of the same name is noted in.
+
+        Returns
+        -------
+        Self
+            The view with the forwarded controls.
+        """
+        forwarding_view = self.using(**controls)
+        if count_sources is None:
+            count_sources = {
+                count_name: _sources_of_count(count_name) for count_name in _COUNT_CONTROLS
+            }
+        given_counts = set(forwarding_view._given_counts) - controls.keys()
+        forwarded_count_sources = {
+            count_name: sources
+            for count_name, sources in count_sources.items()
+            if sources
+            and (
+                count_name in controls
+                or sources[0].count_name not in sources[0].count_reads.given_counts
+            )
+        }
+        object.__setattr__(forwarding_view, "_given_counts", frozenset(given_counts))
+        object.__setattr__(
+            forwarding_view, "_forwarded_count_sources", MappingProxyType(forwarded_count_sources)
+        )
+        return forwarding_view
+
+    def _without_given_counts(self, count_names: Iterable[str] = _COUNT_CONTROLS) -> Self:
+        """This view with the counts among *count_names* that its ``using`` set kept as values but no longer given.
+
+        A call that ProbPipe makes on the view's behalf, such as one
+        evaluation of a map at an abstract value to infer its output, or at one
+        draw of a lift whose plan reads the view's ``max_evaluations``, runs on
+        this view, so it never warns about a count the user's own call of the
+        view reads.
+
+        Parameters
+        ----------
+        count_names : iterable of str, optional
+            The counts to keep but no longer give; both counts by default.
+
+        Returns
+        -------
+        Self
+            The view, or a copy whose ``using`` gave none of *count_names*.
+        """
+        given = {
+            count_name: self._options[count_name]
+            for count_name in count_names
+            if count_name in self._given_counts
+        }
+        return self._forwarding(given, count_sources={}) if given else self
 
     def _inheriting(self, passed_controls: Mapping[str, Any]) -> Self:
         """This view under the controls a derived route passes down.
@@ -1478,7 +1771,7 @@ class Function(TrackedTerm, Annotated):
         control_revisions: dict[str, Any] = {}
         if passed_controls["exact_only"] and not effective_controls["exact_only"]:
             control_revisions["exact_only"] = True
-        for name in _PASSED_COUNT_CONTROLS:
+        for name in _COUNT_CONTROLS:
             passed_count = passed_controls[name]
             if (
                 passed_count is not None
@@ -1728,6 +2021,14 @@ class Function(TrackedTerm, Annotated):
             If no route realizes the call.
         ResultKindError, ResultSchemaError
             If the result violates the completed output spec.
+
+        Warns
+        -----
+        UnusedControlWarning
+            Once for each count, ``max_evaluations`` or ``num_samples``, that
+            this view's :meth:`using` set and that nothing the call ran read,
+            such as ``num_samples`` on a call lifted over a law, whose
+            evaluations ``max_evaluations`` counts.
         """
         return _call_engine(self, *args, **kwargs)
 
@@ -1846,7 +2147,7 @@ def _validate_options(options: Mapping[str, Any], signature: inspect.Signature) 
         raise TypeError(
             f"workflow_kind must be a WorkflowKind enum member; got {options['workflow_kind']!r}"
         )
-    for name in _PASSED_COUNT_CONTROLS:
+    for name in _COUNT_CONTROLS:
         _checked_count(options[name], name)
     for flag in ("include_inputs", "exact_only", "raw"):
         if not isinstance(options[flag], bool):

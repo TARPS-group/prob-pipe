@@ -3,14 +3,20 @@
 import contextvars
 import pickle
 import threading
+from dataclasses import replace
 from types import MappingProxyType
 
 import jax.numpy as jnp
 import pytest
 
-from probpipe import Function, NumericArrayBatch, config, function
+from probpipe import Function, NumericArrayBatch, UnusedControlWarning, config, function
 from probpipe.core._call_context import (
     _collecting_call_accumulators,
+    _CountNotingControls,
+    _CountReads,
+    _CountSource,
+    _merge_noted_into,
+    _note_count_read,
     _note_num_samples_used,
     _NumSamplesUsed,
     _under_call_context,
@@ -111,7 +117,10 @@ class TestCallsOpenAContext:
 
         with config.sampling.using(num_samples=33):
             body(1.0)
-            body.using(num_samples=5)(1.0)
+            # The body looks at the context rather than drawing, so the count
+            # is not read.
+            with pytest.warns(UnusedControlWarning, match="body did not use num_samples=5"):
+                body.using(num_samples=5)(1.0)
         assert seen == [(1, "body", 33), (1, "body", 5)]
         assert current_call_context().is_default()
 
@@ -132,7 +141,9 @@ class TestCallsOpenAContext:
             return (inner.using(num_samples=5).apply(x), inner.apply(x))
 
         session_num_samples = config.sampling.num_samples
-        assert outer.using(num_samples=7, raw=True)(1.0) == (5, session_num_samples)
+        # The inner calls read their own counts, which are none of outer's.
+        with pytest.warns(UnusedControlWarning, match="outer did not use num_samples=7"):
+            assert outer.using(num_samples=7, raw=True)(1.0) == (5, session_num_samples)
         assert read_by_check == [5, session_num_samples]
 
     def test_the_context_is_restored_after_a_call_raises(self):
@@ -541,3 +552,80 @@ class TestTheSessionSnapshot:
         body(1.0)
         assert seen == [1024]
         assert config.sampling.num_samples == 11
+
+
+class TestCountReads:
+    """The record of the counts a call was given and read."""
+
+    def test_the_unread_given_counts_follow_the_order_of_the_two_counts(self):
+        count_reads = _CountReads("square", {"num_samples": 5, "max_evaluations": 3})
+        assert list(count_reads.unread_given_counts()) == ["max_evaluations", "num_samples"]
+        count_reads.note_read("max_evaluations", 3)
+        assert count_reads.unread_given_counts() == {"num_samples": 5}
+
+    def test_a_source_notes_the_read_under_its_own_count_name(self):
+        count_reads = _CountReads("expectation", {"num_samples": 4})
+        _CountSource(count_reads, "num_samples").note_read(4)
+        assert count_reads.read_counts == {"num_samples": 4}
+        assert count_reads.unread_given_counts() == {}
+
+    def test_a_pickled_record_keeps_its_counts_and_its_reads(self):
+        count_reads = _CountReads("square", {"num_samples": 5})
+        count_reads.note_read("max_evaluations", 256)
+        restored = pickle.loads(pickle.dumps(count_reads))
+        assert restored.function_label == "square"
+        assert restored.given_counts == {"num_samples": 5}
+        assert restored.read_counts == {"max_evaluations": 256}
+
+    def test_noting_controls_note_a_count_lookup_but_not_a_peek(self):
+        count_reads = _CountReads("mean", {"num_samples": 9, "max_evaluations": 3})
+        controls = _CountNotingControls(
+            {"num_samples": 9, "max_evaluations": 3, "raw": False},
+            {"num_samples": (_CountSource(count_reads, "num_samples"),)},
+        )
+        assert dict(controls.peek()) == {"num_samples": 9, "max_evaluations": 3, "raw": False}
+        assert controls["raw"] is False
+        assert count_reads.read_counts == {}
+        assert controls["num_samples"] == 9
+        assert count_reads.read_counts == {"num_samples": 9}
+
+    def test_comparing_noting_controls_reads_no_count(self):
+        count_reads = _CountReads("mean", {"num_samples": 9})
+        sources = {"num_samples": (_CountSource(count_reads, "num_samples"),)}
+        first = _CountNotingControls({"num_samples": 9}, sources)
+        assert first == _CountNotingControls({"num_samples": 9}, sources)
+        assert first == {"num_samples": 9}
+        assert count_reads.read_counts == {}
+
+    def test_a_pickled_record_keeps_its_token(self):
+        count_reads = _CountReads("square", {"num_samples": 5})
+        assert pickle.loads(pickle.dumps(count_reads)).token == count_reads.token
+
+    def test_a_merged_read_is_noted_on_the_record_with_its_token(self):
+        count_reads = _CountReads("mean", {"num_samples": 9})
+        call_context = replace(
+            current_call_context(),
+            count_sources=MappingProxyType(
+                {"num_samples": (_CountSource(count_reads, "num_samples"),)}
+            ),
+        )
+        _merge_noted_into(call_context, (), (), ((count_reads.token, "num_samples", 9),))
+        _merge_noted_into(call_context, (), (), (("another-token", "max_evaluations", 3),))
+        assert count_reads.read_counts == {"num_samples": 9}
+
+    def test_a_read_is_noted_in_every_record_of_its_chain(self):
+        own, upstream = _CountReads("map", {}), _CountReads("expectation", {"num_samples": 4})
+        chain = {
+            "max_evaluations": (
+                _CountSource(own, "max_evaluations"),
+                _CountSource(upstream, "num_samples"),
+            )
+        }
+        _note_count_read("max_evaluations", 4, chain)
+        assert own.read_counts == {"max_evaluations": 4}
+        assert upstream.read_counts == {"num_samples": 4}
+
+    def test_outside_every_call_a_read_is_noted_nowhere(self):
+        assert current_call_context().count_sources == {}
+        _note_count_read("num_samples", 9)
+        assert current_call_context().count_reads is None
