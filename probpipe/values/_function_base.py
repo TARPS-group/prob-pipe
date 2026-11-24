@@ -1746,8 +1746,13 @@ class Function(TrackedTerm, Annotated):
 
         An inherited ``exact_only`` applies whatever this view sets, and an
         inherited ``max_evaluations`` or ``num_samples`` applies unless this
-        view sets its own. Every other control stays this view's, since route
-        names and budgets belong to each function.
+        view sets its own. An inherited count is set on the view even when it
+        equals the value the view would resolve, such as the session's
+        default, so a route that forwards the counts its call's view sets, as
+        ``pushforward`` and ``expectation`` forward to their map, passes it on
+        rather than leaving the map's own count to apply. Every other control
+        stays this view's, since route names and budgets belong to each
+        function.
 
         Parameters
         ----------
@@ -1767,11 +1772,7 @@ class Function(TrackedTerm, Annotated):
             control_revisions["exact_only"] = True
         for name in _COUNT_CONTROLS:
             passed_count = passed_controls[name]
-            if (
-                passed_count is not None
-                and name not in self._options
-                and effective_controls[name] != passed_count
-            ):
+            if passed_count is not None and name not in self._options:
                 control_revisions[name] = passed_count
         if not control_revisions:
             return self
