@@ -648,6 +648,40 @@ class TestCrossCovariance:
         with pytest.raises(ResolutionError, match="both depend on the law over 'a'"):
             cov(first["b"], second["c"])
 
+    @pytest.mark.parametrize("exact_only", [False, True])
+    def test_independent_laws_need_finite_means(self, exact_only):
+        from probpipe import Cauchy
+
+        with pytest.raises(MathematicalDomainError, match="mean of 'Cauchy' does not exist"):
+            cov.using(exact_only=exact_only)(Cauchy("c", 0.0, 1.0), Normal("n", 0.0, 1.0))
+
+    def test_independent_laws_with_an_infinite_mean_are_refused(self):
+        from probpipe import HalfCauchy
+
+        with pytest.raises(MathematicalDomainError, match="is infinite"):
+            cov(Normal("n", 0.0, 1.0), HalfCauchy("h", 0.0, 1.0))
+
+    def test_a_field_whose_moments_do_not_exist_leaves_the_other_fields_defined(self):
+        from probpipe import Cauchy
+
+        joint = Normal("a", 0.0, 1.0) & Normal("b", 0.0, 2.0) & Cauchy("c", 0.0, 1.0)
+        block = cov(joint["a"], joint["b"])
+        assert _route(block) == "coupled_marginals"
+        np.testing.assert_array_equal(np.asarray(block), [[0.0]])
+        np.testing.assert_array_equal(np.asarray(cov(joint["b"], joint["b"])), [[4.0]])
+
+    @pytest.mark.parametrize(
+        ("rows", "columns", "shape"),
+        [("e", "x", (0, 1)), ("x", "e", (1, 0)), ("e", "e", (0, 0))],
+    )
+    def test_a_field_without_coordinates_gives_an_empty_block(self, rows, columns, shape):
+        law = EmpiricalDistribution(
+            NumericRecordBatch({"e": jnp.zeros((10, 0)), "x": jnp.arange(10.0)}, level_names="draw")
+        )
+        block = cov(law[rows], law[columns])
+        assert np.asarray(block).shape == shape
+        assert cov.check(law[rows], law[columns]).result.outputs["cov"].shape == shape
+
     def test_a_transform_and_its_empirical_base_take_the_exact_lift(self):
         import tensorflow_probability.substrates.jax.bijectors as tfb
 

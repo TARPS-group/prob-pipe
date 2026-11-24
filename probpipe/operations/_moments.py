@@ -1336,9 +1336,10 @@ class _JointBlock:
 
     Attributes
     ----------
-    joint : Distribution
+    joint : Distribution or None
         The law of the coordinates of both operands: their root, or its
-        coupled marginal at the leaves that hold them.
+        coupled marginal at the leaves that hold them. It is None when either
+        operand has no coordinates, so the block has no entries.
     rows : tuple of int
         The coordinate of the joint law's flat draw at each coordinate of
         ``d1``'s.
@@ -1347,7 +1348,7 @@ class _JointBlock:
         ``d2``'s.
     """
 
-    joint: Distribution
+    joint: Distribution | None
     rows: tuple[int, ...]
     columns: tuple[int, ...]
 
@@ -1390,6 +1391,8 @@ class _CoupledMarginals(_DelegatingRoute):
         first, second = (_coordinates_in_root(law) for law in laws)
         if first is None or second is None or first.root is not second.root:
             return Feasibility(False, "d1 and d2 are not parts of one law")
+        if not first.indices or not second.indices:
+            return _JointBlock(None, first.indices, second.indices)
         joint = _joint_selection(first.root, {*first.indices, *second.indices})
         if isinstance(joint, CoupledMarginal):
             in_joint = {index: position for position, index in enumerate(joint._coordinates())}
@@ -1408,6 +1411,8 @@ class _CoupledMarginals(_DelegatingRoute):
         block = self._block(call)
         if isinstance(block, Feasibility):
             return block
+        if block.joint is None:
+            return PointReport(True, exact=True)
         report = _inner_report(call, {"d1": block.joint, "d2": None}, exact_only)
         if report.feasible is not True:
             return report
@@ -1446,9 +1451,14 @@ class _CoupledMarginals(_DelegatingRoute):
             raise ResolutionError(
                 f"{call.operation.label}: route {self.name!r} does not apply: {block.description}"
             )
-        joint_cov, metadata = _inner_run(call, {"d1": block.joint, "d2": None}, exact_only)
-        joint_cov = jnp.asarray(_dense(joint_cov))
-        value = joint_cov[jnp.asarray(block.rows)][:, jnp.asarray(block.columns)]
+        if block.joint is None:
+            value = _zero_block(call)
+            metadata: dict[str, Any] = {"exact": True}
+        else:
+            joint_cov, metadata = _inner_run(call, {"d1": block.joint, "d2": None}, exact_only)
+            rows = jnp.asarray(block.rows, dtype=jnp.int32)
+            columns = jnp.asarray(block.columns, dtype=jnp.int32)
+            value = jnp.asarray(_dense(joint_cov))[rows][:, columns]
         return _assembled(
             value,
             call,
@@ -1502,13 +1512,53 @@ def _independent_check(call: BoundCall, result: OutputSpec | None) -> Feasibilit
     return True
 
 
-def _independent_cov(call: BoundCall, result: OutputSpec | None) -> Any:
-    """The zero block of two independent laws."""
+def _zero_block(call: BoundCall) -> Any:
+    """The ``(size of d1, size of d2)`` block of zeros, in the floating dtype the events share."""
     d1, d2 = call.operands["d1"], call.operands["d2"]
     events = (d1.event_spec.term_spec, d2.event_spec.term_spec)
     rows, columns = (cast(int, _flat_size(event)) for event in events)
     dtype = _cov_dtype(events)
     return jnp.zeros((rows, columns), dtype=jnp.result_type(float) if dtype is None else dtype)
+
+
+def _require_finite_mean(law: Distribution, name: str) -> None:
+    """Raise when *law* gives its mean in closed form and that mean is undefined or infinite.
+
+    The zero block of two independent laws holds when both means are finite.
+    A law whose mean is known only through its draws is assumed to have a
+    finite one, as the Monte Carlo routes assume their moments exist.
+
+    Parameters
+    ----------
+    law : Distribution
+        The law at the operand *name*.
+    name : str
+        The operand, ``"d1"`` or ``"d2"``, which the error names.
+
+    Raises
+    ------
+    MathematicalDomainError
+        If the law's closed-form mean does not exist, as a Cauchy law's does
+        not, or is infinite.
+    """
+    if not isinstance(law, SupportsMean) or _capability_guard(law, "_mean").feasible is not True:
+        return
+    try:
+        law_mean = law._mean()
+    except MathematicalDomainError as error:
+        raise MathematicalDomainError(f"cannot compute cov(d1, d2): {error}") from error
+    leaves = jax.tree.leaves(_raw_record(law_mean))
+    if not all(bool(jnp.all(jnp.isfinite(jnp.asarray(leaf)))) for leaf in leaves):
+        raise MathematicalDomainError(
+            f"cannot compute cov(d1, d2): the mean of {name}, {law.label!r}, is infinite"
+        )
+
+
+def _independent_cov(call: BoundCall, result: OutputSpec | None) -> Any:
+    """The zero block of two independent laws, whose closed-form means must be finite."""
+    for name in ("d1", "d2"):
+        _require_finite_mean(call.operands[name], name)
+    return _zero_block(call)
 
 
 def _pair_of_draws(d1, d2) -> dict[str, Any]:

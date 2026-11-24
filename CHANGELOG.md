@@ -2153,7 +2153,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   them. Coupled marginals of one law, and copies and renames of it, take the
   block of that law's covariance, which is exact whenever its covariance is,
   so `cov(law["y"], law["x"])` replaces slicing `cov(law)` by its flat layout.
-  Two unrelated laws give an exact zero block without drawing. Other laws
+  Two unrelated laws give an exact zero block without drawing, and a law whose
+  closed-form mean is undefined or infinite, such as a Cauchy law, raises
+  `MathematicalDomainError` instead. Other laws
   drawn together, such as a transform and its base, take the covariance of
   the law of the pair of their draws, which is exact over an empirical law
   whose atoms the lift enumerates. Laws that are drawn independently but share
@@ -4514,6 +4516,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   names the classes being removed.
 
 ### Fixed
+
+- **The moments of a part of a law no longer need the law's other fields.**
+  Before, with `c` a Cauchy law, `mean((a & b & c)["a"])` raised
+  `MathematicalDomainError`, since it projected the joint's mean, which does not
+  exist. Now a coupled marginal takes its mean, variance, covariance, and
+  quantiles from the parent's exact marginal whenever the parent reports one,
+  so they exist whenever those of the selected fields do.
+- **The covariance of a field of shape `(0,)` is an empty array.** Before,
+  `cov(law["e"])` for such a field raised `TypeError` from a floating-point
+  index. Now it returns a `(0, 0)` array.
 
 - Operations with `given=` use the actual fidelity of input binding and
   normalization when selecting a route and reporting the result.

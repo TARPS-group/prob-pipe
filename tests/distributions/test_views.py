@@ -1078,6 +1078,45 @@ class TestGuards:
         assert _capability_guard(view, "_quantile", jnp.array([1.5])).feasible is False
 
 
+class TestMomentsThroughTheMarginal:
+    """A coupled marginal takes a moment from the parent's exact marginal, which holds only its fields."""
+
+    @staticmethod
+    def _joint_with_a_cauchy_field() -> FactoredDistribution:
+        from probpipe import Cauchy
+
+        return Normal("a", 1.0, 2.0) & Normal("b", 0.0, 1.0) & Cauchy("c", 0.0, 1.0)
+
+    def test_the_parents_whole_moments_do_not_exist(self):
+        joint = self._joint_with_a_cauchy_field()
+        with pytest.raises(MathematicalDomainError):
+            joint._mean()
+
+    def test_the_mean_and_variance_of_a_normal_field_exist(self):
+        view = self._joint_with_a_cauchy_field()["a"]
+        assert float(view._mean()) == pytest.approx(1.0)
+        assert float(view._variance()) == pytest.approx(4.0)
+
+    def test_the_covariance_of_normal_fields_exists(self):
+        view = self._joint_with_a_cauchy_field()[("a", "b")]
+        assert jnp.allclose(view._cov().to_dense(), jnp.diag(jnp.array([4.0, 1.0])))
+
+    def test_the_quantiles_of_a_normal_field_exist(self):
+        view = self._joint_with_a_cauchy_field()["a"]
+        assert float(view._quantile(0.5)) == pytest.approx(1.0)
+
+    def test_the_cauchy_field_still_has_no_mean(self):
+        view = self._joint_with_a_cauchy_field()["c"]
+        with pytest.raises(MathematicalDomainError):
+            view._mean()
+
+    def test_a_field_of_shape_zero_has_an_empty_covariance(self):
+        law = EmpiricalDistribution(
+            NumericRecordBatch({"e": jnp.zeros((5, 0)), "x": jnp.arange(5.0)}, level_names="draw")
+        )
+        assert law["e"]._cov().to_dense().shape == (0, 0)
+
+
 class TestDerivedBehavior:
     def test_sibling_views_drawn_with_one_key_project_one_parent_draw(self, key):
         parent = _product()
