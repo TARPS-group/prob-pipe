@@ -15,6 +15,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `ValueError` for any other option, such as `max_workers`. Name the executor
   the options are for, as `executor="thread"`, or remove them.
 
+- **`expectation` counts its draws with `max_evaluations`, as `pushforward`
+  does.** An expectation without a closed form is the mean of the pushforward,
+  so its Monte Carlo estimate takes the draws its lift takes. Before,
+  `expectation.using(num_samples=n)` set the draws and `max_evaluations` was
+  ignored. Now `expectation.using(max_evaluations=n)` sets them, and the
+  default is the session's `max_evaluations`, 256, instead of `num_samples`,
+  1,024, so an estimate at the default count is noisier. A `num_samples`
+  given to `expectation` now warns with `UnusedControlWarning`, which says to
+  set `max_evaluations` instead. To keep the old default, call
+  `expectation.using(max_evaluations=1024)` or set
+  `config.sampling.max_evaluations`. The provenance still records the draws an
+  estimate took as `num_samples`. A call of
+  `expectation.using(method="pushforward_mean", exact_only=True)` on an
+  empirical law of 257 to 1,024 atoms now raises `ResolutionError`, because
+  the default count no longer covers its atoms. Set `max_evaluations` to at
+  least its number of atoms.
+
 - **Exact conditional operations.** With `given=`, an exact operation exposed
   by exact conditioning precedes approximate routes, including sampling through
   a registry. Conditional delegation reuses the bound law within the call and
@@ -1559,8 +1576,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   arguments whose combinations of atoms number at most `max_evaluations` and
   samples the others within that count. `num_samples` is the number of Monte
   Carlo draws of a summary, such as `mean` or `quantile`, and of a converter
-  that draws, 1024 by default, so the default Monte Carlo estimates change. `expectation(d, f)` evaluates `f` at most `num_samples`
-  times, and `convert.using(num_samples=n)` and an argument's conversion take
+  that draws, 1024 by default, so the default Monte Carlo estimates change. `expectation(d, f)` evaluates `f` at most `max_evaluations`
+  times, as `pushforward(d, f)` does, and `convert.using(num_samples=n)` and an argument's conversion take
   the call's `num_samples` unless the converter's `num_samples` option is given.
   `probpipe.config.sampling` holds both defaults and replaces
   `set_default_n_broadcast_samples` and `Function.DEFAULT_N_BROADCAST_SAMPLES`,
@@ -1572,10 +1589,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `TypeError` as an unknown control. A replay recipe records its plan under
   `probpipe.stochastic_plan/v2`, so `replay_run` refuses a result recorded
   earlier and asks for it to be recorded again. Migrate each use as follows:
-  - a lifted function or `pushforward`: `f.using(n_broadcast_samples=n)` becomes
-    `f.using(max_evaluations=n)`;
-  - a summary, `expectation` included: `mean.using(n_broadcast_samples=n)`
-    becomes `mean.using(num_samples=n)`;
+  - a lifted function, `pushforward`, or `expectation`:
+    `f.using(n_broadcast_samples=n)` becomes `f.using(max_evaluations=n)`;
+  - any other summary: `mean.using(n_broadcast_samples=n)` becomes
+    `mean.using(num_samples=n)`;
   - the session's default: `set_default_n_broadcast_samples(n)` becomes
     `probpipe.config.sampling.max_evaluations = n` for lifts and
     `probpipe.config.sampling.num_samples = n` for summaries.
@@ -2149,6 +2166,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `method_options={"init": jnp.array([0.4, 0.55, 1.5])}`.
 
 ### Added
+
+- **A count a call does not use warns.** A call whose `using` view sets
+  `max_evaluations` or `num_samples` that nothing the call runs reads warns
+  once with the new `UnusedControlWarning`, and says which count to set
+  instead when the call read the other one. Before,
+  `pushforward.using(num_samples=10)(x, square)` returned 256 draws without a
+  word. Now it warns that `pushforward did not use num_samples=10` and says to
+  set `max_evaluations=10` instead. A count set at construction, in a `config`
+  block, or as the session's value never warns. Turn the warning into an error
+  with `warnings.simplefilter("error", probpipe.UnusedControlWarning)`.
 
 - **Monte Carlo marginals.** `marginal(d, paths)` estimates a standalone
   marginal from joint samples when no exact marginal is available. Set the
@@ -4520,6 +4547,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   names the classes being removed.
 
 ### Fixed
+
+- **`expectation` presents a record draw in the law's declared order on every
+  route.** Before, the closed form over held record draws, such as an
+  `EmpiricalDistribution` or a view of one, gave the integrand each draw with
+  its fields sorted alphabetically. An integrand that read the fields by
+  position, such as `lambda r: list(r.values())[0]`, therefore returned the
+  expectation of another field. A `Function` that declares the fields in the
+  law's order raised `ValueError` when the integrand called it, and an
+  operation integrand such as `log_prob` raised `ApplicabilityError`. Now the
+  integrand receives the fields in the law's declared order, as the sampling
+  and enumeration routes give them.
 
 - Operations with `given=` use the actual fidelity of input binding and
   normalization when selecting a route and reporting the result.

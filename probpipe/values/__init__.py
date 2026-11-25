@@ -6,6 +6,7 @@ from ._function_base import (
     SupportsDifferentiation,
     SupportsInverse,
     SupportsLogDetJacobian,
+    UnusedControlWarning,
     is_differentiable,
     is_invertible,
 )
@@ -16,6 +17,7 @@ __all__ = [
     "SupportsDifferentiation",
     "SupportsInverse",
     "SupportsLogDetJacobian",
+    "UnusedControlWarning",
     "is_differentiable",
     "is_invertible",
 ]

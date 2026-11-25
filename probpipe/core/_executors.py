@@ -587,7 +587,10 @@ def _run_on_executor(
     finally:
         evaluation_points._point_scopes.close()
     _merge_noted_into(
-        call_context, evaluation_outcomes._noted_num_samples, evaluation_outcomes._noted_set_records
+        call_context,
+        evaluation_outcomes._noted_num_samples,
+        evaluation_outcomes._noted_set_records,
+        evaluation_outcomes._noted_count_reads,
     )
     _record_set_run(
         evaluation_points,

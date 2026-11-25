@@ -48,6 +48,7 @@ from typing import Any, ClassVar, Literal, Self
 from .._messages import unknown_names
 from ._call_context import (
     _TRACED_CALL_TOKEN,
+    _read_count,
     _UnclassifiedSettingError,
     _under_call_context,
     _UnshippableSetting,
@@ -1054,11 +1055,13 @@ def _static_config_values_in_effect() -> tuple[tuple[str, tuple[tuple[str, Any],
 
 
 def _num_samples_in_effect() -> int:
-    """The ``num_samples`` of the running call, or the session's value in effect outside every call."""
-    call_context = current_call_context()
-    if call_context.call_depth == 0:
+    """The ``num_samples`` of the running call, or the session's value in effect outside every call.
+
+    Inside a call the read is noted, as :func:`_read_count` notes it.
+    """
+    if current_call_context().call_depth == 0:
         return config.sampling.num_samples
-    return call_context.resolved_controls["num_samples"]
+    return _read_count("num_samples")
 
 
 @contextmanager

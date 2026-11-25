@@ -23,6 +23,12 @@ import jax
 
 from .._messages import unknown_names
 from ..core._batch import Batch, BatchSpec
+from ..core._call_context import (
+    _COUNT_CONTROLS,
+    _CountReads,
+    _note_count_read,
+    _sources_of_count,
+)
 from ..core._dispatch import Feasibility, ResolutionError
 from ..core._execution_claims import TRACING_ERRORS, spec_stand_in
 from ..core._record_batch import _batch_over
@@ -442,8 +448,17 @@ def _draw_map(
         return f, parameter, dict(fixed)
     hint = f._signature_info.hints.get(parameter)
     direct = operation or hint is None or resolved_hint(hint) is not Any
-    target = f.using(exact_only=True) if direct and exact_only else f
-    call = target if direct else f.apply
+    # The new map lifts over the draws, so it takes the max_evaluations that
+    # f's using gave, and each draw's call of f, which lifts nothing, keeps
+    # none given to warn about.
+    given_max_evaluations = (
+        {"max_evaluations": f._options["max_evaluations"]}
+        if "max_evaluations" in f._given_counts
+        else {}
+    )
+    each_draw_f = f._without_given_counts(["max_evaluations"])
+    target = each_draw_f.using(exact_only=True) if direct and exact_only else each_draw_f
+    call = target if direct else each_draw_f.apply
     constants = dict(fixed)
 
     def each_draw(draw: Any) -> Any:
@@ -460,6 +475,8 @@ def _draw_map(
         output_label=f.output_label,
         **{name: f._options[name] for name in _MAP_CONTROLS if name in f._options},
     )
+    if given_max_evaluations:
+        mapped = mapped.using(**given_max_evaluations)
     return mapped, parameter, {}
 
 
@@ -515,6 +532,15 @@ class _EvaluationRules(_RegistryRoute):
         set_controls = call.operation._options
         return {name: set_controls[name] for name in self._forwarded if name in set_controls}
 
+    def _forwarded_count_sources(self, call: BoundCall) -> dict[str, tuple[_CountReads, ...]]:
+        """The records a read of each count by the call of the map is also noted in: those of the call's count of the same name.
+
+        So a count the caller set on the operation and forwarded to the map is
+        read when the map's call reads it, and the operation's call learns how
+        many times the map was evaluated even when the caller set no count.
+        """
+        return {count_name: _sources_of_count(count_name) for count_name in _COUNT_CONTROLS}
+
     def probe(
         self, call: BoundCall, result: OutputSpec | None, *, method: str | None, exact_only: bool
     ) -> Feasibility:
@@ -563,6 +589,11 @@ class _EvaluationRules(_RegistryRoute):
                 controls["exact_only"] = True
             if method is not None:
                 controls["method"] = method
+            # The kernel applies the forwarded counts each time its inputs are
+            # bound, so the call has read them.
+            count_sources = self._forwarded_count_sources(call)
+            for count_name in controls.keys() & set(_COUNT_CONTROLS):
+                _note_count_read(count_name, controls[count_name], count_sources)
             return _PushforwardKernel(
                 call.operands["d"],
                 _as_function(call.operands["f"]),
@@ -574,7 +605,8 @@ class _EvaluationRules(_RegistryRoute):
         forwarded.update(exact_only=exact_only, include_inputs=False)
         if method is not None:
             forwarded["method"] = method
-        return _call_at(mapped.using(**forwarded), mapped, parameter, d, fixed)
+        forwarding_map = mapped._forwarding(forwarded, self._forwarded_count_sources(call))
+        return _call_at(forwarding_map, mapped, parameter, d, fixed)
 
 
 def _mapped_sample(self: Any, given: Any, key: Any, sample_shape: tuple[int, ...] = ()) -> Any:
@@ -634,6 +666,11 @@ class _PushforwardKernel(ConditionalDistribution):
 
     def __init__(self, source: Any, f: Function, fixed: Any, controls: Any) -> None:
         parameter = _bound_parameter(f, fixed)
+        # Inferring the output at an abstract value evaluates the map on the
+        # kernel's behalf, as each conditional draw does, so neither warns
+        # about a count the map's using gave for the bound pushforward's lift.
+        f_at_abstract_value = f._without_given_counts()
+        f_at_each_draw = f._without_given_counts(["max_evaluations"])
         event = f.output_spec
         if event is None or event.term_spec is None:
             stand_in = spec_stand_in(source.event_spec.term_spec)
@@ -644,7 +681,7 @@ class _PushforwardKernel(ConditionalDistribution):
                     nonlocal inferred
                     if isinstance(source.event_spec.term_spec, RecordSpec):
                         value = Record(value, event_template=source.event_spec.term_spec)
-                    output = _call_at(f.apply, f, parameter, value, fixed)
+                    output = _call_at(f_at_abstract_value.apply, f, parameter, value, fixed)
                     inferred = _spec_of(output)
                     return ()
 
@@ -667,7 +704,7 @@ class _PushforwardKernel(ConditionalDistribution):
         batch_event = isinstance(source.event_spec.term_spec, BatchSpec)
         self._sample_map = Function(
             lambda draw: _call_at(
-                f.apply, f, parameter, draw["value"] if batch_event else draw, fixed
+                f_at_each_draw.apply, f, parameter, draw["value"] if batch_event else draw, fixed
             ),
             input_spec={
                 "draw": RecordSpec(value=source.event_spec.term_spec)
@@ -691,7 +728,8 @@ class _PushforwardKernel(ConditionalDistribution):
 
     def _finish(self, source: Any, controls: Any, *, check: bool = False) -> Any:
         """Push the bound source forward, retaining a kernel for partial inputs."""
-        operation = pushforward.using(**controls)
+        # The call that built the kernel noted the reads of its counts already.
+        operation = pushforward._forwarding(controls, count_sources={})
         return (
             operation.check(source, self._map, self._fixed)
             if check

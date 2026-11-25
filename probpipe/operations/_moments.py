@@ -34,9 +34,10 @@ operation ``mean(pushforward(d, f))``, so the integrand receives draws of
 in closed form, and otherwise the route ``pushforward_mean`` builds the
 pushforward by an evaluation rule and takes its mean. Its method names are
 therefore the evaluation rules', and an integration rule registered with the
-evaluation-rule registry serves both operations. The route spends the call's
-``num_samples`` as the pushforward's ``max_evaluations``, since each draw is
-one evaluation of the integrand.
+evaluation-rule registry serves both operations. The route passes the call's
+controls to the pushforward as ``pushforward`` passes them to its map, so the
+integrand is evaluated at most ``max_evaluations`` times, as in the direct call
+``pushforward(d, f)``.
 
 ``standard_deviation(d)`` is the derived operation ``sqrt(variance(d))``, taken
 coordinate by coordinate. Its one route is the body route of its formula, so
@@ -44,9 +45,10 @@ the call takes the routes of ``variance``, ``by_output`` included, and the
 derived route passes the call's ``exact_only``, ``max_evaluations``, and
 ``num_samples`` to ``variance``.
 
-The draws of every Monte Carlo route are workflow-owned random events, and
-their number is the ``num_samples`` control, which the call's provenance
-records.
+The draws of every Monte Carlo route are workflow-owned random events. Their
+number is the ``num_samples`` control for a summary's own Monte Carlo route,
+and the ``max_evaluations`` control for ``expectation``'s lift, and the call's
+provenance records it as ``num_samples``.
 """
 
 from __future__ import annotations
@@ -94,7 +96,6 @@ from ..core.constraints import (
     non_negative,
     unit_interval,
 )
-from ..core.record import Record
 from ..core.tracked import TrackedTerm
 from ..distributions._capabilities import (
     SupportsCovariance,
@@ -103,7 +104,7 @@ from ..distributions._capabilities import (
     SupportsQuantile,
     SupportsVariance,
 )
-from ..distributions._distribution import Distribution, DistributionSpec
+from ..distributions._distribution import Distribution, DistributionSpec, _value_at_declared_kind
 from ..distributions._empirical import EmpiricalDistribution
 from ..distributions._factored import _raw_record
 from ..functions._call import ApplicabilityError, presented_arguments
@@ -646,7 +647,7 @@ class _ByOutput(_DelegatingRoute):
 
         A block returns its raw value, which the route assembles.
         """
-        return {**call.controls, "method": None, "exact_only": exact_only, "raw": True}
+        return {**call.controls.peek(), "method": None, "exact_only": exact_only, "raw": True}
 
     @staticmethod
     def _values(call: BoundCall, view: Distribution) -> dict[str, Any]:
@@ -1194,25 +1195,18 @@ class _PushforwardMean(_EvaluationRules):
     open otherwise, which the call's report states as approximate, and it
     defers the mean's check; the run records the exactness of both steps.
 
-    Each draw of the law is one evaluation of the integrand, so the call's
-    resolved ``num_samples`` is the map's ``max_evaluations``, whatever the map
-    sets, and the call's own ``max_evaluations`` is not passed to the map. When
-    the sampling lift builds the law, the call's provenance records its
-    ``num_samples``.
+    The route passes the call's controls to the map as ``pushforward`` does, so
+    the map is evaluated at most the ``max_evaluations`` that the call sets, and
+    otherwise at most the map's own. The derived route passes the call's
+    ``num_samples`` to the ``mean``, which reads it when the law it averages
+    has no exact mean. When the sampling lift builds the law, the call's
+    provenance records the number of draws it took as ``num_samples``.
     """
 
     _bind_given_first = False
 
-    #: The controls the run forwards to the call of the map, besides the
-    #: ``max_evaluations`` that the call's ``num_samples`` gives.
-    _forwarded = tuple(name for name in _EvaluationRules._forwarded if name != "max_evaluations")
-
     def __init__(self) -> None:
         super().__init__("pushforward_mean")
-
-    def _forwarded_controls(self, call: BoundCall) -> dict[str, Any]:
-        """The controls the caller set, with the call's ``num_samples`` as the map's ``max_evaluations``."""
-        return super()._forwarded_controls(call) | {"max_evaluations": call.controls["num_samples"]}
 
     @property
     def condition(self) -> str:
@@ -1244,7 +1238,9 @@ class _PushforwardMean(_EvaluationRules):
         law = super().run(call, result, method=method, exact_only=exact_only)
         provenance = getattr(law, "provenance", None)
         if provenance is not None and provenance.metadata.get("route") == "sampling_lift":
-            _note_num_samples_used(call.controls["num_samples"])
+            # The mean of the lift's draws is a Monte Carlo estimate from as
+            # many draws as the law has atoms.
+            _note_num_samples_used(law.num_atoms)
         averaged = mean(law)
         steps = (_recorded_exactness(law), _recorded_exactness(averaged))
         exact = False if False in steps else (True if steps == (True, True) else None)
@@ -1272,9 +1268,10 @@ def expectation(d: Distribution, f: Any, fixed_args: Mapping[str, Any] | None = 
     builds the pushforward by an evaluation rule, which
     ``using(method=...)`` names, and takes its mean. Under ``exact_only``
     both steps are restricted to exact routes. The pushforward evaluates the
-    integrand at most ``num_samples`` times, the call's control, so
-    ``expectation.using(num_samples=n)`` sets the number of draws of a Monte
-    Carlo estimate, and the call's provenance records it.
+    integrand at most ``max_evaluations`` times, as ``pushforward(d, f)`` does,
+    so ``expectation.using(max_evaluations=n)`` sets the number of draws of a
+    Monte Carlo estimate, and the call's provenance records the draws it took
+    as ``num_samples``.
 
     Parameters
     ----------
@@ -1316,8 +1313,9 @@ def _integrand(call: BoundCall) -> Callable[[Any], Any]:
     """The integrand as a callable of one atom, presented as the evaluation rules present a draw.
 
     A record atom arrives as the nested mapping of its raw leaves and is passed
-    as a ``Record``, and the fixed arguments are passed as the direct call
-    presents them, with the map's construction ``bind``. An operation is
+    as a ``Record`` whose fields are in the law's declared order, whatever the
+    order of the mapping's keys. The fixed arguments are passed as the direct
+    call presents them, with the map's construction ``bind``. An operation is
     called as itself, and any other map as its raw callable, so it traces. A
     map whose open parameter is its first and takes the atom alone is the raw
     callable itself.
@@ -1330,7 +1328,8 @@ def _integrand(call: BoundCall) -> Callable[[Any], Any]:
     constants = {**({} if operation else f._bind), **fixed}
     if constants:
         constants = dict(presented_arguments(f._signature_info, constants))
-    record = isinstance(call.operands["d"].event_spec.term_spec, RecordSpec)
+    event = call.operands["d"].event_spec.term_spec
+    record = isinstance(event, RecordSpec)
     first = next(iter(f.signature.parameters.values()), None)
     positional = (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
     if (
@@ -1343,7 +1342,9 @@ def _integrand(call: BoundCall) -> Callable[[Any], Any]:
 
     def integrand(atom: Any) -> Any:
         if record and isinstance(atom, Mapping) and not isinstance(atom, TrackedTerm):
-            atom = Record(atom, label=parameter)
+            # A law that maps the integrand with jax.vmap passes a dict whose
+            # keys are sorted, so the record is laid out in the declared order.
+            atom = _value_at_declared_kind(event, parameter, atom)
         return _call_at(body, f, parameter, atom, constants)
 
     return integrand

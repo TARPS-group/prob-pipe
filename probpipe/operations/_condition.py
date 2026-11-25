@@ -1044,7 +1044,9 @@ def _bind_inputs(call: BoundCall) -> Any:
     kernel = call.operands["d"]
     options: dict[str, Any] = {}
     if _mapped_binding(kernel, call.operands["given"]) is not None:
-        return _at_given(kernel, call.operands["given"], _binding_controls=dict(call.controls))
+        return _at_given(
+            kernel, call.operands["given"], _binding_controls=dict(call.controls.peek())
+        )
     if "mapped factor bindings" in call._memo:
         if "prepared factors" not in call._memo:
             call._memo["prepared factors"] = {
@@ -1308,7 +1310,9 @@ def _slice(call: BoundCall) -> Any:
             options: dict[str, Any] = {}
             if _mapped_binding(factor, bound) is not None:
                 options = {
-                    "_binding_controls": call._memo.get("factor binding controls", call.controls),
+                    "_binding_controls": call._memo.get(
+                        "factor binding controls", call.controls.peek()
+                    ),
                     "_binding_prepared": call._memo.get(("factor binding", id(factor)), {}).get(
                         "mapped source"
                     ),

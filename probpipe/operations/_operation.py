@@ -38,11 +38,8 @@ operations and plain Functions alike (VI.0):
   scope makes outside any other call, unless that call's view sets its own;
 - ``num_samples`` passes as ``max_evaluations`` does.
 
-A formula that estimates a summary through a lift, as ``expectation``'s does,
-also spends the summary's resolved ``num_samples`` as the lift's
-``max_evaluations``, since each draw is one evaluation of the map. The call of
-a derived route states the Monte Carlo draws of the constituents it runs, so
-its provenance records their ``num_samples``.
+The call of a derived route states the Monte Carlo draws of the constituents
+it runs, so its provenance records their ``num_samples``.
 
 The scope covers the calls made in the calling thread and in the workers the
 engine dispatches to. A planned conversion follows its parameter's
@@ -80,7 +77,7 @@ from typing import Any, ClassVar, Protocol, cast, runtime_checkable
 
 from .._messages import unknown_names
 from ..core._array_backend import _event_shape_of, _is_numeric_leaf, _numpy_dtype_of
-from ..core._call_context import _note_num_samples_used
+from ..core._call_context import _COUNT_CONTROLS, _CountNotingControls, _note_num_samples_used
 from ..core._catalog import EntrySummary, SupportsRegistryCataloging, registry_catalog
 from ..core._dispatch import BaseDispatchRegistry, Feasibility, MethodInfo, ResolutionError
 from ..core._expression import Expression, Named
@@ -163,7 +160,11 @@ class BoundCall:
         point of a lifted call, an element or a stand-in for a draw.
     controls : Mapping[str, Any]
         The resolved controls, ``method``, ``exact_only``, ``raw``, and
-        ``method_options`` among them.
+        ``method_options`` among them. A lookup of ``max_evaluations`` or
+        ``num_samples`` here is a read of that count by the call, which the
+        call notes so that it warns about a count it was given and never read;
+        code that copies the controls to pass them on copies
+        ``controls.peek()``, which notes nothing.
 
     Notes
     -----
@@ -178,6 +179,10 @@ class BoundCall:
     operands: Mapping[str, Any]
     controls: Mapping[str, Any]
     _memo: dict[Any, Any] = field(default_factory=dict, init=False, repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.controls, _CountNotingControls):
+            object.__setattr__(self, "controls", _CountNotingControls(self.controls))
 
     @property
     def specs(self) -> Mapping[str, TermSpec]:
@@ -771,7 +776,7 @@ def _derived_route_scope(call: BoundCall) -> AbstractContextManager[None]:
     operation_view = call.operation
 
     def passed_count(name: str) -> int | None:
-        return call.controls[name] if name in operation_view._options else None
+        return call.controls.peek()[name] if name in operation_view._options else None
 
     return _passing_controls_to_formula_calls(
         exact_only=call.controls["exact_only"],
@@ -1194,6 +1199,20 @@ def _kind_names(kinds: Iterable[type]) -> str:
     return ", ".join(kind.__name__ for kind in kinds)
 
 
+def _set_counts(operation_view: Function) -> dict[str, Any]:
+    """The counts *operation_view* sets itself, which a re-call of the operation on the bound law forwards.
+
+    A count the view leaves unset resolves again in the re-call, so the
+    operation's own defaults and a map's own count apply there as they do in a
+    direct call.
+    """
+    return {
+        count_name: operation_view._options[count_name]
+        for count_name in _COUNT_CONTROLS
+        if count_name in operation_view._options
+    }
+
+
 class _GivenCandidate:
     """The conditional route, deferred until the kernel's law is available.
 
@@ -1247,7 +1266,7 @@ class _GivenCandidate:
             call._memo["conditional binding"] = BoundCall(
                 condition_on,
                 MappingProxyType({"d": subject.kernel, "given": subject.given}),
-                {**call.controls, "method": None},
+                {**call.controls.peek(), "method": None},
             )
         binding = call._memo["conditional binding"]
         if checking():
@@ -1280,7 +1299,9 @@ class _GivenCandidate:
             law, binding_exact = self._bound_law(call)
             operands = {**call.operands, subject_name: law}
             bound = values_to_bound_arguments(call.operation.signature, operands)
-            operation = call.operation.using(**{**call.controls, "exact_only": True})
+            operation = call.operation._forwarding(
+                {**_set_counts(call.operation), "exact_only": True}
+            )
             report = operation.check(*bound.args, **bound.kwargs)
             if report.feasible is not True:
                 return report
@@ -1296,10 +1317,10 @@ class _GivenCandidate:
         subject_name = cast(str, cast(Operation, call.operation)._given_subject)
         values = {**call.operands, subject_name: law}
         bound = values_to_bound_arguments(call.operation.signature, values)
-        controls = (
-            {**call.controls, "exact_only": True} if self._exact_only else dict(call.controls)
-        )
-        result = call.operation.using(**controls)(*bound.args, **bound.kwargs)
+        controls = _set_counts(call.operation)
+        if self._exact_only:
+            controls["exact_only"] = True
+        result = call.operation._forwarding(controls)(*bound.args, **bound.kwargs)
         if self._exact_only:
             exact = binding_exact
         else:

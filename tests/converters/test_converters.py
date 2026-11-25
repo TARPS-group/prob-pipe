@@ -38,6 +38,7 @@ from probpipe import (
     OutputSpec,
     Poisson,
     ResolutionError,
+    UnusedControlWarning,
     config,
     convert,
     converter_registry,
@@ -1046,9 +1047,10 @@ class TestTheDrawCountOfAConversion:
         converted = convert.using(num_samples=21)(source, EmpiricalDistribution)
         assert converted.num_atoms == 21
         assert converted.provenance.metadata["num_samples"] == 21
-        optioned = convert.using(num_samples=21, method_options={"num_samples": 12})(
-            source, EmpiricalDistribution
-        )
+        with pytest.warns(UnusedControlWarning, match="convert did not use num_samples=21"):
+            optioned = convert.using(num_samples=21, method_options={"num_samples": 12})(
+                source, EmpiricalDistribution
+            )
         assert optioned.num_atoms == 12
         assert optioned.provenance.metadata["num_samples"] == 12
 

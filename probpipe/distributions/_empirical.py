@@ -756,11 +756,13 @@ class EmpiricalDistribution(Distribution, SupportsSampling, SupportsExpectation,
     def _expectation(self, f: Callable[[Any], Array]) -> Array:
         """The exact ``𝔼[f(X)]``: the weighted mean of ``f`` over the atoms.
 
-        ``f`` receives each atom in its raw form, as a draw is returned, so a
-        record atom is the nested mapping of its raw leaves, and returns an
-        array or a pytree of arrays. Over a numeric event ``f`` is evaluated at
-        every atom at once with ``jax.vmap``, so it must be traceable; over any
-        other event it is called on each atom in turn.
+        ``f`` receives each atom in its raw form, so a record atom is the
+        nested mapping of its raw leaves, and returns an array or a pytree of
+        arrays. The order of that mapping's keys carries no meaning, and the
+        ``expectation`` operation presents the atom to the integrand in the
+        declared order. Over a numeric event ``f`` is evaluated at every atom
+        at once with ``jax.vmap``, so it must be traceable; over any other
+        event it is called on each atom in turn.
 
         Parameters
         ----------

@@ -496,6 +496,7 @@ class EvaluationChunk:
             noted_num_samples=cast(
                 _NumSamplesUsed, chunk_context.num_samples_used
             ).num_samples_values,
+            noted_count_reads=cast(_NumSamplesUsed, chunk_context.num_samples_used).count_reads,
             noted_set_records=cast(_EvaluationLog, chunk_context.evaluation_log).set_records,
             claim_reports=tuple(self._point_scopes.claim_reports()),
         )
@@ -662,6 +663,9 @@ class EvaluationOutcomes:
     outputs: tuple[Any, ...]
     failures: Mapping[int, EvaluationFailure]
     _noted_num_samples: frozenset[int] = field(default=frozenset(), repr=False, compare=False)
+    _noted_count_reads: frozenset[tuple[str, str, int]] = field(
+        default=frozenset(), repr=False, compare=False
+    )
     _noted_set_records: tuple[_EvaluationSetRecord, ...] = field(
         default=(), repr=False, compare=False
     )
@@ -740,6 +744,9 @@ class EvaluationOutcomes:
             ),
             _noted_num_samples=frozenset().union(
                 *(outcomes._noted_num_samples for outcomes in ordered_outcomes)
+            ),
+            _noted_count_reads=frozenset().union(
+                *(outcomes._noted_count_reads for outcomes in ordered_outcomes)
             ),
             _noted_set_records=tuple(
                 set_record
@@ -1100,6 +1107,7 @@ def _assembled_outcomes(
     noted_num_samples: frozenset[int] = frozenset(),
     noted_set_records: tuple[_EvaluationSetRecord, ...] = (),
     claim_reports: tuple[Any, ...] = (),
+    noted_count_reads: frozenset[tuple[str, str, int]] = frozenset(),
 ) -> EvaluationOutcomes:
     """The outcomes of the evaluation points from *start* on, from each one's result, in order."""
     outputs: list[Any] = []
@@ -1118,6 +1126,7 @@ def _assembled_outcomes(
         outputs=tuple(outputs),
         failures=MappingProxyType(failures),
         _noted_num_samples=noted_num_samples,
+        _noted_count_reads=noted_count_reads,
         _noted_set_records=noted_set_records,
         _claim_reports=claim_reports,
         _lossy_casts=frozenset(lossy_casts),
