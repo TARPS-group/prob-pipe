@@ -25,7 +25,7 @@ from .._messages import unknown_names
 from ..core._batch import Batch, BatchSpec
 from ..core._call_context import (
     _COUNT_CONTROLS,
-    _CountSource,
+    _CountReads,
     _note_count_read,
     _sources_of_count,
 )
@@ -532,7 +532,7 @@ class _EvaluationRules(_RegistryRoute):
         set_controls = call.operation._options
         return {name: set_controls[name] for name in self._forwarded if name in set_controls}
 
-    def _forwarded_count_sources(self, call: BoundCall) -> dict[str, tuple[_CountSource, ...]]:
+    def _forwarded_count_sources(self, call: BoundCall) -> dict[str, tuple[_CountReads, ...]]:
         """The records a read of each count by the call of the map is also noted in: those of the call's count of the same name.
 
         So a count the caller set on the operation and forwarded to the map is

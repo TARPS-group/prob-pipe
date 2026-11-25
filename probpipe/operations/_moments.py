@@ -34,9 +34,10 @@ operation ``mean(pushforward(d, f))``, so the integrand receives draws of
 in closed form, and otherwise the route ``pushforward_mean`` builds the
 pushforward by an evaluation rule and takes its mean. Its method names are
 therefore the evaluation rules', and an integration rule registered with the
-evaluation-rule registry serves both operations. The route spends the call's
-``num_samples`` as the pushforward's ``max_evaluations``, since each draw is
-one evaluation of the integrand.
+evaluation-rule registry serves both operations. The route passes the call's
+controls to the pushforward as ``pushforward`` passes them to its map, so the
+integrand is evaluated at most ``max_evaluations`` times, as in the direct call
+``pushforward(d, f)``.
 
 ``standard_deviation(d)`` is the derived operation ``sqrt(variance(d))``, taken
 coordinate by coordinate. Its one route is the body route of its formula, so
@@ -44,9 +45,10 @@ the call takes the routes of ``variance``, ``by_output`` included, and the
 derived route passes the call's ``exact_only``, ``max_evaluations``, and
 ``num_samples`` to ``variance``.
 
-The draws of every Monte Carlo route are workflow-owned random events, and
-their number is the ``num_samples`` control, which the call's provenance
-records.
+The draws of every Monte Carlo route are workflow-owned random events. Their
+number is the ``num_samples`` control for a summary's own Monte Carlo route,
+and the ``max_evaluations`` control for ``expectation``'s lift, and the call's
+provenance records it as ``num_samples``.
 """
 
 from __future__ import annotations
@@ -65,10 +67,8 @@ import numpy as np
 from ..core._batch import Batch, BatchSpec, _flat_batch_spec
 from ..core._call_context import (
     _collecting_call_accumulators,
-    _CountSource,
     _note_num_samples_used,
     _NumSamplesUsed,
-    _sources_of_count,
 )
 from ..core._dispatch import (
     Feasibility,
@@ -1195,32 +1195,18 @@ class _PushforwardMean(_EvaluationRules):
     open otherwise, which the call's report states as approximate, and it
     defers the mean's check; the run records the exactness of both steps.
 
-    Each draw of the law is one evaluation of the integrand, so the call's
-    resolved ``num_samples`` is the map's ``max_evaluations``, whatever the map
-    sets, and the call's own ``max_evaluations`` is not passed to the map. When
-    the sampling lift builds the law, the call's provenance records its
-    ``num_samples``.
+    The route passes the call's controls to the map as ``pushforward`` does, so
+    the map is evaluated at most the ``max_evaluations`` that the call sets, and
+    otherwise at most the map's own. The derived route passes the call's
+    ``num_samples`` to the ``mean``, which reads it when the law it averages
+    has no exact mean. When the sampling lift builds the law, the call's
+    provenance records the number of draws it took as ``num_samples``.
     """
 
     _bind_given_first = False
 
-    #: The controls the run forwards to the call of the map, besides the
-    #: ``max_evaluations`` that the call's ``num_samples`` gives.
-    _forwarded = tuple(name for name in _EvaluationRules._forwarded if name != "max_evaluations")
-
     def __init__(self) -> None:
         super().__init__("pushforward_mean")
-
-    def _forwarded_controls(self, call: BoundCall) -> dict[str, Any]:
-        """The controls the caller set, with the call's ``num_samples`` as the map's ``max_evaluations``."""
-        return super()._forwarded_controls(call) | {
-            "max_evaluations": call.controls.peek()["num_samples"]
-        }
-
-    def _forwarded_count_sources(self, call: BoundCall) -> dict[str, tuple[_CountSource, ...]]:
-        """The records of the call's ``num_samples``, for both counts of the map, since it spends it as the map's ``max_evaluations``."""
-        num_samples_sources = _sources_of_count("num_samples")
-        return {"max_evaluations": num_samples_sources, "num_samples": num_samples_sources}
 
     @property
     def condition(self) -> str:
@@ -1252,7 +1238,9 @@ class _PushforwardMean(_EvaluationRules):
         law = super().run(call, result, method=method, exact_only=exact_only)
         provenance = getattr(law, "provenance", None)
         if provenance is not None and provenance.metadata.get("route") == "sampling_lift":
-            _note_num_samples_used(call.controls.peek()["num_samples"])
+            # The mean of the lift's draws is a Monte Carlo estimate from as
+            # many draws as the law has atoms.
+            _note_num_samples_used(law.num_atoms)
         averaged = mean(law)
         steps = (_recorded_exactness(law), _recorded_exactness(averaged))
         exact = False if False in steps else (True if steps == (True, True) else None)
@@ -1280,9 +1268,10 @@ def expectation(d: Distribution, f: Any, fixed_args: Mapping[str, Any] | None = 
     builds the pushforward by an evaluation rule, which
     ``using(method=...)`` names, and takes its mean. Under ``exact_only``
     both steps are restricted to exact routes. The pushforward evaluates the
-    integrand at most ``num_samples`` times, the call's control, so
-    ``expectation.using(num_samples=n)`` sets the number of draws of a Monte
-    Carlo estimate, and the call's provenance records it.
+    integrand at most ``max_evaluations`` times, as ``pushforward(d, f)`` does,
+    so ``expectation.using(max_evaluations=n)`` sets the number of draws of a
+    Monte Carlo estimate, and the call's provenance records the draws it took
+    as ``num_samples``.
 
     Parameters
     ----------

@@ -476,8 +476,8 @@ The two counts count different work, so each has one definition and its own read
 | Route or entry | Reads |
 |---|---|
 | a lift (`empirical_enumeration`, `sampling_lift`), and `pushforward`'s map | `max_evaluations` |
-| the Monte Carlo routes of `mean`, `variance`, `cov`, `quantile`, and `expectation`; a converter that draws | `num_samples` |
-| `expectation(d, f)` and `pushforward_mean` | `num_samples`, spent as the map's `max_evaluations` (VI.0) |
+| the Monte Carlo routes of `mean`, `variance`, `cov`, and `quantile`; a converter that draws | `num_samples` |
+| `expectation(d, f)` and `pushforward_mean` | `max_evaluations`, as `pushforward`'s map reads it (VI.0) |
 | an exact route; an inference method | neither |
 
 An inference method's draws are set by its options, as `num_chains × num_draws`, because the cost of an MCMC run and its diagnostics depend on how the draws split across chains.

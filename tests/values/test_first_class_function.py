@@ -55,7 +55,7 @@ from probpipe import (
     simplex,
     workflow_run,
 )
-from probpipe.core._call_context import _CountReads, _CountSource, current_call_context
+from probpipe.core._call_context import _CountReads, current_call_context
 from probpipe.values._function_base import _count_reads_and_sources
 
 #: The executor controls a lift runs under in these tests. ``jax`` maps a
@@ -2162,9 +2162,7 @@ class TestUnusedCountWarning:
             passed_controls=MappingProxyType(
                 {"exact_only": False, "max_evaluations": None, "num_samples": 5}
             ),
-            count_sources=MappingProxyType(
-                {"num_samples": (_CountSource(parent_reads, "num_samples"),)}
-            ),
+            count_sources=MappingProxyType({"num_samples": (parent_reads,)}),
         )
         square = Function(_square, label="square")
         for entry_method_name, upstream in (("__call__", 1), ("check", 0)):

@@ -34,7 +34,6 @@ from ..core._call_context import (
     _COUNT_CONTROLS,
     _CallContext,
     _CountReads,
-    _CountSource,
     _ExecutionChoice,
     _jax_settings_snapshot,
     _NamedExecutorUse,
@@ -913,7 +912,7 @@ def _count_reads_and_sources(
     function_view: Function,
     parent_context: _CallContext,
     entry_method_name: Literal["__call__", "apply", "check"],
-) -> tuple[_CountReads, dict[str, tuple[_CountSource, ...]]]:
+) -> tuple[_CountReads, dict[str, tuple[_CountReads, ...]]]:
     """The record of a call of *function_view* opened in *parent_context*, and the records each count's reads are noted in.
 
     The record holds the counts the view's ``using`` gave it, and every read
@@ -942,7 +941,7 @@ def _count_reads_and_sources(
 
     Returns
     -------
-    tuple of (_CountReads, dict of str to tuple of _CountSource)
+    tuple of (_CountReads, dict of str to tuple of _CountReads)
         The call's record, and the records of each count by name, the call's
         own first.
     """
@@ -954,11 +953,10 @@ def _count_reads_and_sources(
         },
     )
     passed_controls = parent_context.passed_controls
-    count_sources: dict[str, tuple[_CountSource, ...]] = {}
+    count_sources: dict[str, tuple[_CountReads, ...]] = {}
     for count_name in _COUNT_CONTROLS:
-        own_source = _CountSource(count_reads, count_name)
         if entry_method_name == "check":
-            upstream_sources: tuple[_CountSource, ...] = ()
+            upstream_sources: tuple[_CountReads, ...] = ()
         elif count_name in function_view._forwarded_count_sources:
             upstream_sources = function_view._forwarded_count_sources[count_name]
         elif (
@@ -969,7 +967,7 @@ def _count_reads_and_sources(
             upstream_sources = parent_context.count_sources.get(count_name, ())
         else:
             upstream_sources = ()
-        count_sources[count_name] = (own_source, *upstream_sources)
+        count_sources[count_name] = (count_reads, *upstream_sources)
     return count_reads, count_sources
 
 
@@ -1006,8 +1004,8 @@ def _unread_count_message(
 
     Examples
     --------
-    >>> _unread_count_message("expectation", "max_evaluations", 4, {"num_samples": 1024}, {})
-    'expectation did not use max_evaluations=4, because the call took Monte Carlo draws, which num_samples=1024 counts. Set num_samples=4 instead'
+    >>> _unread_count_message("mean", "max_evaluations", 4, {"num_samples": 1024}, {})
+    'mean did not use max_evaluations=4, because the call took Monte Carlo draws, which num_samples=1024 counts. Set num_samples=4 instead'
     >>> _unread_count_message("mean", "num_samples", 500, {}, {"num_samples": 500})
     'mean did not use num_samples=500, because the call took no Monte Carlo draws'
     """
@@ -1375,7 +1373,7 @@ class Function(TrackedTerm, Annotated):
     #: The records a read of each count by a call of this view is also noted
     #: in, by count name, for a view a route built with :meth:`_forwarding`:
     #: those of the call whose count it is.
-    _forwarded_count_sources: Mapping[str, tuple[_CountSource, ...]] = MappingProxyType({})
+    _forwarded_count_sources: Mapping[str, tuple[_CountReads, ...]] = MappingProxyType({})
 
     def __new__(cls, *args: Any, **kwargs: Any) -> Self:
         # The constructor's arguments are checked here, before ``__init__`` binds
@@ -1668,7 +1666,7 @@ class Function(TrackedTerm, Annotated):
     def _forwarding(
         self,
         controls: Mapping[str, Any],
-        count_sources: Mapping[str, tuple[_CountSource, ...]] | None = None,
+        count_sources: Mapping[str, tuple[_CountReads, ...]] | None = None,
     ) -> Self:
         """This view with *controls* set as :meth:`using` sets them, for a route that forwards its own call's controls.
 
@@ -1689,7 +1687,7 @@ class Function(TrackedTerm, Annotated):
         ----------
         controls : Mapping of str to Any
             The forwarded controls, by name.
-        count_sources : Mapping of str to tuple of _CountSource, optional
+        count_sources : Mapping of str to tuple of _CountReads, optional
             The records a read of each count is also noted in, by count name,
             with an empty tuple or an absent name for a count whose reads only
             the view's own call notes. By default, the records a read of the
@@ -1709,11 +1707,7 @@ class Function(TrackedTerm, Annotated):
         forwarded_count_sources = {
             count_name: sources
             for count_name, sources in count_sources.items()
-            if sources
-            and (
-                count_name in controls
-                or sources[0].count_name not in sources[0].count_reads.given_counts
-            )
+            if sources and (count_name in controls or count_name not in sources[0].given_counts)
         }
         object.__setattr__(forwarding_view, "_given_counts", frozenset(given_counts))
         object.__setattr__(
@@ -1752,8 +1746,13 @@ class Function(TrackedTerm, Annotated):
 
         An inherited ``exact_only`` applies whatever this view sets, and an
         inherited ``max_evaluations`` or ``num_samples`` applies unless this
-        view sets its own. Every other control stays this view's, since route
-        names and budgets belong to each function.
+        view sets its own. An inherited count is set on the view even when it
+        equals the value the view would resolve, such as the session's
+        default, so a route that forwards the counts its call's view sets, as
+        ``pushforward`` and ``expectation`` forward to their map, passes it on
+        rather than leaving the map's own count to apply. Every other control
+        stays this view's, since route names and budgets belong to each
+        function.
 
         Parameters
         ----------
@@ -1773,11 +1772,7 @@ class Function(TrackedTerm, Annotated):
             control_revisions["exact_only"] = True
         for name in _COUNT_CONTROLS:
             passed_count = passed_controls[name]
-            if (
-                passed_count is not None
-                and name not in self._options
-                and effective_controls[name] != passed_count
-            ):
+            if passed_count is not None and name not in self._options:
                 control_revisions[name] = passed_count
         if not control_revisions:
             return self
