@@ -672,21 +672,17 @@ def _draws_are_independent_of_chunking(jaxpr: Any) -> bool:
     for equation in jaxpr.eqns:
         if equation.primitive.name == "rng_bit_generator":
             return False
-        for value in (*equation.invars, *equation.outvars):
-            dtype = getattr(getattr(value, "aval", None), "dtype", None)
-            if _is_key_dtype(dtype) and dtype != _threefry_key_dtype():
-                return False
+        if any(
+            _holds_a_key_other_than_threefry(value)
+            for value in (*equation.invars, *equation.outvars)
+        ):
+            return False
         if not all(
             _draws_are_independent_of_chunking(inner_jaxpr)
             for inner_jaxpr in jax_core.jaxprs_in_params(equation.params)
         ):
             return False
-    return all(
-        dtype is None or not _is_key_dtype(dtype) or dtype == _threefry_key_dtype()
-        for dtype in (
-            getattr(getattr(value, "aval", None), "dtype", None) for value in jaxpr.invars
-        )
-    )
+    return not any(_holds_a_key_other_than_threefry(value) for value in jaxpr.invars)
 
 
 # ---------------------------------------------------------------------------
@@ -897,11 +893,17 @@ def _value_bytes(value: Any) -> int:
         return 0
     entries = int(np.prod(abstract_value.shape))
     if _is_key_dtype(dtype):
-        return entries * _key_data_bytes(dtype)
+        return entries * _key_facts(dtype).data_bytes
     try:
         return entries * np.dtype(dtype).itemsize
     except TypeError:
         return 0
+
+
+def _holds_a_key_other_than_threefry(value: Any) -> bool:
+    """Whether *value*, a value of a jaxpr, holds typed random keys of a generator other than ``threefry2x32``."""
+    dtype = getattr(getattr(value, "aval", None), "dtype", None)
+    return _is_key_dtype(dtype) and _key_facts(dtype).implementation != "threefry2x32"
 
 
 def _is_key_dtype(dtype: Any) -> bool:
@@ -909,14 +911,32 @@ def _is_key_dtype(dtype: Any) -> bool:
     return dtype is not None and jax.dtypes.issubdtype(dtype, jax.dtypes.prng_key)
 
 
-@functools.cache
-def _key_data_bytes(key_dtype: Any) -> int:
-    """The bytes of the key data of one typed random key of *key_dtype*."""
-    key_data = jax.eval_shape(jax.random.key_data, jax.ShapeDtypeStruct((), key_dtype))
-    return int(np.prod(key_data.shape)) * np.dtype(key_data.dtype).itemsize
+class _KeyFacts(NamedTuple):
+    """What the dtype of a typed random key says about each key of that dtype.
+
+    Attributes
+    ----------
+    implementation : str
+        The name of the key's random generator, such as ``"threefry2x32"``.
+    data_bytes : int
+        The bytes of one key's key data.
+    """
+
+    implementation: str
+    data_bytes: int
 
 
 @functools.cache
-def _threefry_key_dtype() -> Any:
-    """The dtype of a ``threefry2x32`` key, the generator whose draws a map does not change."""
-    return jax.eval_shape(lambda: jax.random.key(0, impl="threefry2x32")).dtype
+def _key_facts(key_dtype: Any) -> _KeyFacts:
+    """The generator and the key-data bytes of a typed random key of *key_dtype*, read from an abstract key."""
+    implementations: list[str] = []
+
+    def key_data_of(key: Any) -> Any:
+        implementations.append(str(jax.random.key_impl(key)))
+        return jax.random.key_data(key)
+
+    key_data = jax.eval_shape(key_data_of, jax.ShapeDtypeStruct((), key_dtype))
+    return _KeyFacts(
+        implementation=implementations[0],
+        data_bytes=int(np.prod(key_data.shape)) * np.dtype(key_data.dtype).itemsize,
+    )

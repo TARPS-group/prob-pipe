@@ -3485,7 +3485,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reads how much one evaluation holds from its trace, and when the whole map
   would hold more than 256 MiB, it compiles the map and runs it in chunks that
   fit. Over 4,000 points of a function that builds arrays of 200,000 entries,
-  the peak memory falls from 6.4 GB to 0.8 GB and the time from 7.0 s to 1.1 s.
+  the peak memory falls from 7.0 GB to 0.8 GB and the time from 7.4 s to 1.2 s.
   The option `chunk_size` sets the chunks instead, as in
   `simulate.using(executor_options={"chunk_size": 50})`. The chunks change no
   result beyond the last bit of rounding. A function that draws with an `rbg`
