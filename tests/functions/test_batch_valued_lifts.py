@@ -40,6 +40,8 @@ from probpipe import (
 # at a time, and the default leaves the choice to the probe.
 _EXECUTOR_CONTROLS = {
     "jax": {"executor": "jax"},
+    # jax compiles the map and runs it three evaluation points at a time.
+    "chunked": {"executor": "jax", "executor_options": {"chunk_size": 3}},
     "sequential": {"executor": "sequential", "traceable": False},
     "thread": {"executor": "thread", "traceable": False},
     "default": {},
@@ -587,7 +589,7 @@ class TestMappedBatchValuedLifts:
         with workflow_run(seed=3):
             return Function(body, max_evaluations=7, **controls)(law)
 
-    @_over_executors("default", "jax")
+    @_over_executors("default", "jax", "chunked")
     @pytest.mark.parametrize("include_inputs", [False, True])
     @pytest.mark.parametrize("body", [_trajectory, _record_trajectory])
     @pytest.mark.parametrize("source", ["sampled", "enumerated"])
@@ -604,7 +606,7 @@ class TestMappedBatchValuedLifts:
         _assert_same(mapped.atoms, rowwise.atoms)
         np.testing.assert_array_equal(mapped.weights, rowwise.weights)
 
-    @_over_executors("default", "jax")
+    @_over_executors("default", "jax", "chunked")
     @pytest.mark.parametrize("include_inputs", [False, True])
     @pytest.mark.parametrize("annotated", [False, True])
     @pytest.mark.parametrize("source", ["sampled", "enumerated"])
@@ -647,14 +649,15 @@ class TestMappedBatchValuedLifts:
                 law = Function(trajectory, **controls, max_evaluations=50)(source)
                 totals = Function(total, **controls, max_evaluations=50)(law)
             if executor == "jax":
-                # One probe trace and one mapped trace for each lift.
-                assert calls.count("first") <= 2 and calls.count("second") <= 2
+                # For each lift, one probe trace, one trace that sizes the map's
+                # memory, and one mapped trace.
+                assert calls.count("first") <= 3 and calls.count("second") <= 3
                 assert law.provenance.metadata["evaluations"][0]["executor"] == "jax"
                 assert totals.provenance.metadata["evaluations"][0]["executor"] == "jax"
             else:
                 assert calls.count("first") == 50 and calls.count("second") == 50
 
-    @_over_executors("default", "jax")
+    @_over_executors("default", "jax", "chunked")
     def test_a_joint_field_that_stores_batches_is_not_mapped(self, controls):
         joint = Function(
             _trajectory,
@@ -682,7 +685,7 @@ class TestMappedBatchValuedLifts:
                 mapped = total(marginal(law, "trajectory"))
                 assert mapped.provenance.metadata["evaluations"][0]["executor"] == "jax"
 
-    @_over_executors("default", "jax")
+    @_over_executors("default", "jax", "chunked")
     def test_a_returned_record_that_holds_a_batch_is_not_mapped(self, controls):
         def summary(beta):
             return Record.from_fields(scale=2.0 * beta, traj=_trajectory(beta))

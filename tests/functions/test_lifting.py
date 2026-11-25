@@ -78,6 +78,8 @@ type _SecondOfAlias[First, Second] = Second | None
 # choice to the probe.
 _EXECUTOR_CONTROLS = {
     "jax": {"executor": "jax"},
+    # jax compiles the map and runs it three evaluation points at a time.
+    "chunked": {"executor": "jax", "executor_options": {"chunk_size": 3}},
     "sequential": {"executor": "sequential", "traceable": False},
     "thread": {"executor": "thread", "traceable": False},
     "default": {},
@@ -197,7 +199,7 @@ class TestTheTrigger:
     def test_a_parameter_annotated_function_expects_a_value(self):
         assert isinstance(_kind_of(Function, standard_normal()), Distribution)
 
-    @_over_executors("sequential", "thread", "default", "jax")
+    @_over_executors("sequential", "thread", "default", "jax", "chunked")
     def test_a_function_annotation_lifts_in_check_and_execution(self, controls):
         @function(**controls, max_evaluations=6)
         def square(x: Function):
@@ -354,7 +356,7 @@ class TestTheDraw:
         assert isinstance(result, Distribution)
         assert all(set(draw.keys()) == {"a", "b"} for draw in seen)
 
-    @_over_executors("default", "sequential", "jax")
+    @_over_executors("default", "sequential", "jax", "chunked")
     def test_a_record_passed_beside_a_law_arrives_as_the_call_passed_it(self, controls):
         seen = []
         weights = NumericRecord({"a": 2.0, "b": 1.0}, label="weights")
@@ -935,7 +937,7 @@ class TestSingletonAlignment:
         assert result.axis_groups == ((1,), (2,))
         np.testing.assert_allclose(result.raw, [[11.0, 21.0]], atol=0, rtol=0)
 
-    @_over_executors("default", "jax", "sequential")
+    @_over_executors("default", "jax", "chunked", "sequential")
     def test_a_nested_broadcast_repeats_singleton_values_per_sweep_cell(self, controls):
         @function(max_evaluations=6, **controls)
         def add(x, y, z):
@@ -962,7 +964,7 @@ class TestALiftedRecordKeepsItsDeclaredOrder:
         r=NumericArraySpec((), "float32"), m=NumericArraySpec((), "float32")
     )
 
-    @_over_executors("jax", "sequential", "thread", "default")
+    @_over_executors("jax", "chunked", "sequential", "thread", "default")
     def test_a_draw_of_a_merge_arrives_in_the_events_order(self, controls):
         prior = Gamma("r", 3.0, 1.0) & Normal("m", 0.0, 1.0)
         declared = Function(
