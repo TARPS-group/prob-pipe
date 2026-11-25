@@ -15,14 +15,16 @@ Provides:
     the static settings of the call that runs it;
   - :class:`_StaticSettings` and :func:`_static_settings_in_effect`, those
     settings;
-  - :func:`_working_memory_bytes`, the memory one run of a JAX program holds
-    at once, which decides whether a map is compiled in chunks.
+  - :func:`_traced_point` and :class:`_PointTrace`, what the trace of one
+    evaluation point says about mapping it in chunks: the memory one run
+    holds at once, and whether its random draws depend on the chunks.
 """
 
 from __future__ import annotations
 
 import dataclasses
 import enum
+import functools
 import logging
 import threading
 import warnings
@@ -47,7 +49,6 @@ from ._call_context import (
     _under_call_context,
     current_call_context,
 )
-from ._execution_claims import _global_random_states, _restore_global_random_states
 from ._immutable import transient_memo
 from .config import _static_config_values_in_effect
 
@@ -509,28 +510,48 @@ def _static_settings_in_effect() -> _StaticSettings:
     )
 
 
-def _working_memory_bytes(fn: Callable[..., Any], *abstract_arguments: Any) -> int | None:
-    """The most bytes the arrays *fn* computes from its arguments occupy at once while one uncompiled run holds them.
+@dataclass(frozen=True)
+class _PointTrace:
+    """What the trace of one evaluation point says about mapping many of them in chunks.
 
-    *fn* is traced once with ``jax.make_jaxpr`` at *abstract_arguments*,
-    without running it, and the bytes are read from the traced program by
-    :func:`_jaxpr_working_memory_bytes`. A map over N arguments of this
-    structure holds about N times as much. The trace emits no warning, and
-    NumPy's and Python's global random generators are put back to their
-    states before it, so the trace changes nothing that the run it sizes
-    would not.
+    Attributes
+    ----------
+    working_memory_bytes : int
+        The most bytes that the arrays one evaluation computes from its
+        arguments occupy at once while it runs uncompiled, as
+        :func:`_jaxpr_working_memory_bytes` reads them. A map over N
+        evaluation points holds about N times as much.
+    draws_independent_of_chunking : bool
+        Whether each random draw of the evaluation gives the same bits when
+        its point is mapped alone, in a chunk, or with every other point, as
+        :func:`_draws_are_independent_of_chunking` decides it. When it is
+        ``False``, splitting the map into chunks would change the draws.
+    """
+
+    working_memory_bytes: int
+    draws_independent_of_chunking: bool
+
+
+def _traced_point(fn: Callable[..., Any], *abstract_arguments: Any) -> _PointTrace | None:
+    """What a trace of *fn* at one evaluation point's *abstract_arguments* says about mapping it in chunks.
+
+    *fn* is traced once with ``jax.make_jaxpr``, without running it, and its
+    warnings are not emitted, since the map that follows traces it again and
+    emits them then. A callable that draws from NumPy's or Python's global
+    random generator while it is traced draws once more, as the map would.
 
     Parameters
     ----------
     fn : Callable
-        The computation.
+        The evaluation of one point.
     *abstract_arguments : Any
         Its arguments, as trees of arrays or of ``jax.ShapeDtypeStruct``.
 
     Returns
     -------
-    int or None
-        The bytes, or ``None`` when *fn* does not trace at these arguments.
+    _PointTrace or None
+        The facts the trace gives, or ``None`` when *fn* does not trace at
+        these arguments.
 
     Examples
     --------
@@ -540,21 +561,24 @@ def _working_memory_bytes(fn: Callable[..., Any], *abstract_arguments: Any) -> i
 
     >>> import jax, jax.numpy as jnp
     >>> grid = jnp.linspace(0.0, 1.0, 1000)  # float32, 4,000 bytes
-    >>> _working_memory_bytes(
+    >>> point_trace = _traced_point(
     ...     lambda x: jnp.sum(jnp.sin(x * grid)), jax.ShapeDtypeStruct((), jnp.float32)
     ... )
+    >>> point_trace.working_memory_bytes
     8004
+    >>> point_trace.draws_independent_of_chunking
+    True
     """
-    random_states = _global_random_states()
     try:
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             traced_program = jax.make_jaxpr(fn)(*abstract_arguments)
     except Exception:
         return None
-    finally:
-        _restore_global_random_states(random_states)
-    return _jaxpr_working_memory_bytes(traced_program.jaxpr)
+    return _PointTrace(
+        working_memory_bytes=_jaxpr_working_memory_bytes(traced_program.jaxpr),
+        draws_independent_of_chunking=_draws_are_independent_of_chunking(traced_program.jaxpr),
+    )
 
 
 def _jaxpr_working_memory_bytes(jaxpr: Any) -> int:
@@ -613,6 +637,48 @@ def _jaxpr_working_memory_bytes(jaxpr: Any) -> int:
             ):
                 held_bytes -= _value_bytes(value)
     return peak_bytes
+
+
+def _draws_are_independent_of_chunking(jaxpr: Any) -> bool:
+    """Whether each random draw of *jaxpr* gives the same bits however a map groups its points.
+
+    A ``threefry2x32`` key, JAX's default, draws the same bits under
+    ``jax.vmap`` as alone, so a map gives each point the same draws whether
+    it maps the points together or in chunks. The ``rbg`` and ``unsafe_rbg``
+    generators, and ``lax.rng_bit_generator`` called directly, draw under
+    ``jax.vmap`` from state that the points of one map share, so their draws
+    change with the chunks. The draws are independent of the chunks when
+    every key that *jaxpr* or a program it runs holds is a ``threefry2x32``
+    key, and none of them calls ``rng_bit_generator``.
+
+    Parameters
+    ----------
+    jaxpr : jax.extend.core.Jaxpr
+        The program, without its constants.
+
+    Returns
+    -------
+    bool
+        Whether the draws are independent of the chunks.
+    """
+    for equation in jaxpr.eqns:
+        if equation.primitive.name == "rng_bit_generator":
+            return False
+        for value in (*equation.invars, *equation.outvars):
+            dtype = getattr(getattr(value, "aval", None), "dtype", None)
+            if _is_key_dtype(dtype) and dtype != _threefry_key_dtype():
+                return False
+        if not all(
+            _draws_are_independent_of_chunking(inner_jaxpr)
+            for inner_jaxpr in jax_core.jaxprs_in_params(equation.params)
+        ):
+            return False
+    return all(
+        dtype is None or not _is_key_dtype(dtype) or dtype == _threefry_key_dtype()
+        for dtype in (
+            getattr(getattr(value, "aval", None), "dtype", None) for value in jaxpr.invars
+        )
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -798,9 +864,37 @@ def _variables(operands: Iterable[Any]) -> list[Any]:
 
 
 def _value_bytes(value: Any) -> int:
-    """The bytes an array value of a jaxpr occupies, by its shape and dtype; 0 for any other value."""
-    try:
-        abstract_value = value.aval
-        return int(np.prod(abstract_value.shape)) * np.dtype(abstract_value.dtype).itemsize
-    except (AttributeError, TypeError):
+    """The bytes an array value of a jaxpr occupies, by its shape and dtype; 0 for any other value.
+
+    A typed random key occupies the bytes of its key data, two ``uint32``
+    words for a ``threefry2x32`` key and four for an ``rbg`` key.
+    """
+    abstract_value = getattr(value, "aval", None)
+    dtype = getattr(abstract_value, "dtype", None)
+    if dtype is None:
         return 0
+    entries = int(np.prod(abstract_value.shape))
+    if _is_key_dtype(dtype):
+        return entries * _key_data_bytes(dtype)
+    try:
+        return entries * np.dtype(dtype).itemsize
+    except TypeError:
+        return 0
+
+
+def _is_key_dtype(dtype: Any) -> bool:
+    """Whether *dtype* is the dtype of a typed random key."""
+    return dtype is not None and jax.dtypes.issubdtype(dtype, jax.dtypes.prng_key)
+
+
+@functools.cache
+def _key_data_bytes(key_dtype: Any) -> int:
+    """The bytes of the key data of one typed random key of *key_dtype*."""
+    key_data = jax.eval_shape(jax.random.key_data, jax.ShapeDtypeStruct((), key_dtype))
+    return int(np.prod(key_data.shape)) * np.dtype(key_data.dtype).itemsize
+
+
+@functools.cache
+def _threefry_key_dtype() -> Any:
+    """The dtype of a ``threefry2x32`` key, the generator whose draws a map does not change."""
+    return jax.eval_shape(lambda: jax.random.key(0, impl="threefry2x32")).dtype

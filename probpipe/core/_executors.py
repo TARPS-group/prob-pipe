@@ -48,7 +48,7 @@ from ._call_context import (
     current_call_context,
 )
 from ._catalog import registry_catalog
-from ._compilation import _program_store_of, _working_memory_bytes
+from ._compilation import _PointTrace, _program_store_of, _traced_point
 from ._dispatch import (
     Feasibility,
     MethodInfo,
@@ -1348,15 +1348,18 @@ def _mapped_outputs(
     """The callable mapped over every evaluation point with JAX, checked once against the output spec.
 
     A ``jax.vmap`` over N evaluation points holds N copies of every array one
-    evaluation computes. When that fits :data:`_JAX_MEMORY_BUDGET_BYTES`, as
-    :func:`_budgeted_chunk_size` reads it, the set is mapped at once with an
-    uncompiled ``jax.vmap``, which costs no compilation. Otherwise the map is
-    compiled in the set's program store and runs with ``lax.map``, in chunks
-    of as many evaluation points as fit the budget. A *chunk_size* sets the
-    chunks instead, and compiles the map whatever its working memory; one of
-    at least N compiles a ``jax.vmap`` of every evaluation point. Each
-    evaluation point receives its own arguments, so the chunks change no
-    result beyond rounding.
+    evaluation computes. One evaluation point is traced first, and when N
+    times its working memory fits :data:`_JAX_MEMORY_BUDGET_BYTES`, the set is
+    mapped at once with an uncompiled ``jax.vmap``, which costs no
+    compilation. Otherwise the map is compiled in the set's program store and
+    runs with ``lax.map``, in chunks of as many evaluation points as fit the
+    budget (:func:`_points_per_chunk`). A *chunk_size* sets the chunks
+    instead, and compiles the map whatever its working memory; one of at
+    least N compiles a ``jax.vmap`` of every evaluation point. Each
+    evaluation point receives its own arguments, its random key among them,
+    so the chunks change no result beyond rounding. A callable whose random
+    draws would change with the chunks, as draws with an ``rbg`` key do, is
+    mapped at once.
 
     A map that raised, or whose output does not conform, raises
     :class:`_MappingFailure`, except a false ``traceable=True`` claim, whose
@@ -1382,7 +1385,8 @@ def _mapped_outputs(
     TypeError
         If *chunk_size* is not an integer.
     ValueError
-        If *chunk_size* is less than 1.
+        If *chunk_size* is less than 1, or splits the evaluation points of a
+        callable whose random draws would change with the chunks.
     """
     if chunk_size is not None:
         _checked_count(chunk_size, "chunk_size")
@@ -1398,13 +1402,15 @@ def _mapped_outputs(
             return jax.vmap(evaluate_one_point)(stacked_arguments)
         return jax.lax.map(evaluate_one_point, stacked_arguments, batch_size=points_per_chunk)
 
+    with evaluation_points._point_scopes.mapped_scope():
+        point_trace = _traced_point(
+            evaluate_one_point, jax.tree.map(_row_stand_in, varying_arguments)
+        )
+    points_per_chunk = _points_per_chunk(
+        point_trace, num_points, chunk_size, origin=evaluation_points.origin
+    )
     try:
         with evaluation_points._point_scopes.mapped_scope():
-            points_per_chunk = (
-                _budgeted_chunk_size(evaluate_one_point, varying_arguments, num_points)
-                if chunk_size is None
-                else chunk_size
-            )
             if points_per_chunk is None:
                 stacked_output = jax.vmap(evaluate_one_point)(varying_arguments)
             else:
@@ -1432,44 +1438,65 @@ def _mapped_outputs(
         raise _MappingFailure("invalid", invalid_output.check_error) from invalid_output
 
 
-def _budgeted_chunk_size(
-    evaluate_one_point: Callable[[Mapping[str, Any]], Any],
-    varying_arguments: Mapping[str, Any],
-    num_points: int,
+def _points_per_chunk(
+    point_trace: _PointTrace | None, num_points: int, chunk_size: int | None, *, origin: str
 ) -> int | None:
-    """The number of evaluation points in a chunk that keeps a map within the memory budget, or ``None`` when the whole map fits.
+    """The number of evaluation points in each chunk of a map, or ``None`` to map every point at once.
 
-    One evaluation point is traced at stand-ins of its arguments, without
-    running it, and its working memory read by :func:`_working_memory_bytes`.
-    A map of *num_points* evaluation points holds about *num_points* times as
-    much. When that is at most :data:`_JAX_MEMORY_BUDGET_BYTES`, the whole
-    map fits; otherwise a chunk holds as many evaluation points as fit the
-    budget, and at least one. A callable that does not trace alone at one
-    evaluation point's arguments is mapped whole, so the map raises its error.
+    With no *chunk_size*, a map of *num_points* evaluation points holds about
+    *num_points* times one point's working memory. When that is at most
+    :data:`_JAX_MEMORY_BUDGET_BYTES`, every point is mapped at once;
+    otherwise a chunk holds as many evaluation points as fit the budget, and
+    at least one. A callable that does not trace alone at one evaluation
+    point's arguments, or whose random draws would change with the chunks,
+    is mapped at once, so the map raises the callable's own error or keeps
+    its draws. A *chunk_size* is taken as given, unless it would split the
+    evaluation points of a callable whose draws would change with the chunks.
 
     Parameters
     ----------
-    evaluate_one_point : Callable
-        The evaluation of one point, a function of its varying arguments.
-    varying_arguments : Mapping of str to Any
-        Each varying argument, stacked on a leading axis of evaluation points.
+    point_trace : _PointTrace or None
+        What the trace of one evaluation point says, or ``None`` when it did
+        not trace.
     num_points : int
         The number of evaluation points.
+    chunk_size : int or None
+        The number of evaluation points in a chunk that the call set, or
+        ``None`` for the memory budget to decide it.
+    origin : str
+        The name of the callable, which the error names.
 
     Returns
     -------
     int or None
-        The number of evaluation points in a chunk, or ``None`` when every
-        evaluation point fits in one map.
+        The number of evaluation points in a chunk, or ``None`` to map every
+        evaluation point at once.
+
+    Raises
+    ------
+    ValueError
+        If *chunk_size* would split the evaluation points of a callable whose
+        random draws would change with the chunks.
     """
-    point_working_memory_bytes = _working_memory_bytes(
-        evaluate_one_point, jax.tree.map(_row_stand_in, varying_arguments)
+    draws_depend_on_chunks = point_trace is not None and not (
+        point_trace.draws_independent_of_chunking
     )
-    if point_working_memory_bytes is None or (
-        num_points * point_working_memory_bytes <= _JAX_MEMORY_BUDGET_BYTES
+    if chunk_size is not None:
+        if draws_depend_on_chunks and chunk_size < num_points:
+            raise ValueError(
+                f"chunk_size={chunk_size} would change the random draws of {origin!r}, which "
+                "draws with an rbg or unsafe_rbg key or with lax.rng_bit_generator. Remove "
+                "chunk_size to map every evaluation point at once, or draw with a "
+                "threefry2x32 key, JAX's default"
+            )
+        return chunk_size
+    if (
+        point_trace is None
+        or draws_depend_on_chunks
+        or num_points * point_trace.working_memory_bytes <= _JAX_MEMORY_BUDGET_BYTES
     ):
         return None
-    return max(1, _JAX_MEMORY_BUDGET_BYTES // max(point_working_memory_bytes, 1))
+    return max(1, _JAX_MEMORY_BUDGET_BYTES // max(point_trace.working_memory_bytes, 1))
 
 
 def _row_stand_in(column: Any) -> jax.ShapeDtypeStruct:

@@ -3461,7 +3461,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the peak memory falls from 6.4 GB to 0.8 GB and the time from 7.0 s to 1.1 s.
   The option `chunk_size` sets the chunks instead, as in
   `simulate.using(executor_options={"chunk_size": 50})`. The chunks change no
-  result beyond the last bit of rounding.
+  result beyond the last bit of rounding. A function that draws with an `rbg`
+  or `unsafe_rbg` key, whose draws would change with the chunks, is mapped at
+  once, and a `chunk_size` that would split its points raises `ValueError`.
 
 - **Tutorials 1 to 4 are revised and shown on the site again.** They follow one
   analysis of the moose counts:

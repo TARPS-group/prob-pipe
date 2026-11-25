@@ -1,12 +1,10 @@
-"""Tests for the working memory of a JAX program, which sizes the chunks of the ``jax`` executor's map (V.9)."""
-
-import random
+"""Tests for the trace of one evaluation point, which decides how the ``jax`` executor chunks its map (V.9)."""
 
 import jax
 import jax.numpy as jnp
-import numpy as np
+import pytest
 
-from probpipe.core._compilation import _working_memory_bytes
+from probpipe.core._compilation import _traced_point
 
 # One float32 array of this many entries occupies 4,000 bytes.
 _ENTRIES = 1000
@@ -18,7 +16,15 @@ def _scalar():
     return jax.ShapeDtypeStruct((), jnp.float32)
 
 
-class TestTheWorkingMemoryOfAJaxProgram:
+def _key(impl="threefry2x32"):
+    return jax.ShapeDtypeStruct((), jax.random.key(0, impl=impl).dtype)
+
+
+def _working_memory_bytes(fn, *abstract_arguments):
+    return _traced_point(fn, *abstract_arguments).working_memory_bytes
+
+
+class TestTheWorkingMemoryOfOnePoint:
     def test_an_array_the_callable_captures_is_not_counted(self):
         grid = jnp.linspace(0.0, 1.0, _ENTRIES)
         # x, then x * grid and its sine together.
@@ -76,17 +82,68 @@ class TestTheWorkingMemoryOfAJaxProgram:
         # x and the jit's scalar result, with the jit's two arrays while it runs.
         assert _working_memory_bytes(inner, _scalar()) == 2 * _SCALAR_BYTES + 2 * _ARRAY_BYTES
 
-    def test_a_callable_that_does_not_trace_has_none(self):
-        assert _working_memory_bytes(lambda x: float(x) + 1.0, _scalar()) is None
+    @pytest.mark.parametrize(
+        ("impl", "key_data_bytes"), [("threefry2x32", 8), ("rbg", 16), ("unsafe_rbg", 16)]
+    )
+    def test_a_typed_key_occupies_the_bytes_of_its_key_data(self, impl, key_data_bytes):
+        def split_into_many_keys(key):
+            return jax.random.key_data(jax.random.split(key, _ENTRIES)[-1])
 
-    def test_the_trace_leaves_the_global_random_generators_as_they_were(self):
-        np.random.seed(7)
-        random.seed(7)
-        numpy_state, python_state = np.random.get_state(), random.getstate()
+        # The input key, then the split keys, then the last key's data.
+        assert _working_memory_bytes(split_into_many_keys, _key(impl)) == (
+            key_data_bytes * (_ENTRIES + 1) + key_data_bytes
+        )
 
-        def draws_from_the_global_generators(x):
-            return x + np.random.rand() + random.random()
+    def test_a_callable_that_does_not_trace_has_no_trace(self):
+        assert _traced_point(lambda x: float(x) + 1.0, _scalar()) is None
 
-        _working_memory_bytes(draws_from_the_global_generators, _scalar())
-        assert random.getstate() == python_state
-        np.testing.assert_array_equal(np.random.get_state()[1], numpy_state[1])
+
+class TestWhetherTheDrawsDependOnTheChunks:
+    @pytest.mark.parametrize(
+        "evaluate_one_point",
+        [
+            lambda key: jax.random.normal(key),
+            lambda key: jax.random.normal(jax.random.split(key)[0]),
+        ],
+        ids=["a draw", "a draw from a split key"],
+    )
+    def test_draws_with_a_threefry_key_are_independent_of_the_chunks(self, evaluate_one_point):
+        assert _traced_point(evaluate_one_point, _key()).draws_independent_of_chunking
+
+    def test_draws_from_a_seed_or_a_raw_key_under_the_default_generator_are_independent(self):
+        from_a_seed = _traced_point(
+            lambda seed: jax.random.normal(jax.random.key(seed)),
+            jax.ShapeDtypeStruct((), jnp.int32),
+        )
+        from_a_raw_key = _traced_point(
+            lambda raw_key: jax.random.normal(raw_key), jax.ShapeDtypeStruct((2,), jnp.uint32)
+        )
+        assert from_a_seed.draws_independent_of_chunking
+        assert from_a_raw_key.draws_independent_of_chunking
+
+    @pytest.mark.parametrize("impl", ["rbg", "unsafe_rbg"])
+    def test_draws_with_an_rbg_key_depend_on_the_chunks(self, impl):
+        assert not _traced_point(
+            lambda key: jax.random.normal(key), _key(impl)
+        ).draws_independent_of_chunking
+
+    def test_a_draw_inside_an_inner_jit_is_found(self):
+        draw = jax.jit(lambda key: jax.random.normal(key))
+        assert not _traced_point(draw, _key("rbg")).draws_independent_of_chunking
+
+    def test_a_direct_call_of_rng_bit_generator_depends_on_the_chunks(self):
+        assert not _traced_point(
+            lambda state: jax.lax.rng_bit_generator(state, (3,))[1],
+            jax.ShapeDtypeStruct((4,), jnp.uint32),
+        ).draws_independent_of_chunking
+
+    def test_a_raw_key_under_an_rbg_default_generator_depends_on_the_chunks(self):
+        default_generator = jax.config.jax_default_prng_impl
+        jax.config.update("jax_default_prng_impl", "rbg")
+        try:
+            point_trace = _traced_point(
+                lambda raw_key: jax.random.normal(raw_key), jax.ShapeDtypeStruct((4,), jnp.uint32)
+            )
+        finally:
+            jax.config.update("jax_default_prng_impl", default_generator)
+        assert not point_trace.draws_independent_of_chunking

@@ -47,7 +47,7 @@ from probpipe.core._call_context import (
     _under_call_context,
     current_call_context,
 )
-from probpipe.core._compilation import _working_memory_bytes
+from probpipe.core._compilation import _traced_point
 from probpipe.core._execution_claims import ExecutionClaims
 from probpipe.core._executors import _PROCESS_POOLS, _evaluated_outputs, _run_on_executor
 
@@ -885,13 +885,11 @@ _POINT_WORKING_MEMORY_BYTES = 3 * 4 * _ENTRIES_PER_POINT
 
 class TestTheJaxExecutorBoundsTheMemoryOfItsMap:
     def test_the_working_memory_of_one_point_is_read_from_its_trace(self):
-        assert (
-            _working_memory_bytes(
-                lambda point: _sine_of_each_entry(point["x"]),
-                {"x": jax.ShapeDtypeStruct((_ENTRIES_PER_POINT,), jnp.float32)},
-            )
-            == _POINT_WORKING_MEMORY_BYTES
+        point_trace = _traced_point(
+            lambda point: _sine_of_each_entry(point["x"]),
+            {"x": jax.ShapeDtypeStruct((_ENTRIES_PER_POINT,), jnp.float32)},
         )
+        assert point_trace.working_memory_bytes == _POINT_WORKING_MEMORY_BYTES
 
     def test_a_set_within_the_budget_is_mapped_at_once_and_not_compiled(
         self, chunked_maps, compiled_sets
@@ -992,6 +990,57 @@ class TestTheJaxExecutorBoundsTheMemoryOfItsMap:
         assert sum(record.num_evaluation_points for record in embedded_records) == 4
 
 
+class TestTheJaxExecutorKeepsDrawsThatDependOnTheChunks:
+    """An rbg key draws under jax.vmap from state the points of one map share, so its draws change with the chunks."""
+
+    _KEYS = jax.random.split(jax.random.key(0, impl="rbg"), 12)
+
+    def _full_map(self):
+        return jax.vmap(lambda key: jax.random.normal(key))(self._KEYS)
+
+    def test_a_set_over_the_budget_is_mapped_at_once(self, monkeypatch, chunked_maps):
+        monkeypatch.setattr(_executors, "_JAX_MEMORY_BUDGET_BYTES", 1)
+        outputs, _ = _traceable_set(lambda key: jax.random.normal(key), {"key": self._KEYS})
+        assert chunked_maps == []
+        np.testing.assert_array_equal(outputs, self._full_map())
+
+    def test_a_chunk_size_that_splits_the_points_raises(self):
+        with pytest.raises(ValueError) as raised:
+            _traceable_set(
+                lambda key: jax.random.normal(key),
+                {"key": self._KEYS},
+                requester_controls={"executor_options": {"chunk_size": 4}},
+            )
+        assert str(raised.value) == (
+            "chunk_size=4 would change the random draws of 'simulate', which draws with an rbg "
+            "or unsafe_rbg key or with lax.rng_bit_generator. Remove chunk_size to map every "
+            "evaluation point at once, or draw with a threefry2x32 key, JAX's default"
+        )
+
+    def test_a_chunk_size_of_every_point_keeps_the_draws(self, chunked_maps, compiled_sets):
+        outputs, _ = _traceable_set(
+            lambda key: jax.random.normal(key),
+            {"key": self._KEYS},
+            requester_controls={"executor_options": {"chunk_size": 12}},
+        )
+        assert chunked_maps == []
+        assert len(compiled_sets) == 1
+        np.testing.assert_allclose(outputs, self._full_map(), rtol=1e-6)
+
+    def test_many_split_keys_count_toward_the_memory_budget(self, monkeypatch, chunked_maps):
+        # Each point splits a threefry key into 1,000 keys of 8 bytes each.
+        monkeypatch.setattr(_executors, "_JAX_MEMORY_BUDGET_BYTES", 5 * 8 * 1000)
+        keys = jax.random.split(jax.random.key(1), 12)
+        outputs, _ = _traceable_set(
+            lambda key: jax.random.key_data(jax.random.split(key, 1000)[-1]), {"key": keys}
+        )
+        assert len(chunked_maps) == 1 and 1 <= chunked_maps[0] < 5
+        np.testing.assert_array_equal(
+            outputs,
+            jax.vmap(lambda key: jax.random.key_data(jax.random.split(key, 1000)[-1]))(keys),
+        )
+
+
 class TestTheOptionsOfJax:
     def test_options_without_an_executor_go_to_jax_on_a_functions_own_call(self):
         _, set_records = _traceable_set(
@@ -1077,6 +1126,10 @@ print(json.dumps({
 """
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="the resource module, which reads the peak memory of a process, exists only on Unix",
+)
 class TestAHeavyMap:
     @pytest.fixture(scope="class")
     def heavy_map(self):
