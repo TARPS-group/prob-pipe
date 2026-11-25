@@ -46,7 +46,8 @@ def test_remaining_inputs_and_eager_binding(finite):
         if finite
         else Normal("theta", 2.0, 1.0)
     )
-    q = mixture.using(max_evaluations=17)(kernel(), mixing)
+    # A finite mixing law is enumerated exactly, so only a sampled one takes the count.
+    q = mixture.using(**({} if finite else {"max_evaluations": 17}))(kernel(), mixing)
     assert isinstance(q, ConditionalDistribution)
     assert set(q.given_spec) == {"x", "z"}
     assert q.event_spec == kernel().event_spec
@@ -186,7 +187,7 @@ def test_mixing_overrides_optional_input_after_binding(finite):
     mixing = EmpiricalDistribution(jnp.array([3.0]), output_name="theta")
     if not finite:
         mixing = Normal("theta", 3.0, 0.01)
-    q = mixture.using(max_evaluations=500)(k, mixing)
+    q = mixture.using(**({} if finite else {"max_evaluations": 500}))(k, mixing)
     partial = condition_on(q, {"group/a": 1.0})
     with workflow_run(seed=3):
         law = condition_on(partial, {"group/b": 2.0})
@@ -359,7 +360,7 @@ def test_mixture_kernel_preserves_event_form(finite, form):
         if finite
         else Normal("theta", 0.0, 1.0)
     )
-    q = mixture.using(max_evaluations=5)(k, mu)
+    q = mixture.using(**({} if finite else {"max_evaluations": 5}))(k, mu)
     assert q.event_spec == k.event_spec
     one = sample(q, given={"x": 1.0})
     assert one.spec == k.event_spec.term_spec
@@ -673,8 +674,10 @@ def test_given_marginal_binding_fidelity_through_composition(finite, boundary):
         q = q & Normal("independent", 0.0, 1.0)
     elif boundary == "nested":
         q = pushforward(q, f)
+    # A finite law's marginal is exact, so only a sampled one takes the count.
+    counts = {} if finite else {"num_samples": 13}
     with workflow_run(seed=2):
-        result = marginal.using(num_samples=13)(q, "w", given=given)
+        result = marginal.using(**counts)(q, "w", given=given)
     assert result.provenance.metadata["exact"] is finite
     assert result.num_atoms == (2 if finite else 13)
     if finite:
@@ -711,10 +714,13 @@ def test_given_mixture_retains_finite_route_or_samples_directly(finite, operatio
         if finite
         else Normal("theta", 0.0, 1.0)
     )
-    q = mixture.using(max_evaluations=7)(k, mixing)
+    # A finite mixing law is enumerated exactly, so only a sampled one takes the counts.
+    q = mixture.using(**({} if finite else {"max_evaluations": 7}))(k, mixing)
     args = ("y",) if operation is marginal else ()
     with workflow_run(seed=3):
-        result = operation.using(num_samples=13)(q, *args, given={"x": 1.0})
+        result = operation.using(**({} if finite else {"num_samples": 13}))(
+            q, *args, given={"x": 1.0}
+        )
     assert result.provenance.metadata["exact"] is finite
     assert result.provenance.metadata["route"] == ("conditional" if finite else "monte_carlo")
     if finite:

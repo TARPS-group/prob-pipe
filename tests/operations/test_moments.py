@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import contextlib
 import functools
 import inspect
 import math
 import operator
 import re
+import warnings
 from functools import partial
 from typing import Any
 
@@ -27,6 +29,7 @@ from probpipe import (
     NumericRecordBatch,
     Record,
     RecordSpec,
+    UnusedControlWarning,
     condition_on,
     conditional_distribution,
     config,
@@ -676,6 +679,22 @@ class TestCrossCovariance:
         with pytest.raises(MathematicalDomainError, match="is infinite"):
             cov(Normal("n", 0.0, 1.0), HalfCauchy("h", 0.0, 1.0))
 
+    def test_independent_laws_give_the_zero_block_under_jit(self):
+        a, b = Normal("a", 0.0, 1.0), Normal("b", 0.0, 2.0)
+        block = jax.jit(lambda loc: cov.using(raw=True)(Normal("a", loc, 1.0), b))(1.0)
+        np.testing.assert_array_equal(np.asarray(block), [[0.0]])
+        np.testing.assert_array_equal(
+            np.asarray(jax.jit(lambda: cov.using(raw=True)(a, b))()), [[0.0]]
+        )
+
+    def test_a_traced_infinite_mean_gives_a_nan_block_under_jit(self):
+        from probpipe import HalfCauchy
+
+        def block(scale):
+            return cov.using(raw=True)(HalfCauchy("h", 0.0, scale), Normal("n", 0.0, 1.0))
+
+        assert np.isnan(np.asarray(jax.jit(block)(1.0))).all()
+
     def test_a_field_whose_moments_do_not_exist_leaves_the_other_fields_defined(self):
         from probpipe import Cauchy
 
@@ -712,21 +731,35 @@ class TestCrossCovariance:
             np.asarray(block), _biased_cross_cov(np.exp(atoms), atoms), rtol=1e-5
         )
 
-    def test_a_transform_of_a_law_that_only_samples_is_estimated_from_num_samples_draws(self):
+    def test_a_transform_of_a_law_that_only_samples_is_estimated_from_max_evaluations_draws(
+        self,
+    ):
         import tensorflow_probability.substrates.jax.bijectors as tfb
 
         from probpipe import BijectorTransformedDistribution
 
         base = Normal("t", 0.0, 1.0)
         transformed = BijectorTransformedDistribution("e", base, tfb.Exp())
-        with workflow_run(seed=3):
-            block = cov.using(num_samples=_DRAWS)(transformed, base)
+        with workflow_run(seed=3), _no_unused_count_warning():
+            block = cov.using(max_evaluations=_DRAWS)(transformed, base)
         assert _route(block) == "joint_lift"
         assert block.provenance.metadata["exact"] is False
         assert block.provenance.metadata["num_samples"] == _DRAWS
         # Cov(exp(t), t) = exp(1/2) for t ~ Normal(0, 1). Observed across seeds
         # 0-5 with 4000 draws: errors 0.04-0.17.
         np.testing.assert_allclose(np.asarray(block), [[np.exp(0.5)]], atol=0.35)
+
+    def test_a_joint_lift_given_num_samples_warns_to_set_max_evaluations(self):
+        import tensorflow_probability.substrates.jax.bijectors as tfb
+
+        from probpipe import BijectorTransformedDistribution
+
+        base = Normal("t", 0.0, 1.0)
+        transformed = BijectorTransformedDistribution("e", base, tfb.Exp())
+        unused = "cov did not use num_samples=40.*Set max_evaluations=40 instead"
+        with workflow_run(seed=0), pytest.warns(UnusedControlWarning, match=unused):
+            block = cov.using(num_samples=40)(transformed, base)
+        assert block.provenance.metadata["num_samples"] == 256
 
     def test_exact_only_refuses_two_laws_without_an_exact_route(self):
         import tensorflow_probability.substrates.jax.bijectors as tfb
@@ -1273,7 +1306,7 @@ class TestExpectation:
             False,
         )
         with workflow_run(seed=6):
-            estimate = expectation.using(num_samples=_DRAWS)(law, lambda x: x**2)
+            estimate = expectation.using(max_evaluations=_DRAWS)(law, lambda x: x**2)
         assert abs(_value(estimate) - 1.0) < 0.1
 
     def test_method_selects_the_sampling_lift_for_a_law_with_a_closed_form(self):
@@ -1292,34 +1325,53 @@ class TestExpectation:
         with pytest.raises(ResolutionError, match="no_such_method"):
             expectation.using(method="no_such_method")(Gaussian("g"), lambda x: x)
 
-    def test_num_samples_is_the_number_of_evaluations_of_the_integrand(self):
+    def test_max_evaluations_is_the_number_of_evaluations_of_the_integrand(self):
         law = Sampler("s")
-        estimate = expectation.using(num_samples=33, max_evaluations=2)(law, lambda x: x)
+        with pytest.warns(UnusedControlWarning, match="Remove num_samples=2 from using"):
+            estimate = expectation.using(max_evaluations=33, num_samples=2)(law, lambda x: x)
         assert law.shapes == [(33,)]
         assert estimate.provenance.metadata["num_samples"] == 33
 
-    def test_num_samples_wins_over_the_integrands_own_max_evaluations(self):
+    def test_the_calls_max_evaluations_wins_over_the_integrands_own(self):
         law = Sampler("s")
         integrand = Function(lambda x: x, label="integrand", max_evaluations=5)
-        expectation.using(num_samples=33)(law, integrand)
+        expectation.using(max_evaluations=33)(law, integrand)
         assert law.shapes == [(33,)]
 
-    def test_the_session_num_samples_sets_the_evaluations_when_the_call_sets_none(self):
-        config.sampling.num_samples = 29
-        config.sampling.max_evaluations = 3
+    def test_the_integrands_own_max_evaluations_applies_when_the_call_sets_none(self):
+        law = Sampler("s")
+        integrand = Function(lambda x: x, label="integrand", max_evaluations=5)
+        estimate = expectation(law, integrand)
+        assert law.shapes == [(5,)]
+        assert estimate.provenance.metadata["num_samples"] == 5
+
+    def test_the_session_max_evaluations_sets_the_evaluations_when_the_call_sets_none(self):
+        config.sampling.max_evaluations = 29
+        config.sampling.num_samples = 3
         law = Sampler("s")
         estimate = expectation(law, lambda x: x)
         assert law.shapes == [(29,)]
         assert estimate.provenance.metadata["num_samples"] == 29
 
-    def test_num_samples_decides_between_enumerating_and_sampling_the_atoms(self):
+    def test_an_expectation_counts_its_draws_as_its_pushforward_does(self):
+        law = Sampler("s")
+        with workflow_run(seed=0):
+            expectation.using(max_evaluations=17)(law, lambda x: x)
+            pushforward.using(max_evaluations=17)(law, lambda x: x)
+        with workflow_run(seed=0):
+            expectation(law, lambda x: x)
+            pushforward(law, lambda x: x)
+        default = config.sampling.max_evaluations
+        assert law.shapes == [(17,), (17,), (default,), (default,)]
+
+    def test_max_evaluations_decides_between_enumerating_and_sampling_the_atoms(self):
         atoms = EmpiricalDistribution(jnp.arange(6.0), output_name="x")
-        view = expectation.using(method="pushforward_mean", max_evaluations=100)
-        enumerated = view.using(num_samples=6)(atoms, lambda x: x)
+        view = expectation.using(method="pushforward_mean")
+        enumerated = view.using(max_evaluations=6)(atoms, lambda x: x)
         assert enumerated.provenance.metadata["method"] == "empirical_enumeration"
         assert "num_samples" not in enumerated.provenance.metadata
         with workflow_run(seed=0):
-            sampled = view.using(num_samples=5)(atoms, lambda x: x)
+            sampled = view.using(max_evaluations=5)(atoms, lambda x: x)
         assert sampled.provenance.metadata["method"] == "sampling_lift"
         assert sampled.provenance.metadata["num_samples"] == 5
 
@@ -1447,7 +1499,7 @@ class TestTheIntegrandReceivesDraws:
 
         assert _value(expectation(_atoms(), square)) == pytest.approx(14.0 / 3.0)
         with workflow_run(seed=3):
-            estimate = expectation.using(num_samples=_DRAWS)(Gaussian("g", 1.0), square)
+            estimate = expectation.using(max_evaluations=_DRAWS)(Gaussian("g", 1.0), square)
         assert received and not any(isinstance(x, Distribution) for x in received)
         # E[X^2] = 2 for X ~ N(1, 1); 4000 draws give a standard error of about 0.04.
         assert _value(estimate) == pytest.approx(2.0, abs=0.15)
@@ -1489,14 +1541,14 @@ class TestTheIntegrandReceivesDraws:
             return mean(D)
 
         with workflow_run(seed=0):
-            estimate = expectation.using(num_samples=200)(measure, statistic)
+            estimate = expectation.using(max_evaluations=200)(measure, statistic)
         # The replicate means of the atoms 1, 2, 3 have mean 2 and standard
         # deviation sqrt(2/9), so 200 of them give a standard error of about 0.033.
         assert _value(estimate) == pytest.approx(2.0, abs=0.2)
 
     def test_a_vector_event_is_integrated_coordinatewise(self):
         with workflow_run(seed=0):
-            estimate = expectation.using(num_samples=_DRAWS)(Vector("v"), lambda v: v * v)
+            estimate = expectation.using(max_evaluations=_DRAWS)(Vector("v"), lambda v: v * v)
         # The coordinates have scales 1 and 2; 4000 draws give standard errors
         # of about 0.022 and 0.09 for their second moments.
         np.testing.assert_allclose(jnp.asarray(estimate), [1.0, 4.0], atol=0.3)
@@ -1654,6 +1706,7 @@ class TestTheExactnessOfBothSteps:
 
     def test_an_exact_rule_with_a_monte_carlo_mean_is_approximate(self, exact_to_sampler):
         with workflow_run(seed=0):
+            # The exact rule evaluates nothing, and the mean of its law reads num_samples.
             result = expectation.using(num_samples=_DRAWS)(Gaussian("g"), lambda x: x)
         metadata = result.provenance.metadata
         assert (metadata["method"], metadata["exact"]) == ("exact_to_sampler", False)
@@ -1718,11 +1771,13 @@ class TestTheDrawCount:
     """``num_samples`` is the number of draws of every Monte Carlo route, which provenance records."""
 
     @pytest.mark.parametrize("max_evaluations", [1, 5000])
-    def test_a_monte_carlo_mean_follows_num_samples_and_ignores_max_evaluations(
+    def test_a_monte_carlo_mean_follows_num_samples_and_warns_about_max_evaluations(
         self, max_evaluations
     ):
         law = Sampler("s")
-        estimate = mean.using(num_samples=13, max_evaluations=max_evaluations)(law)
+        unused = f"mean did not use max_evaluations={max_evaluations}"
+        with pytest.warns(UnusedControlWarning, match=unused):
+            estimate = mean.using(num_samples=13, max_evaluations=max_evaluations)(law)
         assert law.shapes == [(13,)]
         assert estimate.provenance.metadata["num_samples"] == 13
 
@@ -1768,7 +1823,8 @@ class TestTheDrawCount:
         assert blocks[("y",)]["num_samples"] == 15
 
     def test_an_exact_route_records_no_num_samples(self):
-        estimate = mean.using(num_samples=15)(Gaussian("g", 2.0))
+        with pytest.warns(UnusedControlWarning, match="mean did not use num_samples=15"):
+            estimate = mean.using(num_samples=15)(Gaussian("g", 2.0))
         assert estimate.provenance.metadata["exact"] is True
         assert "num_samples" not in estimate.provenance.metadata
 
@@ -1783,7 +1839,8 @@ class TestTheDrawCount:
             return estimate.raw
 
         lifted = Function(centered, label="centered", traceable=False, executor="sequential")
-        with workflow_run(seed=0):
+        unused = "centered did not use num_samples=99"
+        with workflow_run(seed=0), pytest.warns(UnusedControlWarning, match=unused):
             law = lifted.using(max_evaluations=7, num_samples=99)(Gaussian("theta", 0.0))
         assert law.num_atoms == 7
         assert shapes == [(13,)] * 7
@@ -1800,7 +1857,8 @@ class TestTheDrawCount:
             return estimate.raw
 
         lifted = Function(centered, label="centered", traceable=False, executor="sequential")
-        with workflow_run(seed=0):
+        unused = "centered did not use num_samples=99"
+        with workflow_run(seed=0), pytest.warns(UnusedControlWarning, match=unused):
             law = lifted.using(max_evaluations=6, num_samples=99)(Gaussian("theta", 0.0))
         assert law.num_atoms == 6
         assert shapes == [(17,)] * 6
@@ -1912,3 +1970,270 @@ class TestASummaryBindsWhereADrawBinds:
         predictive = condition_on((likelihood & prior), mean(posterior))
         # The posterior mean of mu is 2, and the kernel's mean is mu in each coordinate.
         np.testing.assert_allclose(np.asarray(mean(predictive)), [2.0, 2.0, 2.0], rtol=1e-6)
+
+
+def _unused_count_messages(record: Any) -> list[str]:
+    return [
+        str(entry.message) for entry in record if issubclass(entry.category, UnusedControlWarning)
+    ]
+
+
+@contextlib.contextmanager
+def _no_unused_count_warning():
+    """A scope in which an ``UnusedControlWarning`` raises, so a test asserts there is none."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", UnusedControlWarning)
+        yield
+
+
+class TestTheCountsAnOperationReads:
+    """An operation's call warns for each count its ``using`` view set that nothing it ran read."""
+
+    def test_pushforward_reads_max_evaluations_so_num_samples_warns(self):
+        with workflow_run(seed=0), pytest.warns(UnusedControlWarning) as record:
+            result = pushforward.using(num_samples=10)(Sampler("s"), lambda v: v**2)
+        assert _unused_count_messages(record) == [
+            "pushforward did not use num_samples=10, because the call evaluated a function at "
+            f"draws of a distribution, which max_evaluations={config.sampling.max_evaluations} counts. "
+            "Set max_evaluations=10 instead"
+        ]
+        assert result.num_atoms == config.sampling.max_evaluations
+
+    def test_pushforward_reads_the_max_evaluations_it_forwards_to_the_map(self):
+        with workflow_run(seed=0), _no_unused_count_warning():
+            result = pushforward.using(max_evaluations=10)(Sampler("s"), lambda v: v**2)
+        assert result.num_atoms == 10
+
+    def test_expectation_reads_max_evaluations_so_num_samples_warns(self):
+        law = Sampler("s")
+        with workflow_run(seed=0), pytest.warns(UnusedControlWarning) as record:
+            expectation.using(num_samples=4)(law, lambda v: v**2)
+        assert _unused_count_messages(record) == [
+            "expectation did not use num_samples=4, because the call evaluated a function at "
+            f"draws of a distribution, which max_evaluations={config.sampling.max_evaluations} "
+            "counts. Set max_evaluations=4 instead"
+        ]
+        assert law.shapes == [(config.sampling.max_evaluations,)]
+
+    def test_expectation_reads_the_max_evaluations_it_passes_to_its_lift(self):
+        law = Sampler("s")
+        with workflow_run(seed=0), _no_unused_count_warning():
+            expectation.using(max_evaluations=4)(law, lambda v: v**2)
+        assert law.shapes == [(4,)]
+
+    def test_an_exact_route_reads_no_count(self):
+        with pytest.warns(UnusedControlWarning) as record:
+            mean.using(num_samples=500)(Gaussian("g", 2.0))
+        assert _unused_count_messages(record) == [
+            "mean did not use num_samples=500, because the call took no Monte Carlo draws"
+        ]
+
+    def test_a_count_the_formula_reads_is_read_by_the_derived_call(self):
+        law = Sampler("s")
+        with _no_unused_count_warning():
+            standard_deviation.using(num_samples=21)(law)
+        assert law.shapes == [(21,)]
+
+    def test_a_derived_call_whose_formula_reads_no_count_warns_once_under_its_own_name(self):
+        with pytest.warns(UnusedControlWarning) as record:
+            standard_deviation.using(num_samples=21)(Gaussian("g", 2.0))
+        assert _unused_count_messages(record) == [
+            "standard_deviation did not use num_samples=21, because the call took no Monte "
+            "Carlo draws"
+        ]
+
+    def test_a_call_given_both_counts_is_told_to_remove_the_unread_one(self):
+        with workflow_run(seed=0), pytest.warns(UnusedControlWarning) as record:
+            pushforward.using(num_samples=10, max_evaluations=10)(Sampler("s"), lambda v: v**2)
+        assert _unused_count_messages(record) == [
+            "pushforward did not use num_samples=10, because the call evaluated a function at "
+            "draws of a distribution, which max_evaluations=10 counts. "
+            "Remove num_samples=10 from using"
+        ]
+
+    def test_a_map_given_num_samples_warns_under_its_own_name_with_the_fix(self):
+        square = Function(lambda v: v**2, label="square")
+        with workflow_run(seed=0), pytest.warns(UnusedControlWarning) as record:
+            pushforward(Sampler("s"), square.using(num_samples=10))
+        assert _unused_count_messages(record) == [
+            "square did not use num_samples=10, because the call evaluated a function at draws "
+            f"of a distribution, which max_evaluations={config.sampling.max_evaluations} counts. "
+            "Set max_evaluations=10 instead"
+        ]
+
+    def test_a_maps_own_max_evaluations_governs_the_pushforward_without_warning(self):
+        with workflow_run(seed=0), _no_unused_count_warning():
+            result = pushforward(
+                Sampler("s"),
+                log_prob.using(max_evaluations=10),
+                fixed_args={"d": Normal("y", 0.0, 1.0)},
+            )
+        assert result.num_atoms == 10
+
+    def test_a_pushforward_kernel_keeps_its_count_for_each_binding(self):
+        kernel = conditional_distribution(
+            lambda mu: Normal("y", mu, 1.0), given_spec={"mu": REAL}, label="kernel"
+        )
+        with workflow_run(seed=0), _no_unused_count_warning():
+            pushed = pushforward.using(max_evaluations=9)(kernel, lambda y: 2 * y)
+            bound = condition_on(pushed, {"mu": 1.0})
+        assert bound.num_atoms == 9
+
+    def test_a_mixture_kernel_over_a_finite_mixing_law_reads_no_count(self):
+        from probpipe import mixture
+
+        kernel = conditional_distribution(
+            lambda theta, x: Normal("y", theta + x, 1.0),
+            given_spec={"theta": REAL, "x": REAL},
+            label="kernel",
+        )
+        mixing = EmpiricalDistribution(
+            jnp.array([-1.0, 3.0]), jnp.array([0.25, 0.75]), output_name="theta"
+        )
+        with pytest.warns(UnusedControlWarning, match="mixture did not use max_evaluations=7"):
+            mixture.using(max_evaluations=7)(kernel, mixing)
+
+    @pytest.mark.parametrize("executor", ["sequential", "thread", "process"])
+    def test_a_count_read_on_any_executor_is_read_by_the_call(self, executor):
+        laws = DistributionBatch(
+            [Normal("x", 0.0, 1.0), Normal("x", 1.0, 1.0)], "laws", label="laws"
+        )
+        options = {"executor_options": {"max_workers": 2}} if executor == "process" else {}
+        view = mean.using(num_samples=50, method="monte_carlo", executor=executor, **options)
+        with workflow_run(seed=0), _no_unused_count_warning():
+            result = view(laws)
+        assert result.provenance.metadata["evaluations"][0]["executor"] == executor
+
+    def test_an_exact_rule_reads_no_max_evaluations(self, exact_to_sampler):
+        unused = "pushforward did not use max_evaluations=10"
+        with workflow_run(seed=0), pytest.warns(UnusedControlWarning, match=unused):
+            result = pushforward.using(max_evaluations=10)(Gaussian("g"), lambda x: x)
+        assert result.provenance.metadata["method"] == "exact_to_sampler"
+
+    def test_a_registered_rule_that_looks_up_max_evaluations_reads_it(self, counting_rule):
+        square = Function(lambda x: x**2, label="square")
+        with workflow_run(seed=0), _no_unused_count_warning():
+            direct = square.using(method="counting_rule", max_evaluations=13)(Gaussian("g"))
+            pushed = pushforward.using(method="counting_rule", max_evaluations=13)(
+                Gaussian("g"), square
+            )
+        assert direct.num_atoms == pushed.num_atoms == 13
+
+    def test_a_registered_rule_that_ignores_num_samples_leaves_it_unread(self, counting_rule):
+        square = Function(lambda x: x**2, label="square")
+        with workflow_run(seed=0), pytest.warns(UnusedControlWarning, match="num_samples=7"):
+            square.using(method="counting_rule", num_samples=7)(Gaussian("g"))
+
+    def test_a_pushforward_kernel_does_not_warn_about_its_maps_own_count(self):
+        kernel = conditional_distribution(
+            lambda mu: Normal("y", mu, 1.0), given_spec={"mu": REAL}, label="kernel"
+        )
+        double = Function(lambda y: 2 * y, label="double")
+        with workflow_run(seed=0), _no_unused_count_warning():
+            pushed = pushforward(kernel, double.using(max_evaluations=9))
+            bound = condition_on(pushed, {"mu": 1.0})
+            draws = sample(pushed, (3,), given={"mu": 1.0})
+        assert bound.num_atoms == 9
+        assert jnp.shape(jnp.asarray(draws)) == (3,)
+
+    def test_a_maps_own_count_is_named_when_the_operations_count_is_unread(self):
+        double = Function(lambda y: 2 * y, label="double")
+        with workflow_run(seed=0), pytest.warns(UnusedControlWarning) as record:
+            result = pushforward.using(num_samples=13)(
+                Gaussian("g"), double.using(max_evaluations=9)
+            )
+        assert result.num_atoms == 9
+        assert _unused_count_messages(record) == [
+            "pushforward did not use num_samples=13, because the call evaluated a function at "
+            "draws of a distribution, which max_evaluations=9 counts. "
+            "Set max_evaluations=13 instead"
+        ]
+
+
+class _CountingRule(BinaryDispatchMethod):
+    """An approximate rule whose pushforward has as many atoms as the call's ``max_evaluations``."""
+
+    name = "counting_rule"
+    exact = False
+    priority = 90
+
+    def supported_types(self) -> tuple[tuple[type, ...], tuple[type, ...]]:
+        return ((Function,), (Distribution,))
+
+    def check(self, f: Any, operand: Any, /, **call: Any) -> Feasibility:
+        return Feasibility(True)
+
+    def execute(self, f: Any, operand: Any, /, **call: Any) -> Any:
+        count = call["controls"]["max_evaluations"]
+        return EmpiricalDistribution(jnp.arange(float(count)), output_name="y")
+
+
+@pytest.fixture
+def counting_rule(monkeypatch):
+    """The evaluation rules, for one test, with a registered rule that looks up ``max_evaluations``."""
+    registry = type(_rules.evaluation_rule_registry)()
+    for rule in (
+        _rules._SamplingLift(),
+        _rules._ElementwiseSweep(),
+        _rules._EmpiricalEnumeration(),
+        _CountingRule(),
+    ):
+        registry.register(rule)
+    monkeypatch.setattr(_rules, "evaluation_rule_registry", registry)
+    (route,) = [r for r in pushforward.routes if r.name == "evaluation_rules"]
+    monkeypatch.setattr(route, "registry", registry)
+
+
+class _SamplerKernel(ConditionalDistribution):
+    """A kernel whose law at each input only samples, keeping every law it builds."""
+
+    def __init__(self) -> None:
+        super().__init__({"mu": REAL}, OutputSpec(s=REAL), label="kernel")
+        self.laws: list[Sampler] = []
+
+    def _condition_on(self, given: Any, /, **kwargs: Any) -> Any:
+        law = Sampler("s", float(given["mu"]))
+        self.laws.append(law)
+        return law
+
+
+class TestExpectationCountsLikeItsPushforward:
+    """Every route of expectation counts its lift's draws with max_evaluations."""
+
+    def test_with_given_the_integrands_own_max_evaluations_applies(self):
+        kernel = _SamplerKernel()
+        integrand = Function(lambda s: s, label="integrand", max_evaluations=8)
+        with workflow_run(seed=0), _no_unused_count_warning():
+            expectation(kernel, integrand, given={"mu": 2.0})
+        assert kernel.laws[-1].shapes == [(8,)]
+
+    def test_with_given_the_calls_max_evaluations_applies(self):
+        kernel = _SamplerKernel()
+        with workflow_run(seed=0), _no_unused_count_warning():
+            expectation.using(max_evaluations=9)(kernel, lambda s: s, given={"mu": 2.0})
+        assert kernel.laws[-1].shapes == [(9,)]
+
+    def test_with_given_num_samples_warns(self):
+        kernel = _SamplerKernel()
+        unused = "expectation did not use num_samples=9"
+        with workflow_run(seed=0), pytest.warns(UnusedControlWarning, match=unused):
+            expectation.using(num_samples=9)(kernel, lambda s: s, given={"mu": 2.0})
+
+    def test_over_a_batch_num_samples_warns_and_max_evaluations_applies(self):
+        laws = [Sampler("s", 0.0), Sampler("s", 1.0)]
+        batch = DistributionBatch(laws, "laws", label="laws")
+        unused = "expectation did not use num_samples=9"
+        with workflow_run(seed=0), pytest.warns(UnusedControlWarning, match=unused):
+            expectation.using(num_samples=9)(batch, lambda s: s)
+        with workflow_run(seed=0), _no_unused_count_warning():
+            expectation.using(max_evaluations=7)(batch, lambda s: s)
+        default = config.sampling.max_evaluations
+        assert [law.shapes for law in laws] == [[(default,), (7,)], [(default,), (7,)]]
+
+    def test_a_pushforward_kernel_warns_about_num_samples_it_does_not_keep(self):
+        kernel = conditional_distribution(
+            lambda mu: Normal("y", mu, 1.0), given_spec={"mu": REAL}, label="kernel"
+        )
+        unused = "pushforward did not use num_samples=9"
+        with pytest.warns(UnusedControlWarning, match=unused):
+            pushforward.using(num_samples=9)(kernel, lambda y: 2 * y)

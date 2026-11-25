@@ -14,13 +14,17 @@ Provides:
     programs of one owner that run user or route code, each compiled under
     the static settings of the call that runs it;
   - :class:`_StaticSettings` and :func:`_static_settings_in_effect`, those
-    settings.
+    settings;
+  - :func:`_traced_point` and :class:`_PointTrace`, what the trace of one
+    evaluation point says about mapping it in chunks: the memory one run
+    holds at once, and whether its random draws depend on the chunks.
 """
 
 from __future__ import annotations
 
 import dataclasses
 import enum
+import functools
 import logging
 import threading
 import warnings
@@ -31,13 +35,16 @@ from typing import Any, NamedTuple, cast
 
 import jax
 import numpy as np
+from jax._src import core as jax_core
 
 from ._call_context import (
     _TRACED_CALL_TOKEN,
+    _CountReads,
     _EvaluationLog,
     _EvaluationSetRecord,
     _jax_transformation_active,
     _merge_noted_into,
+    _note_count_read,
     _NumSamplesUsed,
     _open_call_context,
     _UnclassifiedSettingError,
@@ -362,7 +369,12 @@ class _ProgramStore:
             static_options: Hashable,
             static_settings: _StaticSettings,
         ) -> Any:
-            traced_context = current_call_context().with_static_settings(static_settings)
+            trace_count_reads = _CountReads("trace", {})
+            traced_context = (
+                current_call_context()
+                .with_static_settings(static_settings)
+                .with_count_reads_recorded_in(trace_count_reads)
+            )
             token_scope = _TRACED_CALL_TOKEN.set(call_token)
             try:
                 with (
@@ -382,6 +394,7 @@ class _ProgramStore:
                     tuple(
                         (warning.category, str(warning.message)) for warning in captured_warnings
                     ),
+                    tuple(sorted(trace_count_reads.read_counts.items())),
                 )
             )
             return body_output
@@ -505,6 +518,173 @@ def _static_settings_in_effect() -> _StaticSettings:
     )
 
 
+@dataclass(frozen=True)
+class _PointTrace:
+    """What the trace of one evaluation point says about mapping many of them in chunks.
+
+    Attributes
+    ----------
+    working_memory_bytes : int
+        The most bytes that the arrays one evaluation computes from its
+        arguments occupy at once while it runs uncompiled, as
+        :func:`_jaxpr_working_memory_bytes` reads them. A map over N
+        evaluation points holds about N times as much.
+    draws_independent_of_chunking : bool
+        Whether each random draw of the evaluation gives the same bits when
+        its point is mapped alone, in a chunk, or with every other point, as
+        :func:`_draws_are_independent_of_chunking` decides it. When it is
+        ``False``, splitting the map into chunks would change the draws.
+    """
+
+    working_memory_bytes: int
+    draws_independent_of_chunking: bool
+
+
+def _traced_point(fn: Callable[..., Any], *abstract_arguments: Any) -> _PointTrace | None:
+    """What a trace of *fn* at one evaluation point's *abstract_arguments* says about mapping it in chunks.
+
+    *fn* is traced once with ``jax.make_jaxpr``, without running it, and its
+    warnings are not emitted, since the map that follows traces it again and
+    emits them then. A callable that draws from NumPy's or Python's global
+    random generator while it is traced draws once more, as the map would.
+
+    Parameters
+    ----------
+    fn : Callable
+        The evaluation of one point.
+    *abstract_arguments : Any
+        Its arguments, as trees of arrays or of ``jax.ShapeDtypeStruct``.
+
+    Returns
+    -------
+    _PointTrace or None
+        The facts the trace gives, or ``None`` when *fn* does not trace at
+        these arguments.
+
+    Examples
+    --------
+    One evaluation of ``sum(sin(x * grid))`` at a scalar ``x`` holds ``x``,
+    then ``x * grid`` and ``sin(x * grid)`` together, while the captured
+    ``grid``, which a map over ``x`` shares, is not counted:
+
+    >>> import jax, jax.numpy as jnp
+    >>> grid = jnp.linspace(0.0, 1.0, 1000)  # float32, 4,000 bytes
+    >>> point_trace = _traced_point(
+    ...     lambda x: jnp.sum(jnp.sin(x * grid)), jax.ShapeDtypeStruct((), jnp.float32)
+    ... )
+    >>> point_trace.working_memory_bytes
+    8004
+    >>> point_trace.draws_independent_of_chunking
+    True
+    """
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            traced_program = jax.make_jaxpr(fn)(*abstract_arguments)
+    except Exception:
+        return None
+    return _PointTrace(
+        working_memory_bytes=_jaxpr_working_memory_bytes(traced_program.jaxpr),
+        draws_independent_of_chunking=_draws_are_independent_of_chunking(traced_program.jaxpr),
+    )
+
+
+def _jaxpr_working_memory_bytes(jaxpr: Any) -> int:
+    """The most bytes that the values *jaxpr* computes from its inputs occupy at once while it runs uncompiled.
+
+    The inputs are held throughout. Each equation that reads a value computed
+    from an input adds its outputs, and a value is released after the last
+    equation that reads it, as an uncompiled run releases it. An equation
+    that runs a program of its own, such as the body of a ``lax.scan`` or a
+    ``jax.jit`` that *jaxpr* calls, holds that program's working memory
+    beyond its inputs while it runs. Values computed from constants alone,
+    such as an array a callable captures, are not counted.
+
+    Parameters
+    ----------
+    jaxpr : jax.extend.core.Jaxpr
+        The program, without its constants.
+
+    Returns
+    -------
+    int
+        The peak number of bytes.
+    """
+    computed_from_inputs = set(jaxpr.invars)
+    last_reading_equation: dict[Any, int] = {}
+    for equation_index, equation in enumerate(jaxpr.eqns):
+        for operand in _variables(equation.invars):
+            last_reading_equation[operand] = equation_index
+    for result in _variables(jaxpr.outvars):
+        last_reading_equation[result] = len(jaxpr.eqns)
+    held_bytes = sum(_value_bytes(input_value) for input_value in jaxpr.invars)
+    peak_bytes = held_bytes
+    for equation_index, equation in enumerate(jaxpr.eqns):
+        operands = _variables(equation.invars)
+        if not any(operand in computed_from_inputs for operand in operands):
+            continue
+        inner_bytes = max(
+            (
+                _jaxpr_working_memory_bytes(inner_jaxpr)
+                - sum(_value_bytes(inner_input) for inner_input in inner_jaxpr.invars)
+                for inner_jaxpr in jax_core.jaxprs_in_params(equation.params)
+            ),
+            default=0,
+        )
+        results = [
+            result for result in equation.outvars if not isinstance(result, jax_core.DropVar)
+        ]
+        computed_from_inputs.update(results)
+        held_bytes += sum(_value_bytes(result) for result in results)
+        peak_bytes = max(peak_bytes, held_bytes + inner_bytes)
+        for value in set(operands) | set(results):
+            if (
+                value in computed_from_inputs
+                and value not in jaxpr.invars
+                and last_reading_equation.get(value, -1) <= equation_index
+            ):
+                held_bytes -= _value_bytes(value)
+    return peak_bytes
+
+
+def _draws_are_independent_of_chunking(jaxpr: Any) -> bool:
+    """Whether each random draw of *jaxpr* gives the same bits however a map groups its points.
+
+    A ``threefry2x32`` key, JAX's default, draws the same bits under
+    ``jax.vmap`` as alone, so a map gives each point the same draws whether
+    it maps the points together or in chunks. The ``rbg`` and ``unsafe_rbg``
+    generators, and ``lax.rng_bit_generator`` called directly, draw under
+    ``jax.vmap`` from state that the points of one map share, so their draws
+    change with the chunks. The draws are independent of the chunks when
+    every key that *jaxpr* or a program it runs holds is a ``threefry2x32``
+    key, and none of them calls ``rng_bit_generator``.
+
+    Parameters
+    ----------
+    jaxpr : jax.extend.core.Jaxpr
+        The program, without its constants.
+
+    Returns
+    -------
+    bool
+        Whether the draws are independent of the chunks.
+    """
+    for equation in jaxpr.eqns:
+        if equation.primitive.name == "rng_bit_generator":
+            return False
+        if any(
+            _holds_a_key_other_than_threefry(value)
+            for value in (*equation.invars, *equation.outvars)
+        ):
+            return False
+        if not all(
+            _draws_are_independent_of_chunking(inner_jaxpr)
+            for inner_jaxpr in jax_core.jaxprs_in_params(equation.params)
+        ):
+            return False
+    return not any(_holds_a_key_other_than_threefry(value) for value in jaxpr.invars)
+
+
 # ---------------------------------------------------------------------------
 # Private helpers
 # ---------------------------------------------------------------------------
@@ -547,15 +727,24 @@ class _TraceNotes:
         recorded.
     warnings : tuple of (warning class, str), optional
         Warnings emitted while tracing, replayed once after every successful run.
+    count_reads : tuple of (str, int), optional
+        The running call's counts the trace read, each with its value, noted
+        again on the running call after every run.
     """
 
     num_samples_values: frozenset[int]
     set_records: tuple[_EvaluationSetRecord, ...]
     warnings: tuple[tuple[type[Warning], str], ...] = ()
+    count_reads: tuple[tuple[str, int], ...] = ()
 
     def is_empty(self) -> bool:
         """Whether the trace noted nothing."""
-        return not self.num_samples_values and not self.set_records and not self.warnings
+        return (
+            not self.num_samples_values
+            and not self.set_records
+            and not self.warnings
+            and not self.count_reads
+        )
 
 
 class _VaryingTraceNotesError(RuntimeError):
@@ -609,6 +798,9 @@ class _StoreEntry:
             self._trace_notes = replace(
                 self._trace_notes,
                 warnings=tuple(dict.fromkeys((*self._trace_notes.warnings, *trace_notes.warnings))),
+                count_reads=tuple(
+                    sorted(set(self._trace_notes.count_reads) | set(trace_notes.count_reads))
+                ),
             )
 
     def apply_trace_notes(self) -> None:
@@ -619,6 +811,8 @@ class _StoreEntry:
         _merge_noted_into(
             current_call_context(), trace_notes.num_samples_values, trace_notes.set_records
         )
+        for count_name, count in trace_notes.count_reads:
+            _note_count_read(count_name, count)
         for category, message in trace_notes.warnings:
             warnings.warn(message, category, stacklevel=3)
 
@@ -679,4 +873,70 @@ def _varying_note_message(note_description: str, kept_value: Any, traced_value: 
     return (
         f"internal error: a compiled JAX program noted {note_description} {traced_value!r} "
         f"on one trace but {kept_value!r} on an earlier one. Please report this"
+    )
+
+
+def _variables(operands: Iterable[Any]) -> list[Any]:
+    """The variables among a jaxpr equation's *operands*, leaving out its literals."""
+    return [operand for operand in operands if not isinstance(operand, jax_core.Literal)]
+
+
+def _value_bytes(value: Any) -> int:
+    """The bytes an array value of a jaxpr occupies, by its shape and dtype; 0 for any other value.
+
+    A typed random key occupies the bytes of its key data, two ``uint32``
+    words for a ``threefry2x32`` key and four for an ``rbg`` key.
+    """
+    abstract_value = getattr(value, "aval", None)
+    dtype = getattr(abstract_value, "dtype", None)
+    if dtype is None:
+        return 0
+    entries = int(np.prod(abstract_value.shape))
+    if _is_key_dtype(dtype):
+        return entries * _key_facts(dtype).data_bytes
+    try:
+        return entries * np.dtype(dtype).itemsize
+    except TypeError:
+        return 0
+
+
+def _holds_a_key_other_than_threefry(value: Any) -> bool:
+    """Whether *value*, a value of a jaxpr, holds typed random keys of a generator other than ``threefry2x32``."""
+    dtype = getattr(getattr(value, "aval", None), "dtype", None)
+    return _is_key_dtype(dtype) and _key_facts(dtype).implementation != "threefry2x32"
+
+
+def _is_key_dtype(dtype: Any) -> bool:
+    """Whether *dtype* is the dtype of a typed random key."""
+    return dtype is not None and jax.dtypes.issubdtype(dtype, jax.dtypes.prng_key)
+
+
+class _KeyFacts(NamedTuple):
+    """What the dtype of a typed random key says about each key of that dtype.
+
+    Attributes
+    ----------
+    implementation : str
+        The name of the key's random generator, such as ``"threefry2x32"``.
+    data_bytes : int
+        The bytes of one key's key data.
+    """
+
+    implementation: str
+    data_bytes: int
+
+
+@functools.cache
+def _key_facts(key_dtype: Any) -> _KeyFacts:
+    """The generator and the key-data bytes of a typed random key of *key_dtype*, read from an abstract key."""
+    implementations: list[str] = []
+
+    def key_data_of(key: Any) -> Any:
+        implementations.append(str(jax.random.key_impl(key)))
+        return jax.random.key_data(key)
+
+    key_data = jax.eval_shape(key_data_of, jax.ShapeDtypeStruct((), key_dtype))
+    return _KeyFacts(
+        implementation=implementations[0],
+        data_bytes=int(np.prod(key_data.shape)) * np.dtype(key_data.dtype).itemsize,
     )

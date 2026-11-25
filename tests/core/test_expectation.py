@@ -39,7 +39,7 @@ class TestExpectationReturnsArray:
 
     def test_return_dist_false_returns_array(self):
         d = Normal("x", loc=3.0, scale=1.0)
-        result = expectation.using(num_samples=1000)(d, lambda x: x)
+        result = expectation.using(max_evaluations=1000)(d, lambda x: x)
         assert isinstance(result, NumericArray)
         assert isinstance(jnp.asarray(result), jnp.ndarray)
 
@@ -83,13 +83,13 @@ class TestExpectationSampleBased:
 
     def test_normal_mean(self):
         d = Normal("x", loc=3.0, scale=1.0)
-        result = expectation.using(num_samples=10_000)(d, lambda x: x)
+        result = expectation.using(max_evaluations=10_000)(d, lambda x: x)
         np.testing.assert_allclose(float(result), 3.0, atol=0.05)
 
     def test_normal_second_moment(self):
         loc, scale = 2.0, 1.5
         d = Normal("x", loc=loc, scale=scale)
-        result = expectation.using(num_samples=10_000)(d, lambda x: x**2)
+        result = expectation.using(max_evaluations=10_000)(d, lambda x: x**2)
         expected = loc**2 + scale**2
         # Second moment has higher variance than first moment (kurtosis effect)
         np.testing.assert_allclose(float(result), expected, atol=0.15)
@@ -97,41 +97,41 @@ class TestExpectationSampleBased:
     def test_normal_variance_from_moments(self):
         loc, scale = 1.0, 2.0
         d = Normal("x", loc=loc, scale=scale)
-        ex = expectation.using(num_samples=10_000)(d, lambda x: x)
-        ex2 = expectation.using(num_samples=10_000)(d, lambda x: x**2)
+        ex = expectation.using(max_evaluations=10_000)(d, lambda x: x)
+        ex2 = expectation.using(max_evaluations=10_000)(d, lambda x: x**2)
         var_est = float(ex2) - float(ex) ** 2
         np.testing.assert_allclose(var_est, scale**2, atol=0.15)
 
     def test_gamma_mean(self):
         conc, rate = 3.0, 2.0
         d = Gamma("x", concentration=conc, rate=rate)
-        result = expectation.using(num_samples=10_000)(d, lambda x: x)
+        result = expectation.using(max_evaluations=10_000)(d, lambda x: x)
         np.testing.assert_allclose(float(result), conc / rate, atol=0.05)
 
     def test_gamma_log_sufficient_statistic(self):
         conc, rate = 3.0, 2.0
         d = Gamma("x", concentration=conc, rate=rate)
-        result = expectation.using(num_samples=20_000)(d, lambda x: jnp.log(x))
+        result = expectation.using(max_evaluations=20_000)(d, lambda x: jnp.log(x))
         expected = float(jsp.digamma(conc)) - float(jnp.log(rate))
         np.testing.assert_allclose(float(result), expected, atol=0.05)
 
     def test_beta_mean(self):
         a, b = 2.0, 5.0
         d = Beta("x", alpha=a, beta=b)
-        result = expectation.using(num_samples=10_000)(d, lambda x: x)
+        result = expectation.using(max_evaluations=10_000)(d, lambda x: x)
         np.testing.assert_allclose(float(result), a / (a + b), atol=0.03)
 
     def test_beta_log_sufficient_statistic(self):
         a, b = 2.0, 5.0
         d = Beta("x", alpha=a, beta=b)
-        result = expectation.using(num_samples=20_000)(d, lambda x: jnp.log(x))
+        result = expectation.using(max_evaluations=20_000)(d, lambda x: jnp.log(x))
         expected = float(jsp.digamma(a)) - float(jsp.digamma(a + b))
         np.testing.assert_allclose(float(result), expected, atol=0.05)
 
     def test_exponential_second_moment(self):
         rate = 3.0
         d = Exponential("x", rate=rate)
-        result = expectation.using(num_samples=10_000)(d, lambda x: x**2)
+        result = expectation.using(max_evaluations=10_000)(d, lambda x: x**2)
         np.testing.assert_allclose(float(result), 2.0 / rate**2, atol=0.03)
 
 
@@ -270,10 +270,10 @@ class TestGlobalDefaults:
         assert pushforward(law, Function(f, output_spec=OutputSpec(integrand=None))).num_atoms == 7
 
     @pytest.mark.parametrize(("make_dist", "f"), _DEFAULT_SIZE_ESTIMATORS)
-    def test_the_session_draw_count_sets_the_expectation_size(self, make_dist, f):
-        """An expectation spends the current ``num_samples`` and ignores ``max_evaluations``."""
-        config.sampling.num_samples = 7
-        config.sampling.max_evaluations = 11
+    def test_the_session_evaluation_count_sets_the_expectation_size(self, make_dist, f):
+        """An expectation evaluates its integrand the current ``max_evaluations`` times, as a pushforward does."""
+        config.sampling.max_evaluations = 7
+        config.sampling.num_samples = 11
         estimate = expectation(make_dist(), f)
         assert np.isfinite(float(estimate))
         assert estimate.provenance.metadata["num_samples"] == 7

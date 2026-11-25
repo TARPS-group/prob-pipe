@@ -26,6 +26,7 @@ from probpipe import (
     ResultKindError,
     ResultSchemaError,
     TrackedTerm,
+    UnusedControlWarning,
     config,
     function,
     workflow_run,
@@ -56,7 +57,7 @@ from probpipe.operations import (
     RouteSummary,
     operation,
 )
-from probpipe.operations._moments import mean
+from probpipe.operations._moments import expectation, mean
 from probpipe.operations._operation import (
     _CheckedRoute,
     _DelegatingRoute,
@@ -64,6 +65,7 @@ from probpipe.operations._operation import (
     _named_operations,
     _workflow_draws,
 )
+from probpipe.operations._pushforward import pushforward
 from probpipe.operations._sample import sample
 from probpipe.values import Function, FunctionSpec
 
@@ -1333,7 +1335,8 @@ class TestDerivedRouteControls:
     def test_a_num_samples_the_constituent_sets_wins(self, count):
         law = Sampler("s")
         doubled = _body_doubled(center.using(raw=True, num_samples=count))
-        doubled.using(num_samples=33)(law)
+        with pytest.warns(UnusedControlWarning, match="doubled did not use num_samples=33"):
+            doubled.using(num_samples=33)(law)
         assert law.shapes == [(count,)]
 
     def test_a_constituent_keeps_the_session_default_when_the_derived_call_sets_no_count(
@@ -1347,6 +1350,24 @@ class TestDerivedRouteControls:
             with workflow_run(seed=0):
                 doubled.using(**options)(law)
             assert law.shapes == [(count,)]
+
+    @pytest.mark.parametrize("offset", [-1, 0, 1], ids=["below", "default", "above"])
+    @pytest.mark.parametrize("constituent", ["expectation", "pushforward"])
+    def test_a_passed_count_equal_to_the_default_still_wins_over_the_maps_own(
+        self, constituent, offset
+    ):
+        count = config.sampling.max_evaluations + offset
+        integrand = Function(lambda x: x, label="integrand", max_evaluations=9)
+        if constituent == "expectation":
+            doubled = _body_doubled(lambda d: expectation.using(raw=True)(d, integrand), check=None)
+        else:
+            doubled = _body_doubled(
+                lambda d: mean.using(raw=True)(pushforward(d, integrand)), check=None
+            )
+        law = Sampler("s")
+        with workflow_run(seed=0):
+            doubled.using(max_evaluations=count)(law)
+        assert law.shapes == [(count,)]
 
     def test_a_derived_call_passes_each_count_to_its_own_role(self):
         law = Sampler("s")
@@ -1415,7 +1436,8 @@ class TestDerivedRouteControls:
     def test_num_samples_reaches_only_the_calls_the_formula_makes(self):
         law = Sampler("s")
         doubled = _body_doubled(_via_center(exact=False).using(raw=True))
-        doubled.using(num_samples=33)(law)
+        with pytest.warns(UnusedControlWarning, match="doubled did not use num_samples=33"):
+            doubled.using(num_samples=33)(law)
         assert law.shapes == [(center.options["num_samples"],)]
 
     def test_exact_only_restricts_every_call_the_formula_runs(self):

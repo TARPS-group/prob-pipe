@@ -44,9 +44,10 @@ operation ``mean(pushforward(d, f))``, so the integrand receives draws of
 in closed form, and otherwise the route ``pushforward_mean`` builds the
 pushforward by an evaluation rule and takes its mean. Its method names are
 therefore the evaluation rules', and an integration rule registered with the
-evaluation-rule registry serves both operations. The route spends the call's
-``num_samples`` as the pushforward's ``max_evaluations``, since each draw is
-one evaluation of the integrand.
+evaluation-rule registry serves both operations. The route passes the call's
+controls to the pushforward as ``pushforward`` passes them to its map, so the
+integrand is evaluated at most ``max_evaluations`` times, as in the direct call
+``pushforward(d, f)``.
 
 ``standard_deviation(d)`` is the derived operation ``sqrt(variance(d))``, taken
 coordinate by coordinate. Its one route is the body route of its formula, so
@@ -54,9 +55,11 @@ the call takes the routes of ``variance``, ``by_output`` included, and the
 derived route passes the call's ``exact_only``, ``max_evaluations``, and
 ``num_samples`` to ``variance``.
 
-The draws of every Monte Carlo route are workflow-owned random events, and
-their number is the ``num_samples`` control, which the call's provenance
-records.
+The draws of every Monte Carlo route are workflow-owned random events. Their
+number is the ``num_samples`` control for a summary's own Monte Carlo route,
+and the ``max_evaluations`` control for the lifts of ``expectation`` and of
+``cov``'s ``joint_lift``, and the call's provenance records it as
+``num_samples``.
 """
 
 from __future__ import annotations
@@ -129,7 +132,6 @@ from ..functions._call import ApplicabilityError, presented_arguments
 from ..functions._descendants import _distribution_root
 from ..functions._resolution import PointReport, RouteOutcome, check_point, selected, settled
 from ..functions._result import SAMPLE_LEVEL
-from ..functions._rules import _FORWARDED_CONTROLS
 from ..values import Function, FunctionSpec
 from ._operation import (
     BoundCall,
@@ -145,6 +147,7 @@ from ._operation import (
     operation,
 )
 from ._pushforward import (
+    _FORWARDED_CONTROLS,
     _as_function,
     _bound_parameter,
     _call_at,
@@ -599,7 +602,7 @@ def _inner_controls(call: BoundCall, exact_only: bool) -> dict[str, Any]:
 
     The inner call returns its raw value, which the route that makes it assembles.
     """
-    return {**call.controls, "method": None, "exact_only": exact_only, "raw": True}
+    return {**call.controls.peek(), "method": None, "exact_only": exact_only, "raw": True}
 
 
 def _inner_report(call: BoundCall, values: Mapping[str, Any], exact_only: bool) -> Feasibility:
@@ -1165,7 +1168,9 @@ def cov(d1: Distribution, d2: Distribution | None = None):
     ``independent``, an exact zero. Other laws drawn together, such as a
     transform of a coupled marginal and its parent, take ``joint_lift``,
     which takes the covariance of the law of the pair of their draws, exact
-    when the lift enumerates an empirical law's atoms.
+    when the lift enumerates an empirical law's atoms. That lift draws at most
+    ``max_evaluations`` pairs, as ``pushforward`` does, so
+    ``cov.using(max_evaluations=n)`` sets the number of draws of its estimate.
 
     Parameters
     ----------
@@ -1520,12 +1525,15 @@ def _zero_block(call: BoundCall) -> Any:
     return jnp.zeros((rows, columns), dtype=jnp.result_type(float) if dtype is None else dtype)
 
 
-def _require_finite_mean(law: Distribution, name: str) -> None:
-    """Raise when *law* gives its mean in closed form and that mean is undefined or infinite.
+def _finite_mean(law: Distribution, name: str) -> jax.Array | None:
+    """Whether *law*'s closed-form mean is finite, raising when it is known not to be.
 
     The zero block of two independent laws holds when both means are finite.
     A law whose mean is known only through its draws is assumed to have a
-    finite one, as the Monte Carlo routes assume their moments exist.
+    finite one, as the Monte Carlo routes assume their moments exist. A mean
+    computed from traced values, as inside ``jax.jit``, cannot raise, so its
+    finiteness is returned as a traced boolean, which the route applies to
+    the block.
 
     Parameters
     ----------
@@ -1534,30 +1542,57 @@ def _require_finite_mean(law: Distribution, name: str) -> None:
     name : str
         The operand, ``"d1"`` or ``"d2"``, which the error names.
 
+    Returns
+    -------
+    jax.Array or None
+        The traced boolean that is true when the traced mean is finite, or
+        ``None`` when the mean is concrete and finite or the law gives no
+        closed-form mean.
+
     Raises
     ------
     MathematicalDomainError
         If the law's closed-form mean does not exist, as a Cauchy law's does
-        not, or is infinite.
+        not, or is concrete and infinite.
+
+    Examples
+    --------
+    >>> from probpipe import Normal
+    >>> _finite_mean(Normal("x", 0.0, 1.0), "d1") is None
+    True
     """
     if not isinstance(law, SupportsMean) or _capability_guard(law, "_mean").feasible is not True:
-        return
+        return None
     try:
         law_mean = law._mean()
     except MathematicalDomainError as error:
         raise MathematicalDomainError(f"cannot compute cov(d1, d2): {error}") from error
     leaves = jax.tree.leaves(_raw_record(law_mean))
-    if not all(bool(jnp.all(jnp.isfinite(jnp.asarray(leaf)))) for leaf in leaves):
+    finite = jnp.all(jnp.asarray([jnp.all(jnp.isfinite(jnp.asarray(leaf))) for leaf in leaves]))
+    if isinstance(finite, jax.core.Tracer):
+        return finite
+    if not bool(finite):
         raise MathematicalDomainError(
             f"cannot compute cov(d1, d2): the mean of {name}, {law.label!r}, is infinite"
         )
+    return None
 
 
 def _independent_cov(call: BoundCall, result: OutputSpec | None) -> Any:
-    """The zero block of two independent laws, whose closed-form means must be finite."""
-    for name in ("d1", "d2"):
-        _require_finite_mean(call.operands[name], name)
-    return _zero_block(call)
+    """The zero block of two independent laws, whose closed-form means must be finite.
+
+    Under a trace, a block whose traced means are not both finite is ``nan``,
+    since the cross-covariance does not exist and the trace cannot raise.
+    """
+    block = _zero_block(call)
+    traced = [
+        finite
+        for name in ("d1", "d2")
+        if (finite := _finite_mean(call.operands[name], name)) is not None
+    ]
+    if traced:
+        block = jnp.where(jnp.all(jnp.stack(traced)), block, jnp.nan)
+    return block
 
 
 def _pair_of_draws(d1, d2) -> dict[str, Any]:
@@ -1571,11 +1606,6 @@ def _pair_of_draws(d1, d2) -> dict[str, Any]:
 
 #: The map whose lift over two laws draws them as a lift draws them, which ``joint_lift`` calls.
 _PAIR_OF_DRAWS = function(_pair_of_draws, traceable=True)
-
-
-#: The controls a route that lifts a map forwards to it, besides the
-#: ``max_evaluations`` that the call's ``num_samples`` gives.
-_LIFT_FORWARDED = tuple(name for name in _FORWARDED_CONTROLS if name != "max_evaluations")
 
 
 def _lift_report(rule: Feasibility, exact_only: bool, deferred: str) -> Feasibility:
@@ -1598,11 +1628,15 @@ def _steps_exactness(*steps: Any) -> bool | None:
     return True if all(step is True for step in recorded) else None
 
 
-def _noting_lifted_draws(law: Any, call: BoundCall) -> None:
-    """Record the call's ``num_samples`` when the sampling lift drew *law*."""
+def _noting_lifted_draws(law: Any) -> None:
+    """Record as the call's ``num_samples`` the number of draws the sampling lift took, when it drew *law*.
+
+    A summary of the lift's draws is a Monte Carlo estimate from as many draws
+    as the law has atoms.
+    """
     provenance = getattr(law, "provenance", None)
     if provenance is not None and provenance.metadata.get("route") == "sampling_lift":
-        _note_num_samples_used(call.controls["num_samples"])
+        _note_num_samples_used(law.num_atoms)
 
 
 class _JointLift(_DelegatingRoute):
@@ -1615,8 +1649,13 @@ class _JointLift(_DelegatingRoute):
     that law's covariance at those rows and columns. Its exactness is that of
     the evaluation rule and of the covariance's route, so the empirical
     enumeration of an empirical root gives an exact result. Each draw of the
-    joint law is one evaluation of the map, so the call's ``num_samples`` is
-    the map's ``max_evaluations``.
+    joint law is one evaluation of the map, so the route passes the call's
+    controls to the map as ``pushforward`` does: the map is evaluated at most
+    the ``max_evaluations`` that the call sets, and otherwise at most the
+    map's own. The covariance of the joint law is computed inside the call,
+    so it reads the call's ``num_samples`` when that law has no exact
+    covariance. When the sampling lift draws the joint law, the call's
+    provenance records the number of draws it took as ``num_samples``.
     """
 
     source = RouteSource.REGISTRY
@@ -1631,15 +1670,17 @@ class _JointLift(_DelegatingRoute):
 
     @staticmethod
     def _map(call: BoundCall, exact_only: bool) -> Function:
-        """The pairing map under the controls the caller set, with ``num_samples`` as its ``max_evaluations``."""
+        """The pairing map under the controls the caller set on the operation, as ``pushforward`` forwards them.
+
+        A read of a count by the map's call is also noted in the call's, so
+        the call learns whether the count it forwarded was read.
+        """
         set_controls = call.operation._options
-        forwarded = {name: set_controls[name] for name in _LIFT_FORWARDED if name in set_controls}
-        forwarded.update(
-            exact_only=exact_only,
-            include_inputs=False,
-            max_evaluations=call.controls["num_samples"],
-        )
-        return _PAIR_OF_DRAWS.using(**forwarded)
+        forwarded = {
+            name: set_controls[name] for name in _FORWARDED_CONTROLS if name in set_controls
+        }
+        forwarded.update(exact_only=exact_only, include_inputs=False)
+        return _PAIR_OF_DRAWS._forwarding(forwarded)
 
     def probe(
         self, call: BoundCall, result: OutputSpec | None, *, method: str | None, exact_only: bool
@@ -1683,13 +1724,15 @@ class _JointLift(_DelegatingRoute):
         """
         d1, d2 = call.operands["d1"], call.operands["d2"]
         joint = self._map(call, exact_only)(d1, d2)
-        _noting_lifted_draws(joint, call)
-        joint_cov = cov.using(exact_only=exact_only, num_samples=call.controls["num_samples"])(
-            joint
+        _noting_lifted_draws(joint)
+        joint_cov, metadata = _inner_run(
+            call, {**call.operands, "d1": joint, "d2": None}, exact_only
         )
         rows = cast(int, _flat_size(joint.event_spec.term_spec.children["d1"]))
-        dense = jnp.asarray(joint_cov.raw)
-        return RouteOutcome(dense[:rows, rows:], _steps_exactness(joint, joint_cov))
+        dense = jnp.asarray(joint_cov)
+        joint_exactness = _recorded_exactness(joint)
+        exactness = False if joint_exactness is False or not metadata["exact"] else joint_exactness
+        return RouteOutcome(dense[:rows, rows:], exactness)
 
 
 cov.capability_route(
@@ -1782,25 +1825,18 @@ class _PushforwardMean(_EvaluationRules):
     open otherwise, which the call's report states as approximate, and it
     defers the mean's check; the run records the exactness of both steps.
 
-    Each draw of the law is one evaluation of the integrand, so the call's
-    resolved ``num_samples`` is the map's ``max_evaluations``, whatever the map
-    sets, and the call's own ``max_evaluations`` is not passed to the map. When
-    the sampling lift builds the law, the call's provenance records its
-    ``num_samples``.
+    The route passes the call's controls to the map as ``pushforward`` does, so
+    the map is evaluated at most the ``max_evaluations`` that the call sets, and
+    otherwise at most the map's own. The derived route passes the call's
+    ``num_samples`` to the ``mean``, which reads it when the law it averages
+    has no exact mean. When the sampling lift builds the law, the call's
+    provenance records the number of draws it took as ``num_samples``.
     """
 
     _bind_given_first = False
 
-    #: The controls the run forwards to the call of the map, besides the
-    #: ``max_evaluations`` that the call's ``num_samples`` gives.
-    _forwarded = _LIFT_FORWARDED
-
     def __init__(self) -> None:
         super().__init__("pushforward_mean")
-
-    def _forwarded_controls(self, call: BoundCall) -> dict[str, Any]:
-        """The controls the caller set, with the call's ``num_samples`` as the map's ``max_evaluations``."""
-        return super()._forwarded_controls(call) | {"max_evaluations": call.controls["num_samples"]}
 
     @property
     def condition(self) -> str:
@@ -1822,7 +1858,7 @@ class _PushforwardMean(_EvaluationRules):
     ) -> Any:
         """The mean of the pushforward law the selected rule returns, with the exactness of both steps."""
         law = super().run(call, result, method=method, exact_only=exact_only)
-        _noting_lifted_draws(law, call)
+        _noting_lifted_draws(law)
         averaged = mean(law)
         return RouteOutcome(averaged.raw, _steps_exactness(law, averaged))
 
@@ -1848,9 +1884,10 @@ def expectation(d: Distribution, f: Any, fixed_args: Mapping[str, Any] | None = 
     builds the pushforward by an evaluation rule, which
     ``using(method=...)`` names, and takes its mean. Under ``exact_only``
     both steps are restricted to exact routes. The pushforward evaluates the
-    integrand at most ``num_samples`` times, the call's control, so
-    ``expectation.using(num_samples=n)`` sets the number of draws of a Monte
-    Carlo estimate, and the call's provenance records it.
+    integrand at most ``max_evaluations`` times, as ``pushforward(d, f)`` does,
+    so ``expectation.using(max_evaluations=n)`` sets the number of draws of a
+    Monte Carlo estimate, and the call's provenance records the draws it took
+    as ``num_samples``.
 
     Parameters
     ----------

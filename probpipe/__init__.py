@@ -236,6 +236,7 @@ from probpipe.values import (
     SupportsDifferentiation,
     SupportsInverse,
     SupportsLogDetJacobian,
+    UnusedControlWarning,
     is_differentiable,
     is_invertible,
 )
@@ -355,6 +356,7 @@ __all__ = [
     "Uniform",
     "UnmanagedConcurrentWorkflowEntryError",
     "UnshippableSettingError",
+    "UnusedControlWarning",
     "VonMisesFisher",
     "Weights",
     "Wishart",

@@ -258,7 +258,7 @@ A function JAX can trace is mapped by `jax` whatever executor is named.
 
 ProbPipe ships four executors in `executor_registry`:
 
-- `jax`, which maps a callable JAX can trace over every evaluation point at once, and is selected automatically for one;
+- `jax`, which maps a callable JAX can trace over every evaluation point at once, and is selected automatically for one; when that map would hold more than 256 MiB, it compiles the map and runs it in chunks that fit, and its option `chunk_size` sets the chunks instead;
 - `sequential`, which runs the evaluation points one after another, and is selected automatically for every other callable;
 - `thread`, which runs chunks on a pool of threads, with the options `max_workers` and `chunk_size`;
 - `process`, which runs chunks in worker processes started under the calling process's JAX settings, with the options `max_workers`, `chunk_size`, and `start_method`.

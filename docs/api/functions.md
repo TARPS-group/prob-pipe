@@ -109,6 +109,14 @@ for both ordinary calls and `apply`. Enable it before calling, or declare a
 
 ::: probpipe.ResultSchemaError
 
+## Counts a call does not use
+
+A call warns when its `using` view sets `max_evaluations` or `num_samples` and nothing the call runs reads that count.
+`pushforward.using(num_samples=10)(x, square)` warns, because a call lifted over a distribution evaluates its function `max_evaluations` times and takes no Monte Carlo draws, and the warning says to set `max_evaluations=10` instead.
+A count set when a `Function` is constructed, by a `config` block, or as the session's value is a default and never warns.
+
+::: probpipe.UnusedControlWarning
+
 ## Failed evaluations
 
 A call that evaluates a function many times, such as a call lifted over a distribution, runs every evaluation and keeps the outputs that succeeded.

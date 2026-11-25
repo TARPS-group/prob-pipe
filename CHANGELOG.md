@@ -13,6 +13,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   to `d1`, beside the optional second law `d2`. Replace `cov(d=law)` with
   `cov(law)` or `cov(d1=law)`.
 
+- **`executor_options` given without an executor go to `jax`.** Before,
+  options given without an executor to a function that JAX can trace were
+  ignored. Now they go to `jax`, which reads `chunk_size` and raises
+  `ValueError` for any other option, such as `max_workers`. Name the executor
+  the options are for, as `executor="thread"`, or remove them.
+
+- **`expectation` counts its draws with `max_evaluations`, as `pushforward`
+  does.** An expectation without a closed form is the mean of the pushforward,
+  so its Monte Carlo estimate takes the draws its lift takes. Before,
+  `expectation.using(num_samples=n)` set the draws and `max_evaluations` was
+  ignored. Now `expectation.using(max_evaluations=n)` sets them, and the
+  default is the session's `max_evaluations`, 256, instead of `num_samples`,
+  1,024, so an estimate at the default count is noisier. A `num_samples`
+  given to `expectation` now warns with `UnusedControlWarning`, which says to
+  set `max_evaluations` instead. To keep the old default, call
+  `expectation.using(max_evaluations=1024)` or set
+  `config.sampling.max_evaluations`. The provenance still records the draws an
+  estimate took as `num_samples`. A call of
+  `expectation.using(method="pushforward_mean", exact_only=True)` on an
+  empirical law of 257 to 1,024 atoms now raises `ResolutionError`, because
+  the default count no longer covers its atoms. Set `max_evaluations` to at
+  least its number of atoms.
+
 - **Exact conditional operations.** With `given=`, an exact operation exposed
   by exact conditioning precedes approximate routes, including sampling through
   a registry. Conditional delegation reuses the bound law within the call and
@@ -1557,8 +1580,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   arguments whose combinations of atoms number at most `max_evaluations` and
   samples the others within that count. `num_samples` is the number of Monte
   Carlo draws of a summary, such as `mean` or `quantile`, and of a converter
-  that draws, 1024 by default, so the default Monte Carlo estimates change. `expectation(d, f)` evaluates `f` at most `num_samples`
-  times, and `convert.using(num_samples=n)` and an argument's conversion take
+  that draws, 1024 by default, so the default Monte Carlo estimates change. `expectation(d, f)` evaluates `f` at most `max_evaluations`
+  times, as `pushforward(d, f)` does, and `convert.using(num_samples=n)` and an argument's conversion take
   the call's `num_samples` unless the converter's `num_samples` option is given.
   `probpipe.config.sampling` holds both defaults and replaces
   `set_default_n_broadcast_samples` and `Function.DEFAULT_N_BROADCAST_SAMPLES`,
@@ -1570,10 +1593,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `TypeError` as an unknown control. A replay recipe records its plan under
   `probpipe.stochastic_plan/v2`, so `replay_run` refuses a result recorded
   earlier and asks for it to be recorded again. Migrate each use as follows:
-  - a lifted function or `pushforward`: `f.using(n_broadcast_samples=n)` becomes
-    `f.using(max_evaluations=n)`;
-  - a summary, `expectation` included: `mean.using(n_broadcast_samples=n)`
-    becomes `mean.using(num_samples=n)`;
+  - a lifted function, `pushforward`, or `expectation`:
+    `f.using(n_broadcast_samples=n)` becomes `f.using(max_evaluations=n)`;
+  - any other summary: `mean.using(n_broadcast_samples=n)` becomes
+    `mean.using(num_samples=n)`;
   - the session's default: `set_default_n_broadcast_samples(n)` becomes
     `probpipe.config.sampling.max_evaluations = n` for lifts and
     `probpipe.config.sampling.num_samples = n` for summaries.
@@ -2155,12 +2178,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   so `cov(law["y"], law["x"])` replaces slicing `cov(law)` by its flat layout.
   Two unrelated laws give an exact zero block without drawing, and a law whose
   closed-form mean is undefined or infinite, such as a Cauchy law, raises
-  `MathematicalDomainError` instead. Other laws
-  drawn together, such as a transform and its base, take the covariance of
-  the law of the pair of their draws, which is exact over an empirical law
-  whose atoms the lift enumerates. Laws that are drawn independently but share
+  `MathematicalDomainError` instead. Inside `jax.jit`, where a mean computed
+  from traced parameters cannot raise, the block is `nan` unless both means
+  are finite. Other laws drawn together, such as a transform and its base,
+  take the covariance of the law of the pair of their draws, which is exact
+  over an empirical law whose atoms the lift enumerates. That lift draws at
+  most `max_evaluations` pairs, as `pushforward` does. Laws that are drawn independently but share
   a factor, as `(a & b)["a"]` and `a` do, raise `ResolutionError`. The result
   is labeled by both draws, as `ℂ[y ~ law, x ~ law]`.
+
+- **A count a call does not use warns.** A call whose `using` view sets
+  `max_evaluations` or `num_samples` that nothing the call runs reads warns
+  once with the new `UnusedControlWarning`, and says which count to set
+  instead when the call read the other one. Before,
+  `pushforward.using(num_samples=10)(x, square)` returned 256 draws without a
+  word. Now it warns that `pushforward did not use num_samples=10` and says to
+  set `max_evaluations=10` instead. A count set at construction, in a `config`
+  block, or as the session's value never warns. Turn the warning into an error
+  with `warnings.simplefilter("error", probpipe.UnusedControlWarning)`.
 
 - **Monte Carlo marginals.** `marginal(d, paths)` estimates a standalone
   marginal from joint samples when no exact marginal is available. Set the
@@ -3460,6 +3495,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   pushforward eagerly when its last required input is bound.
 
 ### Changed
+
+- **A traceable function mapped over many points no longer runs out of memory.**
+  A lifted call, a sweep, or `evaluate_at_points` maps a function that JAX can
+  trace with one `jax.vmap`, which holds one copy of every array the function
+  computes for each point at once. Before, a function that builds large
+  arrays, such as a simulator over a long time series, needed memory that grew
+  with the number of points until the machine swapped. Now the `jax` executor
+  reads how much one evaluation holds from its trace, and when the whole map
+  would hold more than 256 MiB, it compiles the map and runs it in chunks that
+  fit. Over 4,000 points of a function that builds arrays of 200,000 entries,
+  the peak memory falls from 7.0 GB to 0.8 GB and the time from 7.4 s to 1.2 s.
+  The option `chunk_size` sets the chunks instead, as in
+  `simulate.using(executor_options={"chunk_size": 50})`. The chunks change no
+  result beyond the last bit of rounding. A function that draws with an `rbg`
+  or `unsafe_rbg` key, whose draws would change with the chunks, is mapped at
+  once, and a `chunk_size` that would split its points raises `ValueError`.
 
 - **Tutorials 1 to 4 are revised and shown on the site again.** They follow one
   analysis of the moose counts:

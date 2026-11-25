@@ -48,8 +48,10 @@ except ImportError:
 
 from ..core._batch import Batch, BatchSpec, _flat_batch_spec
 from ..core._call_context import (
+    _CountNotingControls,
     _jax_tracing_active,
     _jax_transformation_active,
+    _note_count_read,
     _NumSamplesUsed,
     current_call_context,
 )
@@ -1259,13 +1261,25 @@ def _lifted_call_stochastic_plan(
     resolved_controls: Mapping[str, Any],
     route_name: str | None,
 ) -> _plan.StochasticPlan | None:
-    """The plan of the laws a lifted call draws from, which enumerates every group unless *route_name* samples."""
-    return _plan.build_stochastic_plan(
+    """The plan of the laws a lifted call draws from, which enumerates every group unless *route_name* samples.
+
+    A call that lifts a law has a plan, which its ``max_evaluations`` bounds.
+    The read of the count is noted when the route is a rule that evaluates
+    the function at the plan's draws or atoms, the sampling lift or the
+    empirical enumeration; a rule that realizes the law another way, such as
+    an exact rule for a linear map, does not read it, and a call that lifts no
+    law has no plan.
+    """
+    max_evaluations = resolved_controls["max_evaluations"]
+    stochastic_plan = _plan.build_stochastic_plan(
         argument_values,
         broadcast_plan,
-        resolved_controls["max_evaluations"],
+        max_evaluations,
         enumerate_every_group=route_name != "sampling_lift",
     )
+    if stochastic_plan is not None and route_name in _rules._ENGINE_RULES:
+        _note_count_read("max_evaluations", max_evaluations)
+    return stochastic_plan
 
 
 def _lifted_point_evaluator(
@@ -2102,14 +2116,16 @@ def _run_registered_rule(
     The rule returns the result over raw forms, and the return step wraps it at
     its kind under the call's result label and gives it *expression*, the
     function applied to draws of its inputs, with provenance recording the
-    function, its inputs, and the rule.
+    function, its inputs, and the rule. The rule receives the call's controls
+    as a mapping that notes a lookup of a count as the call's read of it, as an
+    operation's route does, so a rule that uses ``max_evaluations`` reads it.
     """
     result = route.rule.execute(
         function,
         route.operand,
         parameter=route.parameter,
         fixed_args=route.fixed_args,
-        controls=route.controls,
+        controls=_CountNotingControls(route.controls),
     )
     controls, diagnostics = _recipe.provenance_recipe_fields(None)
     provenance = Provenance.create(

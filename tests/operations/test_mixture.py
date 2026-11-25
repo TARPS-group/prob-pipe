@@ -112,8 +112,10 @@ def test_the_kernel_event_form_survives_projection(form, finite):
         return EmpiricalDistribution(atoms, event_spec=event)
 
     kernel = conditional_distribution(build, given_spec={"mu": REAL}, label="kernel")
+    # A finite mixing law is enumerated exactly, so only a sampled one takes the count.
+    counts = {} if finite else {"max_evaluations": 7}
     with workflow_run(seed=1):
-        law = mixture.using(max_evaluations=7)(kernel, _mixing() if finite else Gaussian("mu"))
+        law = mixture.using(**counts)(kernel, _mixing() if finite else Gaussian("mu"))
         draw = sample(law)
     assert law.event_spec == kernel.event_spec
     assert draw.spec == kernel.event_spec.term_spec
@@ -178,8 +180,9 @@ def test_optional_inputs_take_their_defaults(finite):
     kernel = conditional_distribution(
         lambda mu, scale=2.0: Normal("y", mu, scale), given_spec={"mu": REAL}
     )
+    counts = {} if finite else {"max_evaluations": 7}
     with workflow_run(seed=0):
-        law = mixture.using(max_evaluations=7)(kernel, _mixing() if finite else Gaussian("mu"))
+        law = mixture.using(**counts)(kernel, _mixing() if finite else Gaussian("mu"))
     assert law.event_spec == kernel.event_spec
     if finite:
         np.testing.assert_allclose(variance(law), 7.0, rtol=0, atol=1e-6)
