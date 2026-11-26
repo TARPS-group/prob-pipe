@@ -978,7 +978,8 @@ class Summary(Expression):
 
     1. ``E``, ``Var``, ``SD``, ``Cov``, and ``Q``: the expectation, the
        variance, the standard deviation, the covariance, and the quantile of a
-       draw, as ``𝔼[(y, mu) ~ model]``;
+       draw, as ``𝔼[(y, mu) ~ model]``, and the cross-covariance of two draws,
+       as ``ℂ[y ~ model, mu ~ model]``;
     2. ``log``: a score, ``log`` followed by the law's notation, as
        ``log prior(mu)``;
     3. ``density``: a density, which reads as the law's notation, as
@@ -991,10 +992,14 @@ class Summary(Expression):
     argument : Expression
         A draw or an applied function for the bracketed kinds, and a law for
         ``log`` and ``density``.
+    second_argument : Expression or None
+        The second draw of a cross-covariance, whose kind is ``Cov``, and
+        ``None`` for every other summary.
     """
 
     kind: str
     argument: Expression
+    second_argument: Expression | None = None
     depth: int = _derived_field()
     holds_loss: bool = _derived_field()
     truncation: Truncated | None = field(default=None, init=False, compare=False, repr=False)
@@ -1002,11 +1007,19 @@ class Summary(Expression):
     def __post_init__(self) -> None:
         if self.kind not in _BRACKETED_SUMMARIES | {SCORE, DENSITY}:
             raise ValueError(f"unknown summary kind {self.kind!r}")
+        if self.second_argument is not None and self.kind != "Cov":
+            raise ValueError(
+                f"a summary of kind {self.kind!r} takes one argument, but a second was given"
+            )
         object.__setattr__(self, "argument", _kept(self.argument))
+        if self.second_argument is not None:
+            object.__setattr__(self, "second_argument", _kept(self.second_argument))
         self._set_derived()
 
     def _children(self) -> tuple[Expression, ...]:
-        return (self.argument,)
+        if self.second_argument is None:
+            return (self.argument,)
+        return (self.argument, self.second_argument)
 
     def _label(self, rendering: _Rendering, level: int) -> str:
         if rendering.beyond(level):
@@ -1021,6 +1034,10 @@ class Summary(Expression):
             return (
                 f"{_SUMMARY_SYMBOLS[self.kind]}[{argument._notation(rendering, level + 1, None)}]"
             )
+        if self.second_argument is not None:
+            first = argument._label(rendering, level + 1)
+            second = self.second_argument._label(rendering, level + 1)
+            return f"{_SUMMARY_SYMBOLS[self.kind]}[{first}, {second}]"
         return f"{_SUMMARY_SYMBOLS[self.kind]}[{argument._label(rendering, level + 1)}]"
 
 

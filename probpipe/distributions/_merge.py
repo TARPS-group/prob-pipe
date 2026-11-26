@@ -147,6 +147,49 @@ def _has_exact_marginals(law: Distribution, *selections: tuple[str, ...]) -> boo
     )
 
 
+def _coupled_part_pairs(
+    left: Distribution | ConditionalDistribution,
+    right: Distribution | ConditionalDistribution,
+) -> list[tuple[Distribution, Distribution, Distribution]]:
+    """The coupled pairs of a part of *left* and a part of *right*, each with their root ancestor.
+
+    The parts of each side are the side and every factor at any depth, as
+    :func:`_coupling_parts` lists them, and two parts are coupled when they
+    have one root ancestor.
+
+    Parameters
+    ----------
+    left : Distribution or ConditionalDistribution
+        The first side.
+    right : Distribution or ConditionalDistribution
+        The second side.
+
+    Returns
+    -------
+    list of tuple
+        Each ``(left_part, right_part, root)`` whose two parts share ``root``,
+        in the order of the parts of *left* and then of *right*.
+
+    Raises
+    ------
+    RuntimeError
+        If the reader of root ancestors is not installed, which importing
+        ``probpipe`` installs.
+    """
+    if _root_ancestor is None:
+        raise RuntimeError(
+            "cannot check distribution coupling before its reader is installed. Import probpipe first"
+        )
+    left_parts = [(part, _root_ancestor(part)) for part in _coupling_parts(left)]
+    right_parts = [(part, _root_ancestor(part)) for part in _coupling_parts(right)]
+    return [
+        (left_part, right_part, left_root)
+        for left_part, left_root in left_parts
+        for right_part, right_root in right_parts
+        if left_root is right_root
+    ]
+
+
 def _refuse_coupled_operands(
     left: Distribution | ConditionalDistribution,
     right: Distribution | ConditionalDistribution,
@@ -170,18 +213,7 @@ def _refuse_coupled_operands(
     ValueError
         If a part of *left* and a part of *right* share a root ancestor.
     """
-    if _root_ancestor is None:
-        raise RuntimeError(
-            "cannot check distribution coupling before its reader is installed. Import probpipe first"
-        )
-    left_parts = [(part, _root_ancestor(part)) for part in _coupling_parts(left)]
-    right_parts = [(part, _root_ancestor(part)) for part in _coupling_parts(right)]
-    pairs = [
-        (left_part, right_part, left_root)
-        for left_part, left_root in left_parts
-        for right_part, right_root in right_parts
-        if left_root is right_root
-    ]
+    pairs = _coupled_part_pairs(left, right)
     if not pairs:
         return
     for left_part, right_part, _ in pairs:

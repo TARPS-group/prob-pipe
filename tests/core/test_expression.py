@@ -79,6 +79,10 @@ class TestNodes:
         with pytest.raises(ValueError, match="unknown summary kind"):
             Summary("median", Named("x"))
 
+    def test_only_a_covariance_takes_a_second_draw(self):
+        with pytest.raises(ValueError, match="takes one argument"):
+            Summary("E", Named("x"), Named("y"))
+
 
 class TestRendering:
     """The label and the notation of each node, grouped by the rules of design II.4."""
@@ -177,6 +181,15 @@ class TestRendering:
             ),
             pytest.param(
                 Summary("Q", Draw(("mu",), _named("prior", "mu"))), "ℚ[mu ~ prior]", id="quantile"
+            ),
+            pytest.param(
+                Summary(
+                    "Cov",
+                    Draw(("y",), _named("model", "y", "mu")),
+                    Draw(("mu",), _named("model", "y", "mu")),
+                ),
+                "ℂ[y ~ model, mu ~ model]",
+                id="cross-covariance",
             ),
             pytest.param(
                 Summary("E", Draw(("p",), Applied("f", (Draw(("b",), Named("m")),)))),

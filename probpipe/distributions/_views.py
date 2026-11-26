@@ -384,9 +384,9 @@ def _keeps_expression(term: Any, source: Any) -> Any:
 # with pi the extraction of the coupled marginal's node from a parent draw, or of the record
 # of the selected nodes.
 
-#: The method of each moment row. A coupled marginal projects the moment of a parent that
-#: claims it, and otherwise computes it from the parent's exact marginal at the
-#: coupled marginal's path, when the parent reports that marginal claims it.
+#: The method of each moment row. A coupled marginal computes a moment from the parent's
+#: exact marginal at the coupled marginal's path, when the parent reports that marginal
+#: claims it, and otherwise projects the parent's moment.
 _MOMENT_METHODS: dict[type, str] = {
     SupportsMean: "_mean",
     SupportsVariance: "_variance",
@@ -401,6 +401,31 @@ _NUMERIC_MOMENTS = (SupportsCovariance, SupportsQuantile)
 def _marginal_moment(self: CoupledMarginal, method: str, *arguments: Any) -> Any:
     """The moment *method* of the parent's exact marginal at the coupled marginal's path."""
     return getattr(self._parent._marginal(self._path), method)(*arguments)
+
+
+def _through_marginal(self: CoupledMarginal, protocol: type) -> bool:
+    """Whether the moment row of *protocol* takes the moment of the parent's exact marginal.
+
+    It does when the parent reported, at the coupled marginal's construction,
+    that its marginal at the path claims the moment, and the parent's marginal
+    guard admits the path. The marginal holds only the fields at the path, so
+    its moment exists whenever theirs does, whatever the parent's other fields
+    hold: for a joint ``a & b & c`` with ``c`` a Cauchy law, the mean of the
+    coupled marginal at ``a`` is the mean of ``a``, while the joint's mean
+    does not exist.
+    """
+    if protocol not in self._marginal_report:
+        return False
+    return _capability_guard(self._parent, "_marginal", self._path).feasible is True
+
+
+def _moment_by_marginal(self: CoupledMarginal, protocol: type) -> bool:
+    """Whether the moment row of *protocol* computes through the marginal rather than by projection.
+
+    It does through the marginal whenever that row applies, and whenever the
+    parent claims no moment to project.
+    """
+    return _through_marginal(self, protocol) or not isinstance(self._parent, protocol)
 
 
 def _view_sample(self: CoupledMarginal, key: PRNGKey, sample_shape: tuple[int, ...] = ()) -> Any:
@@ -511,32 +536,36 @@ def _entry_at(value: Any, index: tuple[int, ...]) -> Any:
 
 
 def _view_mean(self: CoupledMarginal) -> Any:
-    """Projection: the parent's mean at the coupled marginal's path, since ``𝔼[pi X] = pi 𝔼[X]``.
+    """The mean of the parent's exact marginal at the path, or else the parent's mean projected there.
 
-    A parent without a mean gives the mean of its exact marginal at the path.
+    The projection holds since ``𝔼[pi X] = pi 𝔼[X]``. The marginal's mean is
+    taken whenever the parent reports that its exact marginal claims one.
     """
-    if not isinstance(self._parent, SupportsMean):
+    if _moment_by_marginal(self, SupportsMean):
         return _marginal_moment(self, "_mean")
     return self._project(self._parent._mean())
 
 
 def _view_variance(self: CoupledMarginal) -> Any:
-    """Restriction of the parent's variance to the coordinates of the coupled marginal's path.
+    """The variance of the parent's exact marginal at the path, or else the parent's variance there.
 
-    A parent without a variance gives the variance of its exact marginal at the
-    path.
+    The marginal's variance is taken whenever the parent reports that its exact
+    marginal claims one, and otherwise the parent's variance is restricted to
+    the coordinates of the coupled marginal's path.
     """
-    if not isinstance(self._parent, SupportsVariance):
+    if _moment_by_marginal(self, SupportsVariance):
         return _marginal_moment(self, "_variance")
     return self._project(self._parent._variance())
 
 
 def _view_cov(self: CoupledMarginal) -> LinOp:
-    """The sub-block ``P Σ Pᵀ`` of the parent's covariance, ``P`` selecting the path.
+    """The covariance of the parent's exact marginal at the path, or else the sub-block ``P Σ Pᵀ``.
 
-    ``P`` selects the coupled marginal's coordinates of the parent's flat vector, in the
-    parent's order, and the product stays lazy. A parent without a covariance
-    gives the covariance of its exact marginal at the path.
+    The marginal's covariance is taken whenever the parent reports that its
+    exact marginal claims one. Otherwise ``P`` selects the coupled marginal's
+    coordinates of the parent's flat vector, in the parent's order, and the
+    product stays lazy. A coupled marginal with no coordinates, as a field of
+    shape ``(0,)`` has none, gives a ``(0, 0)`` operator.
 
     Parameters
     ----------
@@ -553,10 +582,10 @@ def _view_cov(self: CoupledMarginal) -> LinOp:
     TypeError
         If the parent's event spec is not numeric.
     """
-    if not isinstance(self._parent, SupportsCovariance):
+    if _moment_by_marginal(self, SupportsCovariance):
         return _marginal_moment(self, "_cov")
     cov = self._parent._cov()
-    rows = jnp.asarray(self._coordinates())
+    rows = jnp.asarray(self._coordinates(), dtype=jnp.int32)
     selection = DenseLinOp(jnp.eye(cov.shape[1], dtype=cov.dtype)[rows])
     return selection @ cov @ selection.T
 
@@ -567,10 +596,10 @@ def _view_quantile(self: CoupledMarginal, q: ArrayLike) -> Any:
     The parent's quantiles are its event's raw form with the level axes
     leading in each leaf, so the coupled marginal's quantiles are the parent's at the
     coupled marginal's node, projected as a draw is, with the level axes leading in each
-    leaf. A parent without quantiles gives those of its exact marginal at the
-    path.
+    leaf. The quantiles of the parent's exact marginal at the path are taken
+    instead whenever the parent reports that marginal claims them.
     """
-    if not isinstance(self._parent, SupportsQuantile):
+    if _moment_by_marginal(self, SupportsQuantile):
         return _marginal_moment(self, "_quantile", q)
     return self._project(self._parent._quantile(q))
 
@@ -877,7 +906,7 @@ def _moment_guard(protocol: type) -> Callable[..., Feasibility]:
     method = _MOMENT_METHODS[protocol]
 
     def guard(self: CoupledMarginal, *arguments: Any) -> Feasibility:
-        if isinstance(self._parent, protocol):
+        if not _moment_by_marginal(self, protocol):
             return _capability_guard(self._parent, method, *arguments)
         exact = _capability_guard(self._parent, "_marginal", self._path)
         if exact.feasible is not True:
@@ -940,14 +969,21 @@ _VIEW_CAPABILITIES: dict[type, Mapping[str, Callable[..., Any]]] = {
 }
 
 
+def _marginal_report(parent: Distribution, paths: str | tuple[str, ...]) -> frozenset[type]:
+    """The capabilities *parent* reports for its marginal at *paths*, none when it has no marginals."""
+    if not isinstance(parent, SupportsMarginals):
+        return frozenset()
+    return frozenset(_marginal_claims(parent, paths))
+
+
 def _derived_protocols(
-    parent: Distribution, node: TermSpec, paths: str | tuple[str, ...]
+    parent: Distribution, node: TermSpec, paths: str | tuple[str, ...], report: frozenset[type]
 ) -> set[type]:
     """The capabilities a coupled marginal of *parent* at *paths* derives, over the event declared by *node*.
 
     The projection rows derive from the parent's own capabilities. The density
-    rows, and the moment rows the parent does not claim, derive from the
-    parent's report of its marginal at *paths*, read once, here: the coupled marginal claims
+    rows, and the moment rows the parent does not claim, derive from *report*,
+    the parent's report of its marginal at *paths*: the coupled marginal claims
     the normalized density when the report includes it, and otherwise the
     unnormalized one when the report includes that, and it claims each moment
     the report includes. The covariance and quantile rows need a numeric node
@@ -964,7 +1000,6 @@ def _derived_protocols(
     derived.update(protocol for protocol in moments if isinstance(parent, protocol))
     if isinstance(parent, SupportsMarginals):
         derived.add(SupportsMarginals)
-        report = _marginal_claims(parent, paths)
         if SupportsLogProb in report:
             derived.add(SupportsLogProb)
         elif SupportsUnnormalizedLogProb in report:
@@ -1068,11 +1103,16 @@ class CoupledMarginal(Distribution):
             parent.event_spec, parent.label, path, action=f"index {parent.label!r} by"
         )
         declaration = _view_declaration(parent.event_spec, path)
-        return object.__new__(
+        # The parent's report of its marginal at the path is read once, here,
+        # since the path is fixed; the moment rows read it again at each call.
+        report = _marginal_report(parent, path)
+        coupled_marginal = object.__new__(
             _capability_subclass(
-                CoupledMarginal, _derived_protocols(parent, declaration.term_spec, path)
+                CoupledMarginal, _derived_protocols(parent, declaration.term_spec, path, report)
             )
         )
+        object.__setattr__(coupled_marginal, "_marginal_report", report)
+        return coupled_marginal
 
     def __init__(self, parent: Distribution, path: PathsLike) -> None:
         path = _read_event_paths(

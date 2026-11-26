@@ -529,6 +529,272 @@ class TestCov:
         assert isinstance(cov(Gaussian("g")), LinOp)
 
 
+def _correlated_record() -> EmpiricalDistribution:
+    """An empirical law over ``x`` of shape ``(2,)`` and ``y = x @ A`` of shape ``(3,)``."""
+    rng = np.random.default_rng(0)
+    x = rng.normal(size=(60, 2))
+    y = x @ rng.normal(size=(2, 3))
+    return EmpiricalDistribution(
+        NumericRecordBatch({"x": jnp.asarray(x), "y": jnp.asarray(y)}, level_names="draw")
+    )
+
+
+def _biased_cross_cov(rows: np.ndarray, columns: np.ndarray) -> np.ndarray:
+    """The cross-covariance of paired samples, dividing by their number, as an empirical law does."""
+    rows, columns = rows.reshape(len(rows), -1), columns.reshape(len(columns), -1)
+    centered_rows, centered_columns = rows - rows.mean(0), columns - columns.mean(0)
+    return centered_rows.T @ centered_columns / len(rows)
+
+
+def _route(term: Any) -> str:
+    """The route the call's provenance records."""
+    return term.provenance.metadata["route"]
+
+
+class TestCrossCovariance:
+    def test_coupled_marginals_of_an_empirical_law_take_the_block_of_its_covariance(self):
+        law = _correlated_record()
+        x, y = np.asarray(law["x"].raw.atoms.raw), np.asarray(law["y"].raw.atoms.raw)
+        block = cov(law["y"], law["x"])
+        assert _route(block) == "coupled_marginals"
+        assert block.provenance.metadata["exact"] is True
+        np.testing.assert_allclose(np.asarray(block), _biased_cross_cov(y, x), rtol=1e-5)
+
+    def test_the_result_is_declared_with_the_rows_of_d1_and_the_columns_of_d2(self):
+        law = _correlated_record()
+        declared = cov.check(law["y"], law["x"]).result.outputs["cov"]
+        assert declared.shape == (3, 2)
+        assert np.asarray(cov(law["y"], law["x"])).shape == (3, 2)
+
+    def test_swapping_the_laws_transposes_the_block(self):
+        law = _correlated_record()
+        np.testing.assert_allclose(
+            np.asarray(cov(law["x"], law["y"])), np.asarray(cov(law["y"], law["x"])).T, rtol=1e-6
+        )
+
+    def test_a_law_and_its_part_take_the_columns_of_the_part(self):
+        law = _correlated_record()
+        x, y = np.asarray(law["x"].raw.atoms.raw), np.asarray(law["y"].raw.atoms.raw)
+        np.testing.assert_allclose(
+            np.asarray(cov(law, law["y"])), _biased_cross_cov(np.hstack([x, y]), y), rtol=1e-5
+        )
+
+    def test_nested_and_overlapping_paths_take_their_own_coordinates(self):
+        rng = np.random.default_rng(4)
+        a, b, c = rng.normal(size=(30, 2)), rng.normal(size=(30,)), rng.normal(size=(30, 3))
+        law = EmpiricalDistribution(
+            NumericRecordBatch(
+                {"a": jnp.asarray(a), "g": {"b": jnp.asarray(b), "c": jnp.asarray(c)}},
+                level_names="draw",
+            )
+        )
+        group = np.hstack([b[:, None], c])
+        np.testing.assert_allclose(
+            np.asarray(cov(law["g/c"], law["a"])), _biased_cross_cov(c, a), rtol=1e-5
+        )
+        np.testing.assert_allclose(
+            np.asarray(cov(law["g"], law["g/c"])), _biased_cross_cov(group, c), rtol=1e-5
+        )
+
+    def test_a_rename_and_a_relabeled_copy_read_the_coordinates_they_were_made_from(self):
+        law = _correlated_record()
+        x, y = np.asarray(law["x"].raw.atoms.raw), np.asarray(law["y"].raw.atoms.raw)
+        expected = _biased_cross_cov(y, x)
+        renamed = cov(law["y"], law.rename(x="u")["u"])
+        relabeled = cov(law.with_label("copy")["y"], law["x"])
+        assert _route(renamed) == _route(relabeled) == "coupled_marginals"
+        np.testing.assert_allclose(np.asarray(renamed), expected, rtol=1e-5)
+        np.testing.assert_allclose(np.asarray(relabeled), expected, rtol=1e-5)
+
+    def test_exact_only_keeps_coupled_marginals_of_an_exact_law(self):
+        law = _correlated_record()
+        block = cov.using(exact_only=True)(law["y"], law["x"])
+        assert _route(block) == "coupled_marginals"
+
+    def test_coupled_marginals_of_a_law_that_only_samples_are_estimated_from_its_draws(self):
+        joint = _dependent_joint()
+        with workflow_run(seed=0):
+            block = cov.using(num_samples=_DRAWS)(joint["y"], joint["mu"])
+        assert _route(block) == "coupled_marginals"
+        assert block.provenance.metadata["exact"] is False
+        assert block.provenance.metadata["num_samples"] == _DRAWS
+        # Cov(mu + 1, mu) = Var(mu) = 1. Observed across seeds 0-5 with 4000
+        # draws: errors 0.003-0.065.
+        np.testing.assert_allclose(np.asarray(block), [[1.0]], atol=0.15)
+
+    def test_a_batch_element_reads_its_stored_law(self):
+        first, second = Normal("a", 0.0, 1.0), Normal("a", 1.0, 2.0)
+        laws = DistributionBatch([first, second], level_names="k")
+        np.testing.assert_allclose(np.asarray(cov(laws[0], first)), [[1.0]])
+        np.testing.assert_allclose(np.asarray(cov(laws[0], laws[1])), [[0.0]])
+
+    def test_two_batches_of_laws_pair_their_elements(self):
+        laws = DistributionBatch([Normal("a", 0.0, 1.0), Normal("a", 1.0, 2.0)], level_names="k")
+        np.testing.assert_allclose(np.asarray(cov(laws, laws)).ravel(), [1.0, 4.0])
+        np.testing.assert_allclose(np.asarray(cov(Normal("g", 0.0, 1.0), laws)).ravel(), [0.0, 0.0])
+
+    def test_coupled_marginals_of_a_gaussian_joint_are_exact(self):
+        joint = Normal("a", 0.0, 1.0) & Normal("b", 0.0, 2.0)
+        whole_and_part = cov(joint, joint["b"])
+        assert _route(whole_and_part) == "coupled_marginals"
+        assert whole_and_part.provenance.metadata["exact"] is True
+        np.testing.assert_allclose(np.asarray(whole_and_part), [[0.0], [4.0]])
+
+    def test_the_same_law_twice_is_its_covariance(self):
+        law = Gaussian("g", 0.0, 2.0)
+        twice = cov(law, law)
+        assert _route(twice) == "closed_form"
+        assert twice.label == cov(law).label
+        np.testing.assert_array_equal(np.asarray(twice), np.asarray(cov(law)))
+
+    def test_two_unrelated_laws_have_an_exact_zero_block_without_drawing(self):
+        first, second = Normal("a", 0.0, 1.0), Gaussian("v", 0.0, 1.0)
+        block = cov.using(exact_only=True)(first, second)
+        assert _route(block) == "independent"
+        assert block.provenance.metadata["exact"] is True
+        np.testing.assert_array_equal(np.asarray(block), [[0.0]])
+
+    def test_laws_that_share_a_factor_but_are_drawn_independently_are_refused(self):
+        a = Normal("a", 0.0, 1.0)
+        joint = a & Normal("b", 0.0, 2.0)
+        with pytest.raises(ResolutionError, match="both depend on the law over 'a'"):
+            cov(joint["a"], a)
+
+    def test_parts_of_two_joints_that_share_a_factor_are_refused(self):
+        a = Normal("a", 0.0, 1.0)
+        first, second = a & Normal("b", 0.0, 1.0), a & Normal("c", 0.0, 1.0)
+        with pytest.raises(ResolutionError, match="both depend on the law over 'a'"):
+            cov(first["b"], second["c"])
+
+    @pytest.mark.parametrize("exact_only", [False, True])
+    def test_independent_laws_need_finite_means(self, exact_only):
+        from probpipe import Cauchy
+
+        with pytest.raises(MathematicalDomainError, match="mean of 'Cauchy' does not exist"):
+            cov.using(exact_only=exact_only)(Cauchy("c", 0.0, 1.0), Normal("n", 0.0, 1.0))
+
+    def test_independent_laws_with_an_infinite_mean_are_refused(self):
+        from probpipe import HalfCauchy
+
+        with pytest.raises(MathematicalDomainError, match="is infinite"):
+            cov(Normal("n", 0.0, 1.0), HalfCauchy("h", 0.0, 1.0))
+
+    def test_independent_laws_give_the_zero_block_under_jit(self):
+        a, b = Normal("a", 0.0, 1.0), Normal("b", 0.0, 2.0)
+        block = jax.jit(lambda loc: cov.using(raw=True)(Normal("a", loc, 1.0), b))(1.0)
+        np.testing.assert_array_equal(np.asarray(block), [[0.0]])
+        np.testing.assert_array_equal(
+            np.asarray(jax.jit(lambda: cov.using(raw=True)(a, b))()), [[0.0]]
+        )
+
+    def test_a_traced_infinite_mean_gives_a_nan_block_under_jit(self):
+        from probpipe import HalfCauchy
+
+        def block(scale):
+            return cov.using(raw=True)(HalfCauchy("h", 0.0, scale), Normal("n", 0.0, 1.0))
+
+        assert np.isnan(np.asarray(jax.jit(block)(1.0))).all()
+
+    def test_a_field_whose_moments_do_not_exist_leaves_the_other_fields_defined(self):
+        from probpipe import Cauchy
+
+        joint = Normal("a", 0.0, 1.0) & Normal("b", 0.0, 2.0) & Cauchy("c", 0.0, 1.0)
+        block = cov(joint["a"], joint["b"])
+        assert _route(block) == "coupled_marginals"
+        np.testing.assert_array_equal(np.asarray(block), [[0.0]])
+        np.testing.assert_array_equal(np.asarray(cov(joint["b"], joint["b"])), [[4.0]])
+
+    @pytest.mark.parametrize(
+        ("rows", "columns", "shape"),
+        [("e", "x", (0, 1)), ("x", "e", (1, 0)), ("e", "e", (0, 0))],
+    )
+    def test_a_field_without_coordinates_gives_an_empty_block(self, rows, columns, shape):
+        law = EmpiricalDistribution(
+            NumericRecordBatch({"e": jnp.zeros((10, 0)), "x": jnp.arange(10.0)}, level_names="draw")
+        )
+        block = cov(law[rows], law[columns])
+        assert np.asarray(block).shape == shape
+        assert cov.check(law[rows], law[columns]).result.outputs["cov"].shape == shape
+
+    def test_a_transform_and_its_empirical_base_take_the_exact_lift(self):
+        import tensorflow_probability.substrates.jax.bijectors as tfb
+
+        from probpipe import BijectorTransformedDistribution
+
+        atoms = np.random.default_rng(1).normal(size=40)
+        base = EmpiricalDistribution(jnp.asarray(atoms), output_name="t")
+        transformed = BijectorTransformedDistribution("e", base, tfb.Exp())
+        block = cov(transformed, base)
+        assert _route(block) == "joint_lift"
+        assert block.provenance.metadata["exact"] is True
+        np.testing.assert_allclose(
+            np.asarray(block), _biased_cross_cov(np.exp(atoms), atoms), rtol=1e-5
+        )
+
+    def test_a_transform_of_a_law_that_only_samples_is_estimated_from_max_evaluations_draws(
+        self,
+    ):
+        import tensorflow_probability.substrates.jax.bijectors as tfb
+
+        from probpipe import BijectorTransformedDistribution
+
+        base = Normal("t", 0.0, 1.0)
+        transformed = BijectorTransformedDistribution("e", base, tfb.Exp())
+        with workflow_run(seed=3), _no_unused_count_warning():
+            block = cov.using(max_evaluations=_DRAWS)(transformed, base)
+        assert _route(block) == "joint_lift"
+        assert block.provenance.metadata["exact"] is False
+        assert block.provenance.metadata["num_samples"] == _DRAWS
+        # Cov(exp(t), t) = exp(1/2) for t ~ Normal(0, 1). Observed across seeds
+        # 0-5 with 4000 draws: errors 0.04-0.17.
+        np.testing.assert_allclose(np.asarray(block), [[np.exp(0.5)]], atol=0.35)
+
+    def test_a_joint_lift_given_num_samples_warns_to_set_max_evaluations(self):
+        import tensorflow_probability.substrates.jax.bijectors as tfb
+
+        from probpipe import BijectorTransformedDistribution
+
+        base = Normal("t", 0.0, 1.0)
+        transformed = BijectorTransformedDistribution("e", base, tfb.Exp())
+        unused = "cov did not use num_samples=40.*Set max_evaluations=40 instead"
+        with workflow_run(seed=0), pytest.warns(UnusedControlWarning, match=unused):
+            block = cov.using(num_samples=40)(transformed, base)
+        assert block.provenance.metadata["num_samples"] == 256
+
+    def test_exact_only_refuses_two_laws_without_an_exact_route(self):
+        import tensorflow_probability.substrates.jax.bijectors as tfb
+
+        from probpipe import BijectorTransformedDistribution
+
+        base = Normal("t", 0.0, 1.0)
+        transformed = BijectorTransformedDistribution("e", base, tfb.Exp())
+        with pytest.raises(ResolutionError, match="exact_only"):
+            cov.using(exact_only=True)(transformed, base)
+
+    def test_a_statistical_linearization_recovers_a_linear_map(self):
+        rng = np.random.default_rng(2)
+        prior = EmpiricalDistribution(jnp.asarray(rng.normal(size=(50, 2))), output_name="x")
+        matrix = jnp.array([[1.0, -2.0], [0.5, 3.0], [0.0, 1.0]])
+        joint = pushforward(prior, lambda x: {"x": x, "g": matrix @ x})
+        slope = np.asarray(cov(joint["g"], joint["x"])) @ np.linalg.inv(np.asarray(cov(joint["x"])))
+        np.testing.assert_allclose(slope, matrix, atol=1e-4)
+
+    def test_the_label_names_both_draws(self):
+        law = _correlated_record()
+        assert cov(law["y"], law["x"]).label == f"ℂ[y ~ {law.label}, x ~ {law.label}]"
+
+    def test_the_second_law_requires_a_numeric_event(self):
+        with pytest.raises(ApplicabilityError, match="numeric value"):
+            cov(Gaussian("g"), Measure("m"))
+
+    def test_check_reports_the_refusal_of_laws_that_share_a_factor(self):
+        a = Normal("a", 0.0, 1.0)
+        joint = a & Normal("b", 0.0, 2.0)
+        report = cov.check(joint["a"], a)
+        assert report.selected.feasible is False
+        assert "both depend on the law over 'a'" in report.selected.description
+
+
 class TestQuantile:
     def test_one_level_returns_the_event_kind(self):
         result = quantile(Gaussian("g", 1.0), 0.5)

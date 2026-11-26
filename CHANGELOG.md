@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed (breaking)
 
+- **`cov` takes its law as `d1`.** The parameter of `cov` is renamed from `d`
+  to `d1`, beside the optional second law `d2`. Replace `cov(d=law)` with
+  `cov(law)` or `cov(d1=law)`.
+
 - **`executor_options` given without an executor go to `jax`.** Before,
   options given without an executor to a function that JAX can trace were
   ignored. Now they go to `jax`, which reads `chunk_size` and raises
@@ -2166,6 +2170,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `method_options={"init": jnp.array([0.4, 0.55, 1.5])}`.
 
 ### Added
+
+- **Cross-covariance of two laws.** `cov(d1, d2)` returns `Cov(X1, X2)`, of
+  shape `(size of d1, size of d2)`, with the two laws drawn as a lift draws
+  them. Coupled marginals of one law, and copies and renames of it, take the
+  block of that law's covariance, which is exact whenever its covariance is,
+  so `cov(law["y"], law["x"])` replaces slicing `cov(law)` by its flat layout.
+  Two unrelated laws give an exact zero block without drawing, and a law whose
+  closed-form mean is undefined or infinite, such as a Cauchy law, raises
+  `MathematicalDomainError` instead. Inside `jax.jit`, where a mean computed
+  from traced parameters cannot raise, the block is `nan` unless both means
+  are finite. Other laws drawn together, such as a transform and its base,
+  take the covariance of the law of the pair of their draws, which is exact
+  over an empirical law whose atoms the lift enumerates. That lift draws at
+  most `max_evaluations` pairs, as `pushforward` does. Laws that are drawn independently but share
+  a factor, as `(a & b)["a"]` and `a` do, raise `ResolutionError`. The result
+  is labeled by both draws, as `ℂ[y ~ law, x ~ law]`.
 
 - **A count a call does not use warns.** A call whose `using` view sets
   `max_evaluations` or `num_samples` that nothing the call runs reads warns
@@ -4548,6 +4568,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The moments of a part of a law no longer need the law's other fields.**
+  Before, with `c` a Cauchy law, `mean((a & b & c)["a"])` raised
+  `MathematicalDomainError`, since it projected the joint's mean, which does not
+  exist. Now a coupled marginal takes its mean, variance, covariance, and
+  quantiles from the parent's exact marginal whenever the parent reports one,
+  so they exist whenever those of the selected fields do.
+- **The covariance of a field of shape `(0,)` is an empty array.** Before,
+  `cov(law["e"])` for such a field raised `TypeError` from a floating-point
+  index. Now it returns a `(0, 0)` array.
 - **`expectation` presents a record draw in the law's declared order on every
   route.** Before, the closed form over held record draws, such as an
   `EmpiricalDistribution` or a view of one, gave the integrand each draw with
